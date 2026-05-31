@@ -33,6 +33,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 | GitHub readiness | license, contribution, security, roadmap, release checklist | added core files, `docs/operating/github_release_checklist.md` | PASS locally |
 | CI | automated checks on push | `.github/workflows/check.yml` | PASS once pushed |
 | Public appeal | screenshots, demo, concise pitch | `docs/assets/dashboard-*.png`, `docs/operating/demo_script.md`, README demo section | PARTIAL |
+| Adoption docs | new users can map the tool to real workflows | `docs/operating/adoption_patterns.md` | PASS |
 
 ## Execution Order
 
@@ -44,8 +45,9 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 6. Add structured Gate regression coverage. Status: no-deps Gate paths PASS.
 7. Add GitHub release checklist. Status: local release gate ready.
 8. Push repository so GitHub Actions can run remotely. Status: blocked until `git remote` exists.
-9. Publish public README with clear problem, demo, and safety story.
-10. Iterate on issues from real users.
+9. Add real-world adoption patterns. Status: adoption doc PASS.
+10. Publish public README with clear problem, demo, and safety story.
+11. Iterate on issues from real users.
 
 ## Stop Conditions
 

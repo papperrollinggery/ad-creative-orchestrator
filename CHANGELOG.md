@@ -16,3 +16,4 @@
 - Added `adco sample` bundled sample project generator and regression check.
 - Added `tools/test_gates.py` structured Gate regression coverage.
 - Added GitHub release checklist with local and remote gates.
+- Added real-world adoption pattern documentation.
