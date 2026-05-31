@@ -1,6 +1,6 @@
 # 双泳道 Goal 优化执行方案
 
-状态：已执行第一轮优化
+状态：已执行并完成命令行产品化
 
 依据来源：
 - `README.md`
@@ -31,7 +31,7 @@
 | B2 执行模板优化 | project template | 新增 goal iteration plan template | DONE | 新项目能复制模板记录一轮 goal |
 | B3 门禁机制优化 | Gate policy | 将反驳性议会写成关键阶段前置项 | DONE | 没有议会记录时 Gate 不得高于 PARTIAL_PASS |
 | B4 验证闭环优化 | docs + validation | 运行字段/入口/示例项目验证 | DONE | 两个示例项目 validation PASS |
-| B5 后续产品化 | operator/tooling | 将模板生成和 Gate 检查接入命令行 | QUEUED | 需要后续代码变更，当前任务不改代码 |
+| B5 后续产品化 | operator/tooling | 将模板生成和 Gate 检查接入命令行 | DONE | `adco goal-plan`、Gate 降级检查、`adco check` 已接入 |
 
 ## 3. 执行路线
 
@@ -61,7 +61,7 @@
 |---|---|
 | 用户只要流程设计 | 停在 `dual_lane_goal_delivery_workflow.md` |
 | 用户要求执行方案并执行 | 执行 B1-B4 |
-| 需要改 operator 代码 | 暂停，列入 B5，不在本文档任务内直接改代码 |
+| 需要新增 CLI 能力 | 新建代码批次，先补回归验证，再接入 `adco check` 与发布门禁 |
 | 示例项目验证失败 | 回退到对应模板/文档入口修复后重跑 |
 | 发现客户可见/权限/上传/安装动作 | 停止，写入 `待你确认.md` 或最终报告 |
 
@@ -75,6 +75,7 @@
 | `docs/operating/first_real_project_runbook.md` | 更新 | 增加 goal 模式 prompt 和执行路径 |
 | `docs/operating/authorization_policy.md` | 更新 | 增加反驳性议会前置门禁 |
 | `templates/project/AD-creative/orchestrator/WORKFLOW.md` | 更新 | 将双泳道、goal iteration、反驳门禁写入模板项目 |
+| `adco` CLI | 更新 | 接入 goal-plan、Gate 降级、dashboard Goal Tab 与发布级回归 |
 
 ## 5. 反驳性议会演练
 
@@ -94,7 +95,8 @@
 | README/runbook/WORKFLOW 入口 | `rg "双泳道|goal iteration|反驳性议会"` | 关键入口均可检索 |
 | 示例项目结构 | `adco validate examples/moncler_protocol_dry_run` | `VALIDATION=PASS` |
 | 示例项目结构 | `adco validate examples/simulated_qingling_outdoor_launch` | `VALIDATION=PASS` |
-| 非 git 环境确认 | `git status --short` | 返回非 git 仓库 |
+| 本地 git 状态 | `git status --short` | 提交后无未提交改动 |
+| 远端发布门禁 | `adco release-status` | 已配置 remote 时进入远端检查；当前无 remote 时明确返回 `BLOCKED_REMOTE_MISSING` |
 
 ## 7. 下一轮队列
 
@@ -108,8 +110,9 @@
 | DONE | 将 Goal/Gate 回归纳入统一验证命令清单 | 文档 | 操作手册列出 `adco check` |
 | DONE | 把 goal 状态接入真实项目启动 runbook 的验收清单 | 文档 | runbook 验收含 goal iteration plan 和 dashboard Goal tab |
 | DONE | 补 README 当前验证状态，记录 goal-plan、Gate 降级、Goal Tab、回归测试 | 文档 | README 当前验证状态可见 |
-| P1 | 终态验证：语法、回归测试、模板、两个示例项目、dashboard audit | 验证 | 全部 PASS |
+| DONE | 终态验证：语法、回归测试、模板、两个示例项目、dashboard audit | 验证 | `adco check` PASS |
+| P1 | 配置 GitHub remote 并验证 GitHub Actions | 发布 | `adco release-status` 不再阻塞 remote，Actions 执行 `make release-check` PASS |
 
 ## 8. 本轮结论
 
-本轮执行到 B4。B5 需要代码改动，已排入下一轮；当前用户要求的优化规划、执行方案、文档化执行与验证闭环已完成。
+本地 B1-B5 已完成；当前剩余发布门禁是 GitHub remote 未配置，远端 push 与 Actions 验证等待 remote 后执行。
