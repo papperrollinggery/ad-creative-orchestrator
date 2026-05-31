@@ -3973,6 +3973,26 @@ def command_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_validate(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    errors, stats = validate(project)
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    if errors:
+        print("ERRORS:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    return 0
+
+
+def command_check(args: argparse.Namespace) -> int:
+    import run_checks
+
+    return run_checks.main()
+
+
 def command_doctor(args: argparse.Namespace) -> int:
     status, issues, warnings, evidence = doctor_report()
     print(f"ADCO_DOCTOR={status}")
@@ -4388,6 +4408,13 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser = subparsers.add_parser("status", help="Print current project status.")
     status_parser.add_argument("project", help="Project directory.")
     status_parser.set_defaults(func=command_status)
+
+    validate_parser = subparsers.add_parser("validate", help="Validate a project directory.")
+    validate_parser.add_argument("project", help="Project directory.")
+    validate_parser.set_defaults(func=command_validate)
+
+    check_parser = subparsers.add_parser("check", help="Run the full verification suite.")
+    check_parser.set_defaults(func=command_check)
 
     doctor_parser = subparsers.add_parser("doctor", help="Diagnose installation, templates, optional dependencies, and release blockers.")
     doctor_parser.set_defaults(func=command_doctor)

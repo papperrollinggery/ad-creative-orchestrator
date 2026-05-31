@@ -15,7 +15,8 @@ adco status /tmp/adco-sample
 adco open-dashboard /tmp/adco-sample
 adco doctor
 adco support-bundle /tmp/adco-sample
-adco-check
+adco validate /tmp/adco-sample
+adco check
 ```
 
 Expected:
@@ -93,6 +94,8 @@ adco support-bundle <项目目录>
 adco open-dashboard <项目目录>
 adco run <项目目录> --material <资料文件或文件夹>
 adco goal-plan <项目目录> --title "<目标标题>" --objective "<目标内容>"
+adco validate <项目目录>
+adco check
 adco-check
 ```
 
@@ -220,6 +223,8 @@ adco doctor
 adco support-bundle <项目目录>
 adco open-dashboard <项目目录> --no-open
 adco demo <项目目录> --no-open
+adco validate <项目目录>
+adco check
 python3 tools/run_checks.py
 adco sample <项目目录>
 adco status <项目目录>
@@ -324,7 +329,7 @@ Goal/Gate 回归测试: tools/test_goal_workflow.py PASS
 Gate 结构化回归测试: tools/test_gates.py PASS
 Gate 正向 fixture: visual PNG PASS / editable PPTX client-pack PASS / no-deps optional skip PASS
 editable CLI install: adco / adco-check smoke PASS
-package install: pip install . / adco sample / adco-check smoke PASS
+package install: pip install . / adco demo / adco validate / adco check smoke PASS
 wheel distribution check: make dist-check PASS
 version diagnostics: adco --version PASS
 doctor diagnostics: adco doctor PASS with remote warning when no git remote exists

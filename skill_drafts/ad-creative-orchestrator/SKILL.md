@@ -47,6 +47,8 @@ python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operato
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py doctor
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py support-bundle <project_dir>
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py open-dashboard <project_dir>
+python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py validate <project_dir>
+python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py check
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py run <project_dir> --material <materials_path>
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py intake <project_dir>
@@ -74,6 +76,8 @@ adco --version
 adco doctor
 adco support-bundle <project_dir>
 adco open-dashboard <project_dir>
+adco validate <project_dir>
+adco check
 adco run <project_dir> --material <materials_path>
 adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
 adco-check

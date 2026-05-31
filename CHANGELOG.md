@@ -32,3 +32,4 @@
 - Added `adco open-dashboard` to render and open the local operation dashboard directly.
 - Added `adco demo` as a one-command sample project and dashboard demo.
 - Updated the public roadmap to reflect current local release readiness and remote-release next steps.
+- Added `adco validate` and `adco check` aliases for the existing validation and verification workflows.

@@ -26,8 +26,9 @@ install-smoke:
 	$$tmp_dir/venv/bin/adco demo $$tmp_dir/demo --no-open; \
 	$$tmp_dir/venv/bin/adco support-bundle $$tmp_dir/project; \
 	$$tmp_dir/venv/bin/adco open-dashboard $$tmp_dir/project --no-open; \
+	$$tmp_dir/venv/bin/adco validate $$tmp_dir/project; \
 	$$tmp_dir/venv/bin/adco-validate $$tmp_dir/project; \
-	$$tmp_dir/venv/bin/adco-check; \
+	$$tmp_dir/venv/bin/adco check; \
 	echo "INSTALL_SMOKE=PASS $$tmp_dir"
 
 package-smoke:
@@ -43,8 +44,9 @@ package-smoke:
 	$$tmp_dir/venv/bin/adco sample $$tmp_dir/project >/dev/null; \
 	$$tmp_dir/venv/bin/adco support-bundle $$tmp_dir/project; \
 	$$tmp_dir/venv/bin/adco open-dashboard $$tmp_dir/project --no-open; \
+	$$tmp_dir/venv/bin/adco validate $$tmp_dir/project; \
 	$$tmp_dir/venv/bin/adco-validate $$tmp_dir/project; \
-	$$tmp_dir/venv/bin/adco-check; \
+	$$tmp_dir/venv/bin/adco check; \
 	echo "PACKAGE_SMOKE=PASS $$tmp_dir"
 
 release-check: check dist-check install-smoke package-smoke

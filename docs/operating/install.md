@@ -23,6 +23,8 @@ adco support-bundle <project_dir>
 adco open-dashboard <project_dir>
 adco run <project_dir> --material <material_file_or_folder>
 adco goal-plan <project_dir> --title "<goal title>" --objective "<goal objective>"
+adco validate <project_dir>
+adco check
 adco-check
 ```
 
@@ -39,6 +41,7 @@ Runtime templates and the project skill draft are also packaged, so `adco sample
 ## Verify
 
 ```bash
+adco check
 adco-check
 adco --version
 adco doctor

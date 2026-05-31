@@ -144,6 +144,7 @@ python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operato
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py handoff-readiness-gate <项目目录>
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py audit-dashboard <项目目录> --render
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py open-dashboard <项目目录> --no-open
+python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py validate <项目目录>
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/validate_project.py <项目目录>
 ```
 
