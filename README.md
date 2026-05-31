@@ -121,6 +121,7 @@ examples/simulated_qingling_outdoor_launch/
 ```text
 docs/operating/install.md
 docs/operating/demo_script.md
+docs/operating/github_release_checklist.md
 docs/operating/operating_manual.md
 docs/operating/dual_lane_goal_delivery_workflow.md
 docs/operating/dual_lane_goal_optimization_plan.md

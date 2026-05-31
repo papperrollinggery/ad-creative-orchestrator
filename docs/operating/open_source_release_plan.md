@@ -30,7 +30,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 | Dashboard usability | non-developer can inspect state | dashboard audit PASS, Goal tab | PASS |
 | Packaging | installable CLI | `pyproject.toml`, `adco`, `adco-init`, `adco-validate`, `adco-check`, `make install-smoke` | PASS for source install |
 | Sample generation | user can try without real material | `adco sample`, `tools/run_checks.py` temp sample | PASS |
-| GitHub readiness | license, contribution, security, roadmap | added core files | PASS |
+| GitHub readiness | license, contribution, security, roadmap, release checklist | added core files, `docs/operating/github_release_checklist.md` | PASS locally |
 | CI | automated checks on push | `.github/workflows/check.yml` | PASS once pushed |
 | Public appeal | screenshots, demo, concise pitch | `docs/assets/dashboard-*.png`, `docs/operating/demo_script.md`, README demo section | PARTIAL |
 
@@ -42,9 +42,10 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 4. Add screenshots/demo media. Status: initial desktop/mobile dashboard screenshots PASS.
 5. Add minimal sample project generator. Status: `adco sample` local PASS.
 6. Add structured Gate regression coverage. Status: no-deps Gate paths PASS.
-7. Push repository so GitHub Actions can run remotely.
-8. Publish public README with clear problem, demo, and safety story.
-9. Iterate on issues from real users.
+7. Add GitHub release checklist. Status: local release gate ready.
+8. Push repository so GitHub Actions can run remotely. Status: blocked until `git remote` exists.
+9. Publish public README with clear problem, demo, and safety story.
+10. Iterate on issues from real users.
 
 ## Stop Conditions
 
