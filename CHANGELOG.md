@@ -34,3 +34,4 @@
 - Updated the public roadmap to reflect current local release readiness and remote-release next steps.
 - Added `adco validate` and `adco check` aliases for the existing validation and verification workflows.
 - Updated public docs and templates to use `adco demo`, `adco validate`, and `adco check` as the primary paths.
+- Added JSON output for `adco doctor`, `adco status`, and `adco validate`.

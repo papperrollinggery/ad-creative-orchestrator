@@ -2855,22 +2855,38 @@ Still requires explicit confirmation:
     return overall, results, report_path
 
 
-def print_status(project: Path) -> None:
+def status_payload(project: Path) -> dict[str, object]:
+    project = project.resolve()
     counts = read_counts(project)
     errors, _ = validate(project)
     dashboard = project / DASHBOARD_REL
     report = project / COUNCIL_REPORT_REL
-    print(f"PROJECT={project.resolve()}")
-    print(f"STAGE={project_stage(project)}")
-    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    return {
+        "project": str(project),
+        "stage": project_stage(project),
+        "validation": "PASS" if not errors else "CHECK",
+        "counts": counts,
+        "dashboard": str(dashboard) if dashboard.exists() else None,
+        "council_report": str(report) if report.exists() else None,
+        "errors": errors,
+    }
+
+
+def print_status(project: Path) -> None:
+    payload = status_payload(project)
+    counts = payload["counts"]
+    print(f"PROJECT={payload['project']}")
+    print(f"STAGE={payload['stage']}")
+    print(f"VALIDATION={payload['validation']}")
     print(f"SOURCE_EVENTS={counts['source_events']}")
     print(f"WORK_ITEMS={counts['work_items']}")
     print(f"REFERENCES={counts['references']}")
     print(f"ASSETS={counts['assets']}")
     print(f"ARTIFACTS={counts['artifacts']}")
     print(f"GATES={counts['gates']}")
-    print(f"DASHBOARD={dashboard if dashboard.exists() else 'MISSING'}")
-    print(f"COUNCIL_REPORT={report if report.exists() else 'MISSING'}")
+    print(f"DASHBOARD={payload['dashboard'] or 'MISSING'}")
+    print(f"COUNCIL_REPORT={payload['council_report'] or 'MISSING'}")
+    errors = payload["errors"]
     if errors:
         print("ERRORS:")
         for error in errors:
@@ -3969,20 +3985,41 @@ def command_council(args: argparse.Namespace) -> int:
 
 
 def command_status(args: argparse.Namespace) -> int:
-    print_status(Path(args.project).resolve())
+    project = Path(args.project).resolve()
+    if args.json:
+        print(json.dumps(status_payload(project), ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print_status(project)
     return 0
 
 
 def command_validate(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     errors, stats = validate(project)
-    for key, value in stats.items():
-        print(f"{key.upper()}={value}")
-    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    status = "PASS" if not errors else "CHECK"
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "project": str(project),
+                    "validation": status,
+                    "stats": stats,
+                    "errors": errors,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        for key, value in stats.items():
+            print(f"{key.upper()}={value}")
+        print(f"VALIDATION={status}")
     if errors:
-        print("ERRORS:")
-        for error in errors:
-            print(f"- {error}")
+        if not args.json:
+            print("ERRORS:")
+            for error in errors:
+                print(f"- {error}")
         return 1
     return 0
 
@@ -3995,19 +4032,34 @@ def command_check(args: argparse.Namespace) -> int:
 
 def command_doctor(args: argparse.Namespace) -> int:
     status, issues, warnings, evidence = doctor_report()
-    print(f"ADCO_DOCTOR={status}")
-    print(f"ISSUES={len(issues)}")
-    print(f"WARNINGS={len(warnings)}")
-    for item in evidence:
-        print(f"EVIDENCE={item}")
-    if warnings:
-        print("DOCTOR_WARNINGS:")
-        for warning in warnings:
-            print(f"- {warning}")
-    if issues:
-        print("DOCTOR_ISSUES:")
-        for issue in issues:
-            print(f"- {issue}")
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "status": status,
+                    "issues": issues,
+                    "warnings": warnings,
+                    "evidence": evidence,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        print(f"ADCO_DOCTOR={status}")
+        print(f"ISSUES={len(issues)}")
+        print(f"WARNINGS={len(warnings)}")
+        for item in evidence:
+            print(f"EVIDENCE={item}")
+        if warnings:
+            print("DOCTOR_WARNINGS:")
+            for warning in warnings:
+                print(f"- {warning}")
+        if issues:
+            print("DOCTOR_ISSUES:")
+            for issue in issues:
+                print(f"- {issue}")
     return 0 if not issues else 1
 
 
@@ -4407,16 +4459,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     status_parser = subparsers.add_parser("status", help="Print current project status.")
     status_parser.add_argument("project", help="Project directory.")
+    status_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     status_parser.set_defaults(func=command_status)
 
     validate_parser = subparsers.add_parser("validate", help="Validate a project directory.")
     validate_parser.add_argument("project", help="Project directory.")
+    validate_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     validate_parser.set_defaults(func=command_validate)
 
     check_parser = subparsers.add_parser("check", help="Run the full verification suite.")
     check_parser.set_defaults(func=command_check)
 
     doctor_parser = subparsers.add_parser("doctor", help="Diagnose installation, templates, optional dependencies, and release blockers.")
+    doctor_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     doctor_parser.set_defaults(func=command_doctor)
 
     support_parser = subparsers.add_parser("support-bundle", help="Write a sanitized support bundle for bug reports.")

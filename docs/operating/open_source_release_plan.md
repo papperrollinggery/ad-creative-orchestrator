@@ -30,7 +30,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 | Dashboard usability | non-developer can inspect state | dashboard audit PASS, Goal tab, `adco open-dashboard` | PASS |
 | Packaging | installable CLI | `pyproject.toml`, packaged runtime assets, `make install-smoke`, `make package-smoke`, `make dist-check` | PASS |
 | Sample generation | user can try without real material | `adco demo`, `adco sample`, `tools/run_checks.py` temp sample | PASS |
-| GitHub readiness | license, contribution, security, roadmap, release checklist, diagnostics | added core files, `docs/operating/github_release_checklist.md`, `adco --version`, `adco doctor`, `adco support-bundle`, `make dist-check`, `make release-check` | PASS locally |
+| GitHub readiness | license, contribution, security, roadmap, release checklist, diagnostics | added core files, `docs/operating/github_release_checklist.md`, `adco --version`, `adco doctor --json`, `adco support-bundle`, `make dist-check`, `make release-check` | PASS locally |
 | CI | automated checks on push | `.github/workflows/check.yml` runs `make release-check` on Python 3.10 and 3.12 | PASS once pushed |
 | Public appeal | screenshots, demo, concise pitch | README pitch, `docs/assets/dashboard-*.png`, `docs/assets/first-run-transcript.md`, `docs/operating/demo_script.md` | PASS locally |
 | Adoption docs | new users can map the tool to real workflows | `docs/operating/adoption_patterns.md` | PASS |
@@ -58,7 +58,8 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 19. Add direct dashboard open command. Status: `adco open-dashboard --no-open` PASS.
 20. Add one-command demo. Status: `adco demo --no-open` PASS.
 21. Add unified `adco validate` and `adco check` subcommands. Status: local and install smoke PASS.
-22. Iterate on issues from real users.
+22. Add JSON output for core diagnostics and validation. Status: `doctor/status/validate --json` local and install smoke PASS.
+23. Iterate on issues from real users.
 
 ## Stop Conditions
 

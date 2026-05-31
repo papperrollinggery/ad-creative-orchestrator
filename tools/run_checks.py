@@ -45,6 +45,7 @@ def main() -> int:
         run([python, "tools/render_demo_transcript.py", "--check"])
         run([python, "tools/ad_creative_operator.py", "--version"])
         run([python, "tools/ad_creative_operator.py", "doctor"])
+        run([python, "tools/ad_creative_operator.py", "doctor", "--json"])
         run([python, "tools/test_gates.py"])
         run([python, "tools/test_goal_workflow.py"])
     else:
@@ -65,6 +66,7 @@ def main() -> int:
         )
         run([python, "-m", "ad_creative_operator", "--version"])
         run([python, "-m", "ad_creative_operator", "doctor"])
+        run([python, "-m", "ad_creative_operator", "doctor", "--json"])
         run([python, "-m", "test_gates"])
         run([python, "-m", "test_goal_workflow"])
     if SOURCE_MODE:
@@ -88,6 +90,8 @@ def main() -> int:
         run([python, *operator, "demo", str(demo), "--no-open"])
         run([python, *operator, "support-bundle", str(sample)])
         run([python, *operator, "open-dashboard", str(sample), "--no-open"])
+        run([python, *operator, "status", str(sample), "--json"])
+        run([python, *operator, "validate", str(sample), "--json"])
         run([python, *validator, str(sample)])
         if SOURCE_MODE:
             run([python, *operator, "audit-dashboard", str(moncler), "--render"])

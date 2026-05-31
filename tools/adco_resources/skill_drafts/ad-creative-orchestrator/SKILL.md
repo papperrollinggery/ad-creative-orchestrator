@@ -74,9 +74,11 @@ adco demo [project_dir]
 adco sample <project_dir>
 adco --version
 adco doctor
+adco doctor --json
 adco support-bundle <project_dir>
 adco open-dashboard <project_dir>
 adco validate <project_dir>
+adco validate <project_dir> --json
 adco check
 adco run <project_dir> --material <materials_path>
 adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>

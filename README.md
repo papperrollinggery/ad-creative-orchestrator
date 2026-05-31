@@ -88,6 +88,7 @@ python3 -m pip install .
 adco --help
 adco --version
 adco doctor
+adco doctor --json
 adco-init <项目目录>
 adco demo [项目目录]
 adco sample <项目目录>
@@ -96,6 +97,7 @@ adco open-dashboard <项目目录>
 adco run <项目目录> --material <资料文件或文件夹>
 adco goal-plan <项目目录> --title "<目标标题>" --objective "<目标内容>"
 adco validate <项目目录>
+adco validate <项目目录> --json
 adco check
 ```
 
@@ -217,6 +219,7 @@ GitHub 协作：
 ```text
 adco check
 adco --version
+adco doctor --json
 make check
 make dist-check
 make release-check
@@ -225,7 +228,9 @@ adco doctor
 adco support-bundle <项目目录>
 adco open-dashboard <项目目录> --no-open
 adco demo <项目目录> --no-open
+adco status <项目目录> --json
 adco validate <项目目录>
+adco validate <项目目录> --json
 python3 tools/run_checks.py
 adco sample <项目目录>
 adco status <项目目录>

@@ -16,6 +16,7 @@ Then use:
 adco --help
 adco --version
 adco doctor
+adco doctor --json
 adco-init <project_dir>
 adco demo [project_dir]
 adco sample <project_dir>
@@ -24,6 +25,7 @@ adco open-dashboard <project_dir>
 adco run <project_dir> --material <material_file_or_folder>
 adco goal-plan <project_dir> --title "<goal title>" --objective "<goal objective>"
 adco validate <project_dir>
+adco validate <project_dir> --json
 adco check
 ```
 
@@ -45,6 +47,7 @@ Runtime templates and the project skill draft are also packaged, so `adco sample
 adco check
 adco --version
 adco doctor
+adco doctor --json
 make install-smoke
 make package-smoke
 make dist-check
