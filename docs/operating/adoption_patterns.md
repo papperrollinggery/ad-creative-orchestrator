@@ -12,6 +12,7 @@ adco run <project_dir> --material <brief_file_or_folder>
 adco status <project_dir>
 adco status <project_dir> --json
 adco next <project_dir>
+adco docs
 ```
 
 Expected output:
@@ -24,6 +25,7 @@ current_truth.md
 操作台.html
 NEXT_ACTION
 NEXT_STATUS
+DOCS_MODE
 ```
 
 Gate:

@@ -257,6 +257,37 @@ def release_status_payload() -> dict[str, object]:
     }
 
 
+def docs_payload() -> dict[str, object]:
+    root = source_root()
+    docs: list[dict[str, object]] = []
+    if root:
+        for label, rel_path in [
+            ("readme", "README.md"),
+            ("install", "docs/operating/install.md"),
+            ("adoption_patterns", "docs/operating/adoption_patterns.md"),
+            ("release_plan", "docs/operating/open_source_release_plan.md"),
+            ("first_run_transcript", "docs/assets/first-run-transcript.md"),
+        ]:
+            path = root / rel_path
+            docs.append({"label": label, "path": str(path), "exists": path.exists()})
+    return {
+        "mode": "source" if root else "installed",
+        "source_root": str(root) if root else None,
+        "template_root": str(TEMPLATE_ROOT),
+        "skill_draft": str(SKILL_DRAFT_DIR / "SKILL.md"),
+        "docs": docs,
+        "quickstart": [
+            "adco --version",
+            "adco doctor",
+            "adco release-status",
+            "adco demo",
+            "adco next /tmp/adco-demo",
+            "adco open-dashboard /tmp/adco-demo --no-open",
+            "adco check",
+        ],
+    }
+
+
 def sanitized_doctor_evidence(evidence: list[str]) -> list[str]:
     sanitized: list[str] = []
     for item in evidence:
@@ -4258,6 +4289,30 @@ def command_release_status(args: argparse.Namespace) -> int:
     return 1 if payload["release_status"] == "CHECK" else 0
 
 
+def command_docs(args: argparse.Namespace) -> int:
+    payload = docs_payload()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"DOCS_MODE={payload['mode']}")
+        print(f"SOURCE_ROOT={payload['source_root'] or 'NOT_AVAILABLE'}")
+        print(f"TEMPLATE_ROOT={payload['template_root']}")
+        print(f"SKILL_DRAFT={payload['skill_draft']}")
+        docs = payload["docs"]
+        if docs:
+            print("DOCS:")
+            for item in docs:
+                exists = "PASS" if item["exists"] else "MISSING"
+                print(f"- {item['label']}={item['path']} [{exists}]")
+        else:
+            print("DOCS=INSTALLED_PACKAGE_COMMAND_HELP_ONLY")
+        print("QUICKSTART:")
+        for command in payload["quickstart"]:
+            print(f"- {command}")
+    missing = [item for item in payload["docs"] if not item["exists"]]
+    return 1 if missing else 0
+
+
 def command_support_bundle(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     if not project.exists():
@@ -4684,6 +4739,10 @@ def build_parser() -> argparse.ArgumentParser:
     release_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     release_parser.add_argument("--strict", action="store_true", help="Return non-zero unless ready for remote checks.")
     release_parser.set_defaults(func=command_release_status)
+
+    docs_parser = subparsers.add_parser("docs", help="Print local documentation paths and quickstart commands.")
+    docs_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    docs_parser.set_defaults(func=command_docs)
 
     support_parser = subparsers.add_parser("support-bundle", help="Write a sanitized support bundle for bug reports.")
     support_parser.add_argument("project", help="Project directory.")

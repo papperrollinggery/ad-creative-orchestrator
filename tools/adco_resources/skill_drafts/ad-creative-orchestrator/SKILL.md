@@ -78,6 +78,8 @@ adco doctor
 adco doctor --json
 adco release-status
 adco release-status --json
+adco docs
+adco docs --json
 adco support-bundle <project_dir>
 adco open-dashboard <project_dir>
 adco status <project_dir>

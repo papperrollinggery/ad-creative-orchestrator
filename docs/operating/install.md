@@ -19,6 +19,8 @@ adco doctor
 adco doctor --json
 adco release-status
 adco release-status --json
+adco docs
+adco docs --json
 adco init <project_dir>
 adco-init <project_dir>
 adco demo [project_dir]

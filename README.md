@@ -21,6 +21,7 @@ adco release-status
 adco sample /tmp/adco-sample
 adco open-dashboard /tmp/adco-sample
 adco doctor
+adco docs
 adco support-bundle /tmp/adco-sample
 ```
 
@@ -48,6 +49,7 @@ Open:
 - `adco status`: show validation, blockers, pending confirmations, and the next action.
 - `adco next`: print the next safe action and automation-friendly next status.
 - `adco release-status`: summarize local release readiness and remote blockers.
+- `adco docs`: print local docs, template, skill draft paths, and quickstart commands.
 - Gate commands for references, search, visual assets, PPT/client pack, and non-developer handoff.
 
 ## Safety Model
@@ -98,6 +100,8 @@ adco doctor
 adco doctor --json
 adco release-status
 adco release-status --json
+adco docs
+adco docs --json
 adco init <项目目录>
 adco-init <项目目录>
 adco demo [项目目录]
@@ -356,6 +360,7 @@ wheel distribution check: make dist-check PASS
 version diagnostics: adco --version PASS
 doctor diagnostics: adco doctor PASS with remote warning when no git remote exists
 release diagnostics: adco release-status reports local readiness and remote blocker state
+docs diagnostics: adco docs reports local docs and quickstart paths
 status diagnostics: adco status reports next action, blockers, open gaps, and pending confirmations
 next diagnostics: adco next reports NEXT_STATUS and NEXT_ACTION
 support bundle: adco support-bundle PASS with sanitized project diagnostics

@@ -40,3 +40,4 @@
 - Added `adco next` for a compact next safe action decision.
 - Kept JSON diagnostics verified while reducing `adco check` output noise.
 - Added `adco release-status` for local release readiness and remote blocker summaries.
+- Added `adco docs` for local documentation paths and quickstart commands.
