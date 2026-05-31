@@ -186,7 +186,7 @@ python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operato
 通过含义：
 
 ```text
-validate_project.py 通过
+adco validate 通过
 操作台可生成且通过审计
 三方议会 PASS
 搜索/参考/视觉/客户包 Gate 不阻塞内部交接
@@ -231,7 +231,7 @@ Codex 自动：
 判断是否需要搜索
 推进到安全的下一步
 遇到必须人工决策就停
-运行 validate_project.py
+运行 adco validate
 ```
 
 ### ad-creative:start
@@ -442,7 +442,7 @@ python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/init_project.py <�
 每个关键阶段后运行：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/validate_project.py <项目目录>
+python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py validate <项目目录>
 ```
 
 Goal / Gate 回归测试：

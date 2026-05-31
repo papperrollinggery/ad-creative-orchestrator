@@ -28,7 +28,7 @@ body:
         adco support-bundle <project_dir>
         adco validate <project_dir>
         adco check
-        adco-check or make release-check
+        make release-check
     validations:
       required: true
   - type: textarea
@@ -37,7 +37,7 @@ body:
       label: Reproduction steps
       description: Smallest command sequence or project state that reproduces the issue.
       placeholder: |
-        1. adco sample /tmp/adco-bug
+        1. adco demo /tmp/adco-bug --no-open
         2. adco <command> ...
         3. observed output ...
     validations:

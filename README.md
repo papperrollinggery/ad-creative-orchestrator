@@ -10,20 +10,20 @@ It turns messy briefs, references, image assets, PPT drafts, review gates, and c
 python3 -m pip install .
 adco --version
 adco demo
+adco status /tmp/adco-demo
+adco open-dashboard /tmp/adco-demo --no-open
+adco validate /tmp/adco-demo
+adco check
 adco sample /tmp/adco-sample
-adco status /tmp/adco-sample
 adco open-dashboard /tmp/adco-sample
 adco doctor
 adco support-bundle /tmp/adco-sample
-adco validate /tmp/adco-sample
-adco check
 ```
 
 Expected:
 
 ```text
 DEMO=PASS
-SAMPLE=PASS
 VALIDATION=PASS
 RUN_CHECKS=PASS
 ```
@@ -31,14 +31,15 @@ RUN_CHECKS=PASS
 Open:
 
 ```text
-/tmp/adco-sample/AD-creative/handoff/操作台.html
+/tmp/adco-demo/AD-creative/handoff/操作台.html
 ```
 
 ## What You Get
 
 - `AD-creative/orchestrator/`: structured source of truth for requirements, gaps, work, artifacts, Gates, versions.
 - `AD-creative/handoff/`: non-developer dashboard, project board, pending decisions, client question script.
-- `adco sample`: one-command local demo with no real client material.
+- `adco demo`: one-command local demo with no real client material.
+- `adco sample`: deterministic sample project generator.
 - `adco run`: register real materials and produce first-pass requirements, gaps, dashboard, and council report.
 - Gate commands for references, search, visual assets, PPT/client pack, and non-developer handoff.
 
@@ -96,8 +97,9 @@ adco run <项目目录> --material <资料文件或文件夹>
 adco goal-plan <项目目录> --title "<目标标题>" --objective "<目标内容>"
 adco validate <项目目录>
 adco check
-adco-check
 ```
+
+兼容入口仍保留：`adco-check`、`adco-validate`。
 
 不安装也可以直接用：
 
@@ -145,7 +147,7 @@ python3 tools/ad_creative_operator.py run <项目目录> --material <资料文�
 生成 AD-creative/handoff/操作台.html
 生成可编辑 PPTX 草稿并检查可编辑文本层
 运行三方议会 readiness 审核
-运行 validate_project.py
+运行 `adco validate`
 ```
 
 项目本地 Skill 草稿：
@@ -213,7 +215,7 @@ GitHub 协作：
 验证工具：
 
 ```text
-adco-check
+adco check
 adco --version
 make check
 make dist-check
@@ -224,7 +226,6 @@ adco support-bundle <项目目录>
 adco open-dashboard <项目目录> --no-open
 adco demo <项目目录> --no-open
 adco validate <项目目录>
-adco check
 python3 tools/run_checks.py
 adco sample <项目目录>
 adco status <项目目录>
@@ -233,6 +234,7 @@ python3 tools/ad_creative_operator.py sample <项目目录>
 python3 tools/ad_creative_operator.py status <项目目录>
 python3 tools/ad_creative_operator.py goal-plan <项目目录> --title <目标标题> --objective <目标内容>
 python3 tools/ad_creative_operator.py intake <项目目录>
+adco-check
 python3 tools/ad_creative_operator.py add-reference <项目目录> --url <https链接> --title <标题>
 python3 tools/ad_creative_operator.py search-quality-gate <项目目录>
 python3 tools/ad_creative_operator.py reference-pack-gate <项目目录>
@@ -247,7 +249,7 @@ python3 tools/ad_creative_operator.py install-skill
 python3 tools/ad_creative_operator.py audit-dashboard <项目目录> --render
 python3 tools/ad_creative_operator.py council <项目目录> --render-dashboard
 python3 tools/init_project.py <项目目录>
-python3 tools/validate_project.py <项目目录>
+python3 tools/ad_creative_operator.py validate <项目目录>
 ```
 
 ## 推荐使用方式

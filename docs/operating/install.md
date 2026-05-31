@@ -25,8 +25,9 @@ adco run <project_dir> --material <material_file_or_folder>
 adco goal-plan <project_dir> --title "<goal title>" --objective "<goal objective>"
 adco validate <project_dir>
 adco check
-adco-check
 ```
+
+Compatibility entrypoints remain available: `adco-check`, `adco-validate`.
 
 ## Development Install
 
@@ -42,7 +43,6 @@ Runtime templates and the project skill draft are also packaged, so `adco sample
 
 ```bash
 adco check
-adco-check
 adco --version
 adco doctor
 make install-smoke

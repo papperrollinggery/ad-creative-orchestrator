@@ -81,6 +81,7 @@ adco check
 adco run <project_dir> --material <materials_path>
 adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
 adco-check
+adco-validate <project_dir>
 make dist-check
 make release-check
 ```
@@ -121,7 +122,7 @@ Steps:
 5. Decide whether search is needed and write search_plan if needed.
 6. Continue through the next safe internal stage only if no human decision is blocking.
 7. Stop at any required user decision and update 待你确认.md.
-8. Run validate_project.py before reporting status.
+8. Run `adco validate` or `ad_creative_operator.py validate` before reporting status.
 ```
 
 User only needs to provide:
@@ -312,7 +313,7 @@ update next_version_plan
 After major stages, run:
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/validate_project.py <project_dir>
+python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py validate <project_dir>
 ```
 
 Proceed only if:

@@ -140,7 +140,7 @@ ad-creative:next
 5. 每个 Gate 前运行反驳性议会。
 6. 没有反对意见、反驳路径、修订决议时，Gate 最高只能 PARTIAL_PASS。
 7. 阶段完成后更新 gate_log / decisions / resolutions / 项目看板 / 待你确认。
-8. 运行 validate_project.py 后再报告结果。
+8. 运行 `adco validate` 或 `ad_creative_operator.py validate` 后再报告结果。
 ```
 
 ## 5. 状态 Prompt
@@ -195,7 +195,7 @@ ad-creative:mine-skill
 
 ```text
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py council <真实项目路径> --render-dashboard
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/validate_project.py <真实项目路径>
+python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py validate <真实项目路径>
 ```
 
 通过标准：
@@ -234,6 +234,6 @@ AD-creative/orchestrator/artifact_index.csv 是否能追踪产物状态
 AD-creative/orchestrator/gate_log.csv 是否挡住客户稿风险
 AD-creative/orchestrator/goal_iterations/ 是否有本轮 goal 执行记录
 AD-creative/handoff/操作台.html 是否显示 Goal Tab
-tools/validate_project.py 是否 PASS
+adco validate / ad_creative_operator.py validate 是否 PASS
 tools/test_goal_workflow.py 是否 PASS
 ```
