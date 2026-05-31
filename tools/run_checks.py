@@ -106,6 +106,7 @@ def main() -> int:
         qingling = tmp / "simulated_qingling_outdoor_launch"
         sample = tmp / "sample_project"
         demo = tmp / "demo_project"
+        quickstart = tmp / "quickstart_project"
         initialized = tmp / "init_project"
         operator = ["tools/ad_creative_operator.py"] if SOURCE_MODE else ["-m", "ad_creative_operator"]
         validator = ["tools/validate_project.py"] if SOURCE_MODE else ["-m", "validate_project"]
@@ -116,6 +117,7 @@ def main() -> int:
         run_json([python, *operator, "validate", str(initialized), "--json"])
         run([python, *operator, "sample", str(sample)])
         run([python, *operator, "demo", str(demo), "--no-open"])
+        run([python, *operator, "quickstart", str(quickstart), "--no-open"])
         run([python, *operator, "support-bundle", str(sample)])
         run([python, *operator, "open-dashboard", str(sample), "--no-open"])
         run_json([python, *operator, "status", str(sample), "--json"])

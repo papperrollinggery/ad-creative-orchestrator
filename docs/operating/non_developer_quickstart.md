@@ -37,6 +37,7 @@ AD-creative/handoff/操作台.html
 命令行方式：
 
 ```text
+adco quickstart
 adco demo
 adco run <项目目录> --material <资料文件或文件夹>
 adco open-dashboard <项目目录>

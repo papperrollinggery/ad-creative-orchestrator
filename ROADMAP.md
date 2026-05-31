@@ -16,6 +16,7 @@ Make Ad Creative Orchestrator a usable, credible, open-source project for Codex-
 - Public GitHub remote with Actions running `make release-check` on Python 3.10 and 3.12
 - Public clone trial passes from fresh `git clone` to `adco demo` and validation
 - GitHub-first README onboarding, status badge, project URLs, and repository topics
+- One-command `adco quickstart` first run with validation and next-step output
 
 ## Next
 
@@ -40,6 +41,7 @@ Make Ad Creative Orchestrator a usable, credible, open-source project for Codex-
 - Add public GitHub remote and verify Actions on Python 3.10 and 3.12.
 - Verify a public clone trial from install to demo validation.
 - Improve GitHub discoverability with repo topics, homepage, badges, and project URLs.
+- Add one-command `adco quickstart` for first-run onboarding.
 - Add documentation for real-world adoption patterns.
 - Expand Gate tests into fixture-level positive cases for PPTX and image PASS paths.
 - Add richer demo media for the first-run flow.

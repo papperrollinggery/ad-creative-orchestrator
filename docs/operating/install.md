@@ -34,6 +34,7 @@ adco docs
 adco docs --json
 adco init <project_dir>
 adco-init <project_dir>
+adco quickstart [project_dir]
 adco demo [project_dir]
 adco sample <project_dir>
 adco support-bundle <project_dir>

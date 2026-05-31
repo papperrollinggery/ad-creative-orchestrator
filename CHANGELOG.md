@@ -47,3 +47,4 @@
 - Published the public GitHub remote and verified Actions on Python 3.10 and 3.12.
 - Verified a public clone trial from install to demo validation.
 - Added GitHub-first onboarding, project URLs, repository topics, and status badges.
+- Added `adco quickstart` for one-command first run, validation, dashboard opening, and next-step output.

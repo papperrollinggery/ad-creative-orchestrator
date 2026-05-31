@@ -19,7 +19,8 @@ keywords = [
   "workflow",
   "local-first",
   "ppt",
-  "image-generation"
+  "image-generation",
+  "quickstart"
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",

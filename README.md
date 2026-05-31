@@ -19,7 +19,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install .
 adco --version
-adco demo /tmp/adco-demo --no-open
+adco quickstart /tmp/adco-demo --no-open
 adco status /tmp/adco-demo
 adco next /tmp/adco-demo
 adco open-dashboard /tmp/adco-demo
@@ -31,7 +31,7 @@ adco release-status
 Expected:
 
 ```text
-DEMO=PASS
+QUICKSTART=PASS
 VALIDATION=PASS
 RUN_CHECKS=PASS
 ```
@@ -55,6 +55,7 @@ adco next <project_dir>
 
 - `AD-creative/orchestrator/`: structured source of truth for requirements, gaps, work, artifacts, Gates, versions.
 - `AD-creative/handoff/`: non-developer dashboard, project board, pending decisions, client question script.
+- `adco quickstart`: one-command first run that creates a demo, validates it, opens the dashboard, and prints next steps.
 - `adco demo`: one-command local demo with no real client material.
 - `adco sample`: deterministic sample project generator.
 - `adco run`: register real materials and produce first-pass requirements, gaps, dashboard, and council report.
@@ -116,6 +117,7 @@ adco docs
 adco docs --json
 adco init <项目目录>
 adco-init <项目目录>
+adco quickstart [项目目录]
 adco demo [项目目录]
 adco sample <项目目录>
 adco support-bundle <项目目录>
@@ -373,9 +375,10 @@ status diagnostics: adco status reports next action, blockers, open gaps, and pe
 next diagnostics: adco next reports NEXT_STATUS and NEXT_ACTION
 support bundle: adco support-bundle PASS with sanitized project diagnostics
 dashboard open command: adco open-dashboard PASS
+quickstart command: adco quickstart PASS
 local release check: make release-check PASS
 GitHub Actions: make release-check PASS on Python 3.10 / 3.12
-public clone trial: git clone + pip install . + adco demo/open-dashboard/validate PASS
+public clone trial: git clone + pip install . + adco quickstart/open-dashboard/validate PASS
 ```
 
 仍需真实项目负责人最终执行：

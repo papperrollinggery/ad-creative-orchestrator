@@ -41,6 +41,7 @@ Use when the user wants a non-developer handoff surface or one local command.
 Run:
 
 ```text
+adco quickstart [project_dir]
 adco sample <project_dir>
 adco demo [project_dir]
 adco --version
@@ -71,6 +72,7 @@ Installed CLI equivalent:
 ```text
 python3 -m pip install .
 adco init <project_dir>
+adco quickstart [project_dir]
 adco demo [project_dir]
 adco sample <project_dir>
 adco --version
