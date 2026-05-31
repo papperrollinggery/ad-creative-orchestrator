@@ -17,3 +17,4 @@
 - Added `tools/test_gates.py` structured Gate regression coverage.
 - Added GitHub release checklist with local and remote gates.
 - Added real-world adoption pattern documentation.
+- Added optional positive Gate fixtures for real PNG visual QA and editable PPTX client-pack PASS paths.

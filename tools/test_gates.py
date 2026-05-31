@@ -7,7 +7,9 @@ import tempfile
 from pathlib import Path
 
 from ad_creative_operator import (
+    add_visual_asset,
     ensure_project,
+    export_editable_pptx,
     read_csv_rows,
     render_goal_iteration_plan,
     review_client_pack,
@@ -19,6 +21,9 @@ from ad_creative_operator import (
     write_text,
 )
 from validate_project import validate
+
+
+OPTIONAL_SKIPS: list[str] = []
 
 
 def assert_valid(project: Path) -> None:
@@ -44,6 +49,45 @@ def add_adversarial_record(project: Path, stage: str = "global") -> None:
         objective="Verify Gate policy has an adversarial council record.",
         owner="Regression",
     )
+
+
+def optional_module(name: str) -> bool:
+    try:
+        __import__(name)
+        return True
+    except Exception as exc:  # noqa: BLE001 - tests report optional fixture coverage
+        OPTIONAL_SKIPS.append(f"{name}: {exc}")
+        return False
+
+
+def add_requirement(project: Path, requirement_id: str = "REQ-001") -> None:
+    add_row(
+        project,
+        "AD-creative/orchestrator/requirements.csv",
+        {
+            "requirement_id": requirement_id,
+            "source_event_id": "",
+            "owner": "operator",
+            "statement": "Use internal visual QA fixture for selected asset validation.",
+            "requirement_type": "visual",
+            "priority": "high",
+            "status": "extracted",
+            "confidence": "0.90",
+            "scope": "project",
+            "affected_stage": "visual_review",
+            "linked_artifacts": "",
+            "supersedes_requirement_id": "",
+            "open_questions": "",
+        },
+    )
+
+
+def create_png(path: Path, size: tuple[int, int] = (960, 640)) -> None:
+    from PIL import Image
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", size, (42, 96, 137))
+    image.save(path)
 
 
 def test_reference_pack_blocks_client_visible_bad_reference() -> None:
@@ -141,6 +185,36 @@ def test_visual_quality_blocks_missing_selected_asset_file() -> None:
         assert any("文件不存在" in item for item in findings), findings
 
 
+def test_visual_quality_passes_real_internal_selected_asset() -> None:
+    if not optional_module("PIL"):
+        return
+    with tempfile.TemporaryDirectory(prefix="adco-gate-visual-pass-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_adversarial_record(project)
+        add_requirement(project)
+        source = project / "fixture/selected.png"
+        create_png(source)
+        add_visual_asset(
+            project,
+            source,
+            "SLOT-001",
+            "REQ-001",
+            "",
+            "uploaded_image",
+            "internal_only",
+            "PASS",
+            "low",
+            "",
+            "fixture image for positive visual gate regression",
+            selected=True,
+        )
+        status, findings, _ = review_visual_quality(project)
+        assert status == "PASS", (status, findings)
+        assert findings == [], findings
+        assert_valid(project)
+
+
 def test_client_pack_blocks_without_editable_pptx() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-gate-client-") as raw_project:
         project = Path(raw_project)
@@ -149,6 +223,20 @@ def test_client_pack_blocks_without_editable_pptx() -> None:
         status, findings, _ = review_client_pack(project)
         assert status == "BLOCKED", (status, findings)
         assert any("PPTX" in item for item in findings), findings
+        assert_valid(project)
+
+
+def test_client_pack_passes_editable_internal_pptx() -> None:
+    if not optional_module("pptx"):
+        return
+    with tempfile.TemporaryDirectory(prefix="adco-gate-client-pass-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_adversarial_record(project)
+        pptx_path = export_editable_pptx(project)
+        status, findings, _ = review_client_pack(project, pptx_path)
+        assert status == "PASS", (status, findings)
+        assert findings == [], findings
         assert_valid(project)
 
 
@@ -170,8 +258,12 @@ def main() -> int:
     test_reference_pack_blocks_client_visible_bad_reference()
     test_search_quality_passes_clean_plan_with_adversarial_record()
     test_visual_quality_blocks_missing_selected_asset_file()
+    test_visual_quality_passes_real_internal_selected_asset()
     test_client_pack_blocks_without_editable_pptx()
+    test_client_pack_passes_editable_internal_pptx()
     test_handoff_readiness_blocks_incomplete_project()
+    if OPTIONAL_SKIPS:
+        print("TEST_GATES_OPTIONAL_SKIPS=" + "; ".join(OPTIONAL_SKIPS))
     print("TEST_GATES=PASS")
     return 0
 

@@ -260,6 +260,7 @@ goal-plan 执行记录生成: examples/moncler_protocol_dry_run / examples/simul
 操作台 Goal Tab: audit-dashboard PASS
 Goal/Gate 回归测试: tools/test_goal_workflow.py PASS
 Gate 结构化回归测试: tools/test_gates.py PASS
+Gate 正向 fixture: visual PNG PASS / editable PPTX client-pack PASS / no-deps optional skip PASS
 editable CLI install: adco / adco-check smoke PASS
 ```
 
