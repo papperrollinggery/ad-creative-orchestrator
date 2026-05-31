@@ -61,7 +61,8 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 22. Add JSON output for core diagnostics and validation. Status: `doctor/status/validate --json` local and install smoke PASS.
 23. Add unified `adco init` subcommand. Status: source and install smoke PASS.
 24. Add `adco next` next-action decision command. Status: source and package smoke PASS.
-25. Iterate on issues from real users.
+25. Reduce `adco check` JSON output noise while preserving JSON validation. Status: source and package smoke PASS.
+26. Iterate on issues from real users.
 
 ## Stop Conditions
 
