@@ -123,6 +123,7 @@ adco quickstart [项目目录] --json
 adco demo [项目目录]
 adco sample <项目目录>
 adco support-bundle <项目目录>
+adco support-bundle <项目目录> --json
 adco open-dashboard <项目目录>
 adco run <项目目录> --material <资料文件或文件夹>
 adco goal-plan <项目目录> --title "<目标标题>" --objective "<目标内容>"
@@ -260,6 +261,7 @@ make release-check
 make package-smoke
 adco doctor
 adco support-bundle <项目目录>
+adco support-bundle <项目目录> --json
 adco open-dashboard <项目目录> --no-open
 adco init <项目目录>
 adco demo <项目目录> --no-open
@@ -376,6 +378,7 @@ docs diagnostics: adco docs reports local docs and quickstart paths
 status diagnostics: adco status reports next action, blockers, open gaps, and pending confirmations
 next diagnostics: adco next reports NEXT_STATUS and NEXT_ACTION
 support bundle: adco support-bundle PASS with sanitized project diagnostics
+support bundle JSON: adco support-bundle --json PASS
 dashboard open command: adco open-dashboard PASS
 quickstart command: adco quickstart PASS
 quickstart JSON: adco quickstart --json PASS

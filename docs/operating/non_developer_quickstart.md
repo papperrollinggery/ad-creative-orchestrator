@@ -39,6 +39,7 @@ AD-creative/handoff/操作台.html
 ```text
 adco quickstart
 adco quickstart --json
+adco support-bundle <项目目录> --json
 adco demo
 adco run <项目目录> --material <资料文件或文件夹>
 adco open-dashboard <项目目录>

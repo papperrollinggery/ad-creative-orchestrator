@@ -39,6 +39,7 @@ adco quickstart [project_dir] --json
 adco demo [project_dir]
 adco sample <project_dir>
 adco support-bundle <project_dir>
+adco support-bundle <project_dir> --json
 adco open-dashboard <project_dir>
 adco run <project_dir> --material <material_file_or_folder>
 adco goal-plan <project_dir> --title "<goal title>" --objective "<goal objective>"

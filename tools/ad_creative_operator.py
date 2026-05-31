@@ -4405,11 +4405,32 @@ def command_docs(args: argparse.Namespace) -> int:
 def command_support_bundle(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     if not project.exists():
+        if args.json:
+            print(json.dumps({
+                "support_bundle": "CHECK",
+                "project": str(project),
+                "report": None,
+                "validation": "CHECK",
+                "stats": {},
+                "errors": [f"project not found: {project}"],
+            }, ensure_ascii=False, indent=2, sort_keys=True))
+            return 1
         print("SUPPORT_BUNDLE=CHECK")
         print(f"ERROR=project not found: {project}")
         return 1
     report = render_support_bundle(project)
     errors, stats = validate(project)
+    payload = {
+        "support_bundle": "PASS" if not errors else "CHECK",
+        "project": str(project),
+        "report": str(report),
+        "validation": "PASS" if not errors else "CHECK",
+        "stats": stats,
+        "errors": errors,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if not errors else 1
     print(f"SUPPORT_BUNDLE={'PASS' if not errors else 'CHECK'}")
     print(f"REPORT={report}")
     for key, value in stats.items():
@@ -4848,6 +4869,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     support_parser = subparsers.add_parser("support-bundle", help="Write a sanitized support bundle for bug reports.")
     support_parser.add_argument("project", help="Project directory.")
+    support_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     support_parser.set_defaults(func=command_support_bundle)
 
     dashboard_parser = subparsers.add_parser("render-dashboard", help="Render static operation dashboard.")

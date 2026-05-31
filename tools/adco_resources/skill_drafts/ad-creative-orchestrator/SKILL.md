@@ -48,6 +48,7 @@ adco demo [project_dir]
 adco --version
 adco doctor
 adco support-bundle <project_dir>
+adco support-bundle <project_dir> --json
 adco open-dashboard <project_dir>
 adco validate <project_dir>
 adco check
@@ -78,6 +79,7 @@ adco quickstart [project_dir] --json
 adco demo [project_dir]
 adco sample <project_dir>
 adco --version
+adco support-bundle <project_dir> --json
 adco doctor
 adco doctor --json
 adco release-status

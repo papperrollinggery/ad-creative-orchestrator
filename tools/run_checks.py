@@ -121,6 +121,7 @@ def main() -> int:
         run([python, *operator, "quickstart", str(quickstart), "--no-open"])
         run_json([python, *operator, "quickstart", str(quickstart_json), "--no-open", "--json"])
         run([python, *operator, "support-bundle", str(sample)])
+        run_json([python, *operator, "support-bundle", str(sample), "--json"])
         run([python, *operator, "open-dashboard", str(sample), "--no-open"])
         run_json([python, *operator, "status", str(sample), "--json"])
         run([python, *operator, "next", str(sample)])

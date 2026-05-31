@@ -33,6 +33,7 @@ adco quickstart /tmp/adco-release-quickstart-json --no-open --json
 adco demo /tmp/adco-release-demo --no-open
 adco sample /tmp/adco-release-sample
 adco support-bundle /tmp/adco-release-sample
+adco support-bundle /tmp/adco-release-sample --json
 adco open-dashboard /tmp/adco-release-sample --no-open
 adco status /tmp/adco-release-sample --json
 adco next /tmp/adco-release-sample
@@ -61,6 +62,7 @@ QUICKSTART=PASS
 quickstart_json=PASS
 NEXT_STATUS=WAITING_FOR_CONFIRMATION
 SUPPORT_BUNDLE=PASS
+support_bundle_json=PASS
 DASHBOARD_OPEN=SKIPPED
 VALIDATION=PASS
 SAMPLE=PASS
