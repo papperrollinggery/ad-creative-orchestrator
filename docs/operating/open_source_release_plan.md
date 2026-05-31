@@ -30,7 +30,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 | Dashboard usability | non-developer can inspect state | dashboard audit PASS, Goal tab | PASS |
 | Packaging | installable CLI | `pyproject.toml`, `adco`, `adco-init`, `adco-validate`, `adco-check`, `make install-smoke` | PASS for source install |
 | Sample generation | user can try without real material | `adco sample`, `tools/run_checks.py` temp sample | PASS |
-| GitHub readiness | license, contribution, security, roadmap, release checklist | added core files, `docs/operating/github_release_checklist.md` | PASS locally |
+| GitHub readiness | license, contribution, security, roadmap, release checklist | added core files, `docs/operating/github_release_checklist.md`, `make release-check` | PASS locally |
 | CI | automated checks on push | `.github/workflows/check.yml` | PASS once pushed |
 | Public appeal | screenshots, demo, concise pitch | README pitch, `docs/assets/dashboard-*.png`, `docs/assets/first-run-transcript.md`, `docs/operating/demo_script.md` | PASS locally |
 | Adoption docs | new users can map the tool to real workflows | `docs/operating/adoption_patterns.md` | PASS |
@@ -49,7 +49,8 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 10. Expand Gate tests into PPTX/image positive fixtures. Status: local fixture PASS, no-deps skip PASS.
 11. Add richer first-run demo transcript. Status: generated transcript PASS and stale-check wired into `run_checks`.
 12. Publish public README with clear problem, demo, and safety story. Status: local README release pitch PASS.
-13. Iterate on issues from real users.
+13. Add single-command local release check. Status: `make release-check` PASS.
+14. Iterate on issues from real users.
 
 ## Stop Conditions
 

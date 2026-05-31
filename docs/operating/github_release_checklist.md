@@ -15,9 +15,8 @@ Remote push and GitHub Actions verification cannot run until a GitHub repository
 Run from repository root:
 
 ```bash
+make release-check
 git status --short
-make check
-make install-smoke
 python3 tools/ad_creative_operator.py sample /tmp/adco-release-sample
 python3 tools/ad_creative_operator.py audit-dashboard examples/moncler_protocol_dry_run --render
 python3 tools/ad_creative_operator.py audit-dashboard examples/simulated_qingling_outdoor_launch --render
@@ -29,6 +28,7 @@ Pass threshold:
 git status --short only contains intended release changes
 RUN_CHECKS=PASS
 INSTALL_SMOKE=PASS
+RELEASE_CHECK=PASS
 SAMPLE=PASS
 DASHBOARD_AUDIT=PASS
 ```

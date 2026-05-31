@@ -201,6 +201,7 @@ GitHub 协作：
 ```text
 adco-check
 make check
+make release-check
 python3 tools/run_checks.py
 adco sample <项目目录>
 adco status <项目目录>
@@ -304,6 +305,7 @@ Goal/Gate 回归测试: tools/test_goal_workflow.py PASS
 Gate 结构化回归测试: tools/test_gates.py PASS
 Gate 正向 fixture: visual PNG PASS / editable PPTX client-pack PASS / no-deps optional skip PASS
 editable CLI install: adco / adco-check smoke PASS
+local release check: make release-check PASS
 ```
 
 仍需真实项目负责人最终执行：
