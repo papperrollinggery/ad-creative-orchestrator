@@ -24,6 +24,8 @@ Ad Creative Orchestrator 把这些变成本地文件协议和 Gate：
 
 可复现命令见 `docs/operating/demo_script.md`。
 
+首跑输出见 `docs/assets/first-run-transcript.md`。
+
 ## Install
 
 源码安装：

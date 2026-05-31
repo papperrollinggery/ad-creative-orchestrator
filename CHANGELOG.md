@@ -18,3 +18,4 @@
 - Added GitHub release checklist with local and remote gates.
 - Added real-world adoption pattern documentation.
 - Added optional positive Gate fixtures for real PNG visual QA and editable PPTX client-pack PASS paths.
+- Added generated first-run demo transcript and stale-check verification.

@@ -40,6 +40,18 @@ SAMPLE=PASS
 RUN_CHECKS=PASS
 ```
 
+Generated transcript:
+
+```text
+docs/assets/first-run-transcript.md
+```
+
+Regenerate:
+
+```bash
+make demo-transcript
+```
+
 ## Screenshots
 
 Desktop:

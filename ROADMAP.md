@@ -18,7 +18,6 @@ Make Ad Creative Orchestrator a usable, credible, open-source project for Codex-
 ## Next
 
 1. Add GitHub Actions after the repository is pushed.
-2. Add richer demo media for the first-run flow.
 
 ## Done In Local Baseline
 
@@ -29,6 +28,7 @@ Make Ad Creative Orchestrator a usable, credible, open-source project for Codex-
 - Add issue templates and a GitHub release checklist.
 - Add documentation for real-world adoption patterns.
 - Expand Gate tests into fixture-level positive cases for PPTX and image PASS paths.
+- Add richer demo media for the first-run flow.
 
 ## Not Planned
 

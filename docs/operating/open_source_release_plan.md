@@ -32,7 +32,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 | Sample generation | user can try without real material | `adco sample`, `tools/run_checks.py` temp sample | PASS |
 | GitHub readiness | license, contribution, security, roadmap, release checklist | added core files, `docs/operating/github_release_checklist.md` | PASS locally |
 | CI | automated checks on push | `.github/workflows/check.yml` | PASS once pushed |
-| Public appeal | screenshots, demo, concise pitch | `docs/assets/dashboard-*.png`, `docs/operating/demo_script.md`, README demo section | PARTIAL |
+| Public appeal | screenshots, demo, concise pitch | `docs/assets/dashboard-*.png`, `docs/assets/first-run-transcript.md`, `docs/operating/demo_script.md`, README demo section | PARTIAL |
 | Adoption docs | new users can map the tool to real workflows | `docs/operating/adoption_patterns.md` | PASS |
 
 ## Execution Order
@@ -47,8 +47,9 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 8. Push repository so GitHub Actions can run remotely. Status: blocked until `git remote` exists.
 9. Add real-world adoption patterns. Status: adoption doc PASS.
 10. Expand Gate tests into PPTX/image positive fixtures. Status: local fixture PASS, no-deps skip PASS.
-11. Publish public README with clear problem, demo, and safety story.
-12. Iterate on issues from real users.
+11. Add richer first-run demo transcript. Status: generated transcript PASS and stale-check wired into `run_checks`.
+12. Publish public README with clear problem, demo, and safety story.
+13. Iterate on issues from real users.
 
 ## Stop Conditions
 

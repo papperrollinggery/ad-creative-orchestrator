@@ -1,9 +1,12 @@
-.PHONY: check install-dev install-smoke validate dashboards clean
+.PHONY: check demo-transcript install-dev install-smoke validate dashboards clean
 
 PYTHON ?= python3
 
 check:
 	$(PYTHON) tools/run_checks.py
+
+demo-transcript:
+	$(PYTHON) tools/render_demo_transcript.py
 
 install-dev:
 	$(PYTHON) -m pip install -e .
