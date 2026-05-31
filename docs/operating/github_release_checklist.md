@@ -57,6 +57,7 @@ GitHub Actions command: make release-check
 README images render
 Issue templates visible
 PR template visible
+Bug template requires version, doctor, and reproduction evidence
 License detected as MIT
 ```
 

@@ -5,6 +5,9 @@
 ## Verification
 
 - [ ] `python3 tools/run_checks.py`
+- [ ] `make release-check`
+- [ ] `adco --version`
+- [ ] `adco doctor`
 
 ## Safety
 

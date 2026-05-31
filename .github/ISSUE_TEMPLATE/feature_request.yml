@@ -22,5 +22,24 @@ body:
     attributes:
       label: Acceptance evidence
       description: What command, gate, artifact, or dashboard state would prove it works?
+      placeholder: |
+        command:
+        expected output:
+        affected file or dashboard state:
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI/operator
+        - dashboard/handoff
+        - goal/Gate workflow
+        - brand research lane
+        - image workflow lane
+        - install/package/CI
+        - docs/onboarding
+        - other
     validations:
       required: true

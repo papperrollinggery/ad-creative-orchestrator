@@ -22,6 +22,21 @@ body:
     attributes:
       label: Evidence
       description: Command output, gate report, validation output, or file path.
+      placeholder: |
+        adco --version
+        adco doctor
+        adco-check or make release-check
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Smallest command sequence or project state that reproduces the issue.
+      placeholder: |
+        1. adco sample /tmp/adco-bug
+        2. adco <command> ...
+        3. observed output ...
     validations:
       required: true
   - type: dropdown
@@ -35,6 +50,7 @@ body:
         - PPT/export
         - dashboard/handoff
         - goal/Gate workflow
+        - install/package/CI
         - other
     validations:
       required: true
