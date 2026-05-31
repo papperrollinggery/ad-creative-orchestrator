@@ -7,6 +7,7 @@ import argparse
 import csv
 import hashlib
 import html
+import importlib.metadata as metadata
 import json
 import os
 import re
@@ -31,6 +32,8 @@ from validate_project import validate
 REPO_ROOT = repo_or_module_root()
 TEMPLATE_ROOT = template_root()
 SKILL_DRAFT_DIR = skill_draft_dir()
+PACKAGE_NAME = "ad-creative-orchestrator"
+FALLBACK_VERSION = "0.1.0"
 DEFAULT_SKILL_INSTALL_DIR = Path.home() / ".codex/skills/ad-creative-orchestrator"
 DASHBOARD_REL = Path("AD-creative/handoff/操作台.html")
 COUNCIL_REPORT_REL = Path("AD-creative/gates/THREE-COUNCIL-READINESS_report.md")
@@ -104,6 +107,27 @@ def install_global_skill(target: Path = DEFAULT_SKILL_INSTALL_DIR) -> dict[str, 
     }
 
 
+def package_version() -> str:
+    try:
+        return metadata.version(PACKAGE_NAME)
+    except metadata.PackageNotFoundError:
+        pass
+
+    root = source_root()
+    pyproject = root / "pyproject.toml" if root else None
+    if pyproject and pyproject.exists():
+        try:
+            import tomllib
+
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            version = data.get("project", {}).get("version")
+            if isinstance(version, str) and version:
+                return version
+        except Exception:
+            pass
+    return FALLBACK_VERSION
+
+
 def module_available(name: str) -> tuple[bool, str]:
     try:
         imported = __import__(name)
@@ -136,6 +160,7 @@ def doctor_report() -> tuple[str, list[str], list[str], list[str]]:
     issues: list[str] = []
     warnings: list[str] = []
     evidence: list[str] = [
+        f"version={package_version()}",
         f"python={sys.version.split()[0]}",
         f"mode={'source' if source_root() else 'installed'}",
         f"runtime_root={REPO_ROOT}",
@@ -4127,6 +4152,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Operate an Ad Creative Orchestrator project without editing CSVs by hand."
     )
+    parser.add_argument("--version", action="version", version=f"adco {package_version()}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     goal_parser = subparsers.add_parser("goal-plan", help="Create a reusable goal iteration execution plan.")

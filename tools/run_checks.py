@@ -42,6 +42,7 @@ def main() -> int:
         )
         run([python, "tools/check_packaged_assets.py"])
         run([python, "tools/render_demo_transcript.py", "--check"])
+        run([python, "tools/ad_creative_operator.py", "--version"])
         run([python, "tools/ad_creative_operator.py", "doctor"])
         run([python, "tools/test_gates.py"])
         run([python, "tools/test_goal_workflow.py"])
@@ -61,6 +62,7 @@ def main() -> int:
                 "runtime_paths.py",
             ]
         )
+        run([python, "-m", "ad_creative_operator", "--version"])
         run([python, "-m", "ad_creative_operator", "doctor"])
         run([python, "-m", "test_gates"])
         run([python, "-m", "test_goal_workflow"])

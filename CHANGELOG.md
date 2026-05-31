@@ -24,3 +24,4 @@
 - Added packaged runtime assets plus normal `pip install .` smoke verification.
 - Updated project-local skill draft with installed CLI and release-check entry points.
 - Added `adco doctor` install/resource/dependency/release diagnostic command.
+- Added `adco --version` for issue reports and install diagnostics.

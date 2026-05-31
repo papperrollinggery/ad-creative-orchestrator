@@ -16,6 +16,7 @@ Run from repository root:
 
 ```bash
 make release-check
+adco --version
 adco doctor
 git status --short
 python3 tools/ad_creative_operator.py sample /tmp/adco-release-sample
@@ -31,6 +32,7 @@ RUN_CHECKS=PASS
 INSTALL_SMOKE=PASS
 PACKAGE_SMOKE=PASS
 RELEASE_CHECK=PASS
+adco 0.1.0
 ADCO_DOCTOR=PASS
 SAMPLE=PASS
 DASHBOARD_AUDIT=PASS

@@ -14,6 +14,7 @@ Then use:
 
 ```bash
 adco --help
+adco --version
 adco doctor
 adco-init <project_dir>
 adco sample <project_dir>
@@ -36,6 +37,7 @@ Runtime templates and the project skill draft are also packaged, so `adco sample
 
 ```bash
 adco-check
+adco --version
 adco doctor
 make install-smoke
 make package-smoke
@@ -45,6 +47,7 @@ Expected:
 
 ```text
 RUN_CHECKS=PASS
+adco 0.1.0
 ADCO_DOCTOR=PASS
 INSTALL_SMOKE=PASS
 PACKAGE_SMOKE=PASS
