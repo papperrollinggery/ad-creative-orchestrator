@@ -41,6 +41,7 @@ Use when the user wants a non-developer handoff surface or one local command.
 Run:
 
 ```text
+python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py sample <project_dir>
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py run <project_dir> --material <materials_path>
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py intake <project_dir>
@@ -65,6 +66,8 @@ reference-pack-gate / search-quality-gate / visual-quality-gate / client-pack-ga
 ```
 
 If no valid adversarial council note exists for the stage, a clean PASS is downgraded to PARTIAL_PASS.
+
+Use `sample` when a new user needs a runnable local project without real client materials.
 
 Then use:
 

@@ -37,6 +37,7 @@ python3 -m pip install -e .
 ```bash
 adco --help
 adco-init <项目目录>
+adco sample <项目目录>
 adco run <项目目录> --material <资料文件或文件夹>
 adco goal-plan <项目目录> --title "<目标标题>" --objective "<目标内容>"
 adco-check
@@ -157,8 +158,10 @@ GitHub 协作：
 adco-check
 make check
 python3 tools/run_checks.py
+adco sample <项目目录>
 adco status <项目目录>
 adco goal-plan <项目目录> --title <目标标题> --objective <目标内容>
+python3 tools/ad_creative_operator.py sample <项目目录>
 python3 tools/ad_creative_operator.py status <项目目录>
 python3 tools/ad_creative_operator.py goal-plan <项目目录> --title <目标标题> --objective <目标内容>
 python3 tools/ad_creative_operator.py intake <项目目录>
@@ -249,6 +252,7 @@ image_gen 输出入库链路: import-imagegen + manifest + import log + visual g
 全局 Skill 安装: install-skill SHA256 match PASS
 操作台 Playwright Chromium desktop/mobile screenshots: PASS
 公开 demo 截图: docs/assets/dashboard-desktop.png / docs/assets/dashboard-mobile.png
+sample project generator: adco sample / run_checks temp sample PASS
 goal-plan 执行记录生成: examples/moncler_protocol_dry_run / examples/simulated_qingling_outdoor_launch PASS
 反驳性议会 Gate 策略: 无记录时 PASS→PARTIAL_PASS / 有记录时 PASS 回归测试 PASS
 操作台 Goal Tab: audit-dashboard PASS

@@ -17,13 +17,17 @@ Make Ad Creative Orchestrator a usable, credible, open-source project for Codex-
 
 ## Next
 
-1. Package the operator as an installable CLI.
-2. Add screenshots/GIFs for the dashboard and first-run flow.
-3. Add a minimal sample project generator.
-4. Add structured test coverage for every Gate.
-5. Add GitHub Actions after the repository is pushed.
-6. Add issue templates and a release checklist.
-7. Add documentation for real-world adoption patterns.
+1. Add structured test coverage for every Gate.
+2. Add GitHub Actions after the repository is pushed.
+3. Add issue templates and a release checklist.
+4. Add documentation for real-world adoption patterns.
+5. Add richer demo media for the first-run flow.
+
+## Done In Local Baseline
+
+- Package the operator as an editable install CLI.
+- Add desktop/mobile dashboard screenshots.
+- Add a minimal sample project generator.
 
 ## Not Planned
 

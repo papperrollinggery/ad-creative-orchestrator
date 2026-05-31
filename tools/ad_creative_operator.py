@@ -33,6 +33,21 @@ DASHBOARD_REL = Path("AD-creative/handoff/操作台.html")
 COUNCIL_REPORT_REL = Path("AD-creative/gates/THREE-COUNCIL-READINESS_report.md")
 GOAL_PLAN_TEMPLATE_REL = Path("AD-creative/orchestrator/goal_iteration_plan_template.md")
 GOAL_ITERATIONS_REL = Path("AD-creative/orchestrator/goal_iterations")
+SAMPLE_MATERIAL_REL = Path("00_项目资料_ProjectMaterials/01_客户资料_ClientMaterials/sample_brief.md")
+SAMPLE_GOAL = "用内置样例跑通品牌深度研究与图片功能双泳道，生成可审计的本地操作台。"
+SAMPLE_BRIEF = """# Sample Creative Brief
+
+项目：NOVA Trail 户外功能饮料新品广告创意样例
+
+客户希望输出一版广告创意提案，用于内部评审。
+品牌深度研究需要先梳理品牌主张、目标人群、竞品参考边界和不可复制项。
+图片功能需要规划关键视觉、产品露出、AI 生成图边界、asset slot 和 visual QA。
+本轮交付需要包含可编辑 PPT 结构、参考证据链、图片资产清单和客户追问。
+客户明确不要使用未经授权 logo、真实品牌包装、不可追溯参考截图或客户可见 AI 图。
+产品素材暂缺产品高清图、包装图、字体和官方视觉规范。
+参考方向希望偏真实户外、清爽补给、清晨山路、手持产品、轻运动人群。
+PPT 需要保留文本可编辑，客户稿发送前必须经过 Gate。
+"""
 ID_SUFFIX_PATTERN = re.compile(r"(\d+)$")
 CLIENT_OWNER_PATTERN = re.compile(r"客户|不要")
 CONFIRMATION_HEADER_CELLS = {"ID", "---"}
@@ -263,6 +278,30 @@ def register_materials(project: Path, material_paths: list[Path], goal: str) -> 
         fieldnames, _ = read_csv_rows(source_path)
         write_csv_rows(source_path, fieldnames, rows)
     return source_ids
+
+
+def existing_source_ids_for_material(project: Path, material: Path) -> list[str]:
+    _, rows = read_csv_rows(project / "AD-creative/orchestrator/source_events.csv")
+    material_resolved = material.resolve()
+    matches: list[str] = []
+    for row in rows:
+        raw_path = row.get("file_paths", "")
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = project / raw_path
+        if path.resolve() == material_resolved:
+            source_id = row.get("source_event_id", "")
+            if source_id:
+                matches.append(source_id)
+    return matches
+
+
+def write_sample_brief(project: Path, force: bool = False) -> tuple[Path, str]:
+    material = project / SAMPLE_MATERIAL_REL
+    if material.exists() and not force:
+        return material, "existing"
+    write_text(material, SAMPLE_BRIEF)
+    return material, "overwritten" if force else "created"
 
 
 def ensure_intake_work(project: Path, source_ids: list[str], goal: str) -> str:
@@ -3553,6 +3592,57 @@ def command_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_sample(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    created, skipped = ensure_project(project)
+    material, material_action = write_sample_brief(project, force=args.force_material)
+    source_ids = existing_source_ids_for_material(project, material)
+    registered_sources = 0
+    if not source_ids:
+        source_ids = register_materials(project, [material], SAMPLE_GOAL)
+        registered_sources = len(source_ids)
+    ensure_intake_work(project, source_ids, SAMPLE_GOAL)
+    intake_stats = perform_intake(project, source_ids, SAMPLE_GOAL)
+    render_handoff(project, SAMPLE_GOAL, source_ids)
+    goal_id = args.goal_id or default_goal_id()
+    goal_plan = render_goal_iteration_plan(
+        project,
+        goal_id=goal_id,
+        title=args.title,
+        objective=SAMPLE_GOAL,
+        owner="Main Controller",
+        force=args.force_goal,
+    )
+    dashboard = render_dashboard(project)
+    overall, _, report = run_council(project)
+    dashboard = render_dashboard(project)
+    errors, stats = validate(project)
+    print(f"SAMPLE={'PASS' if not errors else 'CHECK'}")
+    print(f"PROJECT={project}")
+    print(f"CREATED_FILES={created}")
+    print(f"SKIPPED_EXISTING_FILES={skipped}")
+    print(f"SAMPLE_MATERIAL={material}")
+    print(f"SAMPLE_MATERIAL_ACTION={material_action}")
+    print(f"REGISTERED_SOURCES={registered_sources}")
+    print(f"SOURCE_IDS={';'.join(source_ids)}")
+    print(f"INTAKE_MATERIALS={intake_stats['materials']}")
+    print(f"INTAKE_REQUIREMENTS={intake_stats['requirements']}")
+    print(f"INTAKE_GAPS={intake_stats['gaps']}")
+    print(f"GOAL_PLAN={goal_plan}")
+    print(f"DASHBOARD={dashboard}")
+    print(f"COUNCIL={overall}")
+    print(f"COUNCIL_REPORT={report}")
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    if errors:
+        print("ERRORS:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    return 0
+
+
 def command_render_dashboard(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     ensure_project(project)
@@ -3958,6 +4048,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--material", action="append", default=[], help="Client material file or folder. Repeatable.")
     run_parser.add_argument("--goal", default="先完成需求整理、缺口判断、客户追问、下一步建议。")
     run_parser.set_defaults(func=command_run)
+
+    sample_parser = subparsers.add_parser("sample", help="Create a runnable bundled sample project.")
+    sample_parser.add_argument("project", help="Project directory.")
+    sample_parser.add_argument("--title", default="Bundled sample dual-lane run", help="Sample goal title.")
+    sample_parser.add_argument("--goal-id", default="", help="Stable sample goal id. Defaults to timestamp.")
+    sample_parser.add_argument("--force-material", action="store_true", help="Overwrite the bundled sample brief.")
+    sample_parser.add_argument("--force-goal", action="store_true", help="Overwrite an existing sample goal plan with the same id.")
+    sample_parser.set_defaults(func=command_sample)
 
     status_parser = subparsers.add_parser("status", help="Print current project status.")
     status_parser.add_argument("project", help="Project directory.")

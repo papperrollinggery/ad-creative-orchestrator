@@ -13,3 +13,4 @@
 - Added source install guide.
 - Added `make install-smoke` for editable install verification.
 - Added public demo script and desktop/mobile dashboard screenshots.
+- Added `adco sample` bundled sample project generator and regression check.

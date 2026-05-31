@@ -39,10 +39,14 @@ def main() -> int:
         tmp = Path(raw_tmp)
         moncler = tmp / "moncler_protocol_dry_run"
         qingling = tmp / "simulated_qingling_outdoor_launch"
+        sample = tmp / "sample_project"
         shutil.copytree(ROOT / "examples/moncler_protocol_dry_run", moncler)
         shutil.copytree(ROOT / "examples/simulated_qingling_outdoor_launch", qingling)
+        run([python, "tools/ad_creative_operator.py", "sample", str(sample)])
+        run([python, "tools/validate_project.py", str(sample)])
         run([python, "tools/ad_creative_operator.py", "audit-dashboard", str(moncler), "--render"])
         run([python, "tools/ad_creative_operator.py", "audit-dashboard", str(qingling), "--render"])
+        run([python, "tools/ad_creative_operator.py", "audit-dashboard", str(sample), "--render"])
     print("RUN_CHECKS=PASS")
     return 0
 
