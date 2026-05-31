@@ -12,3 +12,4 @@
 - Added `pyproject.toml` and console scripts: `adco`, `adco-init`, `adco-validate`, `adco-check`.
 - Added source install guide.
 - Added `make install-smoke` for editable install verification.
+- Added public demo script and desktop/mobile dashboard screenshots.

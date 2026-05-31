@@ -1792,7 +1792,9 @@ def rows_to_table(rows: list[dict[str, str]], columns: list[tuple[str, str]], em
         return f"<tr><td colspan=\"{len(columns)}\" class=\"empty\">{html.escape(empty)}</td></tr>"
     body = []
     for row in rows:
-        cells = "".join(f"<td>{cell(row.get(key))}</td>" for key, _ in columns)
+        cells = "".join(
+            f'<td data-label="{cell(label)}">{cell(row.get(key))}</td>' for key, label in columns
+        )
         body.append(f"<tr>{cells}</tr>")
     return "\n".join(body)
 
@@ -2058,8 +2060,16 @@ tbody tr:hover, tbody tr.selected { background: #f3f7f8; }
 	  .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	  .toolbar { flex-wrap: wrap; }
 	  .search, .select { flex: 1 1 100%; max-width: none; }
-	  .section { overflow-x: auto; }
-	  table { min-width: 680px; }
+	  .section { overflow: visible; }
+	  table { min-width: 0; }
+	  thead { display: none; }
+	  tbody, tr, td { display: block; width: 100%; }
+	  tbody tr { padding: 8px 0; border-bottom: 1px solid #ece9e2; }
+	  tbody tr:last-child { border-bottom: 0; }
+	  td { border-bottom: 0; padding: 5px 11px; white-space: normal; display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 10px; align-items: start; }
+	  td::before { content: attr(data-label); color: var(--muted); font-size: 11px; font-weight: 650; }
+	  td.empty { display: block; }
+	  td.empty::before { content: ""; display: none; }
 	  .rail { position: static; left: auto; right: auto; bottom: auto; align-items: flex-start; flex-direction: column; }
 	}
 </style>
@@ -2295,7 +2305,8 @@ function renderTable() {
       const raw = value(row, field);
       const chip = field.includes("status") || field.includes("visibility") || field === "trust_level" || field === "impact";
       const content = chip && raw ? `<span class="chip ${statusClass(raw)}">${escapeHtml(raw)}</span>` : escapeHtml(raw || "-");
-      return `<td title="${escapeHtml(raw)}">${content}</td>`;
+      const label = view.columns.find(([name]) => name === field)?.[1] || field;
+      return `<td data-label="${escapeHtml(label)}" title="${escapeHtml(raw)}">${content}</td>`;
     }).join("");
     return `<tr data-key="${escapeHtml(key)}"${selected}>${cells}</tr>`;
   }).join("");
@@ -2312,10 +2323,10 @@ function renderGaps() {
   $("gapCount").textContent = `${DATA.gaps.length} 条`;
   $("gapBody").innerHTML = rows.length ? rows.map((row) => `
     <tr>
-      <td title="${escapeHtml(value(row, "description"))}">${escapeHtml(value(row, "gap_id") || "-")}</td>
-      <td><span class="chip ${statusClass(value(row, "impact"))}">${escapeHtml(value(row, "impact") || "-")}</span></td>
-      <td>${escapeHtml(value(row, "status") || "-")}</td>
-      <td title="${escapeHtml(value(row, "recommended_action"))}">${escapeHtml(value(row, "recommended_action") || "-")}</td>
+      <td data-label="缺口" title="${escapeHtml(value(row, "description"))}">${escapeHtml(value(row, "gap_id") || "-")}</td>
+      <td data-label="影响"><span class="chip ${statusClass(value(row, "impact"))}">${escapeHtml(value(row, "impact") || "-")}</span></td>
+      <td data-label="状态">${escapeHtml(value(row, "status") || "-")}</td>
+      <td data-label="动作" title="${escapeHtml(value(row, "recommended_action"))}">${escapeHtml(value(row, "recommended_action") || "-")}</td>
     </tr>`).join("") : `<tr><td class="empty" colspan="4">暂无缺口</td></tr>`;
 }
 function renderInspector(row) {
@@ -2417,6 +2428,7 @@ def audit_dashboard(project: Path) -> list[str]:
         "当前选中项": "缺少右侧检查器。",
         "<h3>待确认</h3>": "缺少待确认区。",
         "@media (max-width: 760px)": "缺少移动端降级。",
+        "data-label=": "缺少移动端卡片式表格标签。",
         "const DATA =": "缺少嵌入数据。",
     }
     for marker, message in required_markers.items():

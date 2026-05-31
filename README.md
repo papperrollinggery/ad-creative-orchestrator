@@ -16,6 +16,14 @@ Ad Creative Orchestrator 把这些变成本地文件协议和 Gate：
 
 所有客户可见内容必须能追溯到 requirement / reference / asset / Gate。
 
+## Demo
+
+<img src="docs/assets/dashboard-desktop.png" alt="Ad Creative Orchestrator desktop dashboard" width="760">
+
+<img src="docs/assets/dashboard-mobile.png" alt="Ad Creative Orchestrator mobile dashboard" width="260">
+
+可复现命令见 `docs/operating/demo_script.md`。
+
 ## Install
 
 源码安装：
@@ -111,6 +119,7 @@ examples/simulated_qingling_outdoor_launch/
 
 ```text
 docs/operating/install.md
+docs/operating/demo_script.md
 docs/operating/operating_manual.md
 docs/operating/dual_lane_goal_delivery_workflow.md
 docs/operating/dual_lane_goal_optimization_plan.md
@@ -239,6 +248,7 @@ image_gen 输出入库链路: import-imagegen + manifest + import log + visual g
 非开发者交接 Gate: handoff-readiness-gate PASS
 全局 Skill 安装: install-skill SHA256 match PASS
 操作台 Playwright Chromium desktop/mobile screenshots: PASS
+公开 demo 截图: docs/assets/dashboard-desktop.png / docs/assets/dashboard-mobile.png
 goal-plan 执行记录生成: examples/moncler_protocol_dry_run / examples/simulated_qingling_outdoor_launch PASS
 反驳性议会 Gate 策略: 无记录时 PASS→PARTIAL_PASS / 有记录时 PASS 回归测试 PASS
 操作台 Goal Tab: audit-dashboard PASS
