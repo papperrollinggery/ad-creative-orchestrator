@@ -1,6 +1,46 @@
 # Ad Creative Orchestrator
 
-Codex-first 广告创意项目编排工作流。
+Local-first, Codex-first workflow for advertising creative operations.
+
+It turns messy briefs, references, image assets, PPT drafts, review gates, and client-visible risk into a traceable project folder.
+
+## Quickstart
+
+```bash
+python3 -m pip install -e .
+adco sample /tmp/adco-sample
+adco status /tmp/adco-sample
+adco-check
+```
+
+Expected:
+
+```text
+SAMPLE=PASS
+VALIDATION=PASS
+RUN_CHECKS=PASS
+```
+
+Open:
+
+```text
+/tmp/adco-sample/AD-creative/handoff/操作台.html
+```
+
+## What You Get
+
+- `AD-creative/orchestrator/`: structured source of truth for requirements, gaps, work, artifacts, Gates, versions.
+- `AD-creative/handoff/`: non-developer dashboard, project board, pending decisions, client question script.
+- `adco sample`: one-command local demo with no real client material.
+- `adco run`: register real materials and produce first-pass requirements, gaps, dashboard, and council report.
+- Gate commands for references, search, visual assets, PPT/client pack, and non-developer handoff.
+
+## Safety Model
+
+- Client-facing files are never sent automatically.
+- External uploads, paid/login/private account actions, global skill installs, and destructive overwrites require explicit human confirmation.
+- AI/generated images stay `internal_only` until visual QA and approval evidence exist.
+- Clean Gates without adversarial council evidence are downgraded to `PARTIAL_PASS`.
 
 当前目标不是做独立 SaaS，也不是直接安装全局 Skill。
 
