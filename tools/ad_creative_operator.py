@@ -2880,26 +2880,33 @@ def status_payload(project: Path) -> dict[str, object]:
         if row.get("impact", "").strip().lower() in {"blocking", "high_impact"}
     ]
     if errors:
+        next_status = "VALIDATION_CHECK"
         next_action = "Fix validation errors before continuing."
     elif confirmations:
+        next_status = "WAITING_FOR_CONFIRMATION"
         next_action = first_nonempty(confirmations[0].get("question"), default="Resolve pending confirmation.")
     elif active_work:
+        next_status = "ACTIVE_WORK"
         next_action = first_nonempty(active_work[0].get("title"), active_work[0].get("objective"), default="Continue active work item.")
     elif blocking_gaps:
+        next_status = "BLOCKING_GAP"
         next_action = first_nonempty(
             blocking_gaps[0].get("recommended_action"),
             blocking_gaps[0].get("description"),
             default="Resolve blocking gap.",
         )
     elif open_gaps:
+        next_status = "OPEN_GAP"
         next_action = first_nonempty(
             open_gaps[0].get("recommended_action"),
             open_gaps[0].get("description"),
             default="Review open gap.",
         )
     elif counts["source_events"] == 0:
+        next_status = "NEEDS_MATERIAL"
         next_action = "Run adco run <project> --material <brief_file_or_folder>."
     else:
+        next_status = "READY_FOR_NEXT_GATE"
         next_action = "Run the next stage Gate or continue with ad-creative:next."
     return {
         "project": str(project),
@@ -2910,6 +2917,7 @@ def status_payload(project: Path) -> dict[str, object]:
         "open_gap_count": len(open_gaps),
         "blocking_gap_count": len(blocking_gaps),
         "pending_confirmation_count": len(confirmations),
+        "next_status": next_status,
         "next_action": next_action,
         "active_work": active_work[:5],
         "open_gaps": open_gaps[:5],
@@ -2939,6 +2947,7 @@ def print_status(project: Path) -> None:
     print(f"ASSETS={counts['assets']}")
     print(f"ARTIFACTS={counts['artifacts']}")
     print(f"GATES={counts['gates']}")
+    print(f"NEXT_STATUS={payload['next_status']}")
     print(f"NEXT_ACTION={payload['next_action']}")
     print(f"DASHBOARD={payload['dashboard'] or 'MISSING'}")
     print(f"COUNCIL_REPORT={payload['council_report'] or 'MISSING'}")
@@ -4075,6 +4084,31 @@ def command_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_next(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    if args.render_dashboard:
+        ensure_project(project)
+        render_dashboard(project)
+    payload = status_payload(project)
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"PROJECT={payload['project']}")
+        print(f"NEXT_STATUS={payload['next_status']}")
+        print(f"NEXT_ACTION={payload['next_action']}")
+        print(f"VALIDATION={payload['validation']}")
+        print(f"ACTIVE_WORK={payload['active_work_count']}")
+        print(f"OPEN_GAPS={payload['open_gap_count']}")
+        print(f"BLOCKING_GAPS={payload['blocking_gap_count']}")
+        print(f"PENDING_CONFIRMATIONS={payload['pending_confirmation_count']}")
+        print(f"DASHBOARD={payload['dashboard'] or 'MISSING'}")
+        if payload["next_status"] == "NEEDS_MATERIAL":
+            print(f"SUGGESTED_COMMAND=adco run {payload['project']} --material <brief_file_or_folder>")
+        elif payload["next_status"] == "READY_FOR_NEXT_GATE":
+            print(f"SUGGESTED_COMMAND=adco goal-plan {payload['project']} --title <title> --objective <objective>")
+    return 1 if payload["next_status"] == "VALIDATION_CHECK" else 0
+
+
 def command_validate(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     errors, stats = validate(project)
@@ -4548,6 +4582,12 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("project", help="Project directory.")
     status_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     status_parser.set_defaults(func=command_status)
+
+    next_parser = subparsers.add_parser("next", help="Print the next safe action for a project.")
+    next_parser.add_argument("project", help="Project directory.")
+    next_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    next_parser.add_argument("--render-dashboard", action="store_true", help="Render dashboard before deciding.")
+    next_parser.set_defaults(func=command_next)
 
     validate_parser = subparsers.add_parser("validate", help="Validate a project directory.")
     validate_parser.add_argument("project", help="Project directory.")

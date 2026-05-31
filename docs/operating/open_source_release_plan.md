@@ -22,7 +22,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 
 | Area | Required State | Current Evidence | Status |
 |---|---|---|---|
-| Install/run clarity | user can start without reading code | README Quickstart, `adco --version`, `adco init`, `adco demo`, `adco sample`, `adco doctor`, `adco support-bundle`, `adco open-dashboard`, `adco validate`, `adco check`, launcher, operator CLI | PASS |
+| Install/run clarity | user can start without reading code | README Quickstart, `adco --version`, `adco init`, `adco demo`, `adco sample`, `adco doctor`, `adco support-bundle`, `adco open-dashboard`, `adco status`, `adco next`, `adco validate`, `adco check`, launcher, operator CLI | PASS |
 | One-command verification | contributors can verify changes | `adco check`, `make check`, `tools/run_checks.py` | PASS |
 | Gate regression coverage | every Gate has a command-level regression path | `tools/test_gates.py`; PNG/PPTX positive fixtures when optional deps exist; no-deps skip path | PASS |
 | Safety model | client-visible risk is blocked | Gate policy, adversarial council, security doc | PASS |
@@ -60,7 +60,8 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 21. Add unified `adco validate` and `adco check` subcommands. Status: local and install smoke PASS.
 22. Add JSON output for core diagnostics and validation. Status: `doctor/status/validate --json` local and install smoke PASS.
 23. Add unified `adco init` subcommand. Status: source and install smoke PASS.
-24. Iterate on issues from real users.
+24. Add `adco next` next-action decision command. Status: source and package smoke PASS.
+25. Iterate on issues from real users.
 
 ## Stop Conditions
 

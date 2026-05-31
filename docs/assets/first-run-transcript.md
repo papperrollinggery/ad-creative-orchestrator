@@ -56,6 +56,7 @@ REFERENCES=0
 ASSETS=0
 ARTIFACTS=3
 GATES=2
+NEXT_STATUS=WAITING_FOR_CONFIRMATION
 NEXT_ACTION=请提供品牌 logo、字体、包装或产品露出规范。
 DASHBOARD=/tmp/adco-first-run/AD-creative/handoff/操作台.html
 COUNCIL_REPORT=/tmp/adco-first-run/AD-creative/gates/THREE-COUNCIL-READINESS_report.md

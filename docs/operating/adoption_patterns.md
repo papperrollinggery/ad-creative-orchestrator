@@ -11,6 +11,7 @@ adco demo /tmp/adco-sample --no-open
 adco run <project_dir> --material <brief_file_or_folder>
 adco status <project_dir>
 adco status <project_dir> --json
+adco next <project_dir>
 ```
 
 Expected output:
@@ -22,6 +23,7 @@ current_truth.md
 待你确认.md
 操作台.html
 NEXT_ACTION
+NEXT_STATUS
 ```
 
 Gate:

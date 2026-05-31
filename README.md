@@ -13,6 +13,7 @@ adco demo
 adco init /tmp/adco-project
 adco status /tmp/adco-demo
 adco status /tmp/adco-demo --json
+adco next /tmp/adco-demo
 adco open-dashboard /tmp/adco-demo --no-open
 adco validate /tmp/adco-demo
 adco check
@@ -44,6 +45,7 @@ Open:
 - `adco sample`: deterministic sample project generator.
 - `adco run`: register real materials and produce first-pass requirements, gaps, dashboard, and council report.
 - `adco status`: show validation, blockers, pending confirmations, and the next action.
+- `adco next`: print the next safe action and automation-friendly next status.
 - Gate commands for references, search, visual assets, PPT/client pack, and non-developer handoff.
 
 ## Safety Model
@@ -102,6 +104,8 @@ adco run <项目目录> --material <资料文件或文件夹>
 adco goal-plan <项目目录> --title "<目标标题>" --objective "<目标内容>"
 adco status <项目目录>
 adco status <项目目录> --json
+adco next <项目目录>
+adco next <项目目录> --json
 adco validate <项目目录>
 adco validate <项目目录> --json
 adco check
@@ -348,6 +352,7 @@ wheel distribution check: make dist-check PASS
 version diagnostics: adco --version PASS
 doctor diagnostics: adco doctor PASS with remote warning when no git remote exists
 status diagnostics: adco status reports next action, blockers, open gaps, and pending confirmations
+next diagnostics: adco next reports NEXT_STATUS and NEXT_ACTION
 support bundle: adco support-bundle PASS with sanitized project diagnostics
 dashboard open command: adco open-dashboard PASS
 local release check: make release-check PASS

@@ -94,6 +94,8 @@ def main() -> int:
         run([python, *operator, "support-bundle", str(sample)])
         run([python, *operator, "open-dashboard", str(sample), "--no-open"])
         run([python, *operator, "status", str(sample), "--json"])
+        run([python, *operator, "next", str(sample)])
+        run([python, *operator, "next", str(sample), "--json"])
         run([python, *operator, "validate", str(sample), "--json"])
         run([python, *validator, str(sample)])
         if SOURCE_MODE:
