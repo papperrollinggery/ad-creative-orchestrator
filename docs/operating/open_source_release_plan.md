@@ -30,9 +30,9 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 | Dashboard usability | non-developer can inspect state | dashboard audit PASS, Goal tab, `adco open-dashboard` | PASS |
 | Packaging | installable CLI | `pyproject.toml`, packaged runtime assets, `adco init`, `make install-smoke`, `make package-smoke`, `make dist-check` | PASS |
 | Sample generation | user can try without real material | `adco demo`, `adco sample`, `tools/run_checks.py` temp sample | PASS |
-| GitHub readiness | license, contribution, security, roadmap, release checklist, diagnostics | added core files, `docs/operating/github_release_checklist.md`, `adco --version`, `adco doctor --json`, `adco support-bundle`, `make dist-check`, `make release-check` | PASS locally |
-| CI | automated checks on push | `.github/workflows/check.yml` runs `make release-check` on Python 3.10 and 3.12 | PASS once pushed |
-| Public appeal | screenshots, demo, concise pitch | README pitch, `docs/assets/dashboard-*.png`, `docs/assets/first-run-transcript.md`, `docs/operating/demo_script.md` | PASS locally |
+| GitHub readiness | license, contribution, security, roadmap, release checklist, diagnostics | public remote, `docs/operating/github_release_checklist.md`, `adco --version`, `adco doctor --json`, `adco support-bundle`, `make dist-check`, `make release-check` | PASS |
+| CI | automated checks on push | `.github/workflows/check.yml` runs `make release-check` on Python 3.10 and 3.12; GitHub Actions PASS | PASS |
+| Public appeal | screenshots, demo, concise pitch | README pitch, `docs/assets/dashboard-*.png`, `docs/assets/first-run-transcript.md`, `docs/operating/demo_script.md` | PASS |
 | Adoption docs | new users can map the tool to real workflows | `docs/operating/adoption_patterns.md` | PASS |
 
 ## Execution Order
@@ -44,7 +44,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 5. Add minimal sample project generator. Status: `adco sample` local PASS.
 6. Add structured Gate regression coverage. Status: no-deps Gate paths PASS.
 7. Add GitHub release checklist. Status: local release gate ready.
-8. Push repository so GitHub Actions can run remotely. Status: blocked until `git remote` exists.
+8. Push repository so GitHub Actions can run remotely. Status: public remote PASS; GitHub Actions PASS.
 9. Add real-world adoption patterns. Status: adoption doc PASS.
 10. Expand Gate tests into PPTX/image positive fixtures. Status: local fixture PASS, no-deps skip PASS.
 11. Add richer first-run demo transcript. Status: generated transcript PASS and stale-check wired into `run_checks`.
@@ -67,7 +67,8 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 28. Refresh contributor, release, roadmap, and non-developer quickstart docs around current `adco` commands. Status: source and package smoke PASS.
 29. Make wheel distribution inspection deterministic with no build isolation, a timeout, and a static manifest fallback. Status: source and package smoke PASS.
 30. Add docs command regression check to keep onboarding docs on the installed `adco` path. Status: source and package smoke PASS.
-31. Iterate on issues from real users.
+31. Publish public GitHub remote and verify Actions on Python 3.10/3.12. Status: PASS.
+32. Iterate on issues from real users.
 
 ## Stop Conditions
 

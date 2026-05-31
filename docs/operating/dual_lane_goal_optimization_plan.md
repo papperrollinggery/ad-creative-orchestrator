@@ -96,7 +96,7 @@
 | 示例项目结构 | `adco validate examples/moncler_protocol_dry_run` | `VALIDATION=PASS` |
 | 示例项目结构 | `adco validate examples/simulated_qingling_outdoor_launch` | `VALIDATION=PASS` |
 | 本地 git 状态 | `git status --short` | 提交后无未提交改动 |
-| 远端发布门禁 | `adco release-status` | 已配置 remote 时进入远端检查；当前无 remote 时明确返回 `BLOCKED_REMOTE_MISSING` |
+| 远端发布门禁 | `adco release-status` + GitHub Actions | `REMOTE=PASS`，Actions `check` 在 Python 3.10/3.12 PASS |
 
 ## 7. 下一轮队列
 
@@ -111,8 +111,8 @@
 | DONE | 把 goal 状态接入真实项目启动 runbook 的验收清单 | 文档 | runbook 验收含 goal iteration plan 和 dashboard Goal tab |
 | DONE | 补 README 当前验证状态，记录 goal-plan、Gate 降级、Goal Tab、回归测试 | 文档 | README 当前验证状态可见 |
 | DONE | 终态验证：语法、回归测试、模板、两个示例项目、dashboard audit | 验证 | `adco check` PASS |
-| P1 | 配置 GitHub remote 并验证 GitHub Actions | 发布 | `adco release-status` 不再阻塞 remote，Actions 执行 `make release-check` PASS |
+| DONE | 配置 GitHub remote 并验证 GitHub Actions | 发布 | `adco release-status` 不再阻塞 remote，Actions 执行 `make release-check` PASS |
 
 ## 8. 本轮结论
 
-本地 B1-B5 已完成；当前剩余发布门禁是 GitHub remote 未配置，远端 push 与 Actions 验证等待 remote 后执行。
+本地 B1-B5 与远端发布门禁已完成；下一轮从真实外部用户试跑开始收集产品化改进。

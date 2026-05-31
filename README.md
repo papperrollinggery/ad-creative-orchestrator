@@ -354,15 +354,15 @@ editable CLI install: adco / adco-check smoke PASS
 package install: pip install . / adco init / adco demo / adco validate / adco check smoke PASS
 wheel distribution check: make dist-check PASS
 version diagnostics: adco --version PASS
-doctor diagnostics: adco doctor PASS with remote warning when no git remote exists
-release diagnostics: adco release-status reports local readiness and remote blocker state
+doctor diagnostics: adco doctor PASS with remote configured
+release diagnostics: adco release-status reports READY_FOR_REMOTE_CHECKS
 docs diagnostics: adco docs reports local docs and quickstart paths
 status diagnostics: adco status reports next action, blockers, open gaps, and pending confirmations
 next diagnostics: adco next reports NEXT_STATUS and NEXT_ACTION
 support bundle: adco support-bundle PASS with sanitized project diagnostics
 dashboard open command: adco open-dashboard PASS
 local release check: make release-check PASS
-GitHub Actions: make release-check on Python 3.10 / 3.12 once remote exists
+GitHub Actions: make release-check PASS on Python 3.10 / 3.12
 ```
 
 仍需真实项目负责人最终执行：

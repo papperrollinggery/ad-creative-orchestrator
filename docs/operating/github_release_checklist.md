@@ -1,15 +1,15 @@
 # GitHub Release Checklist
 
-Status: local release gate ready
+Status: public remote ready
 
-## Current Blocker
+## Current Remote State
 
 ```text
-git remote -v: empty
-adco release-status: RELEASE_STATUS=BLOCKED_REMOTE_MISSING
+repo: https://github.com/papperrollinggery/ad-creative-orchestrator
+git remote -v: origin https://github.com/papperrollinggery/ad-creative-orchestrator.git
+adco release-status: RELEASE_STATUS=READY_FOR_REMOTE_CHECKS
+GitHub Actions / check: PASS on Python 3.10 and 3.12
 ```
-
-Remote push and GitHub Actions verification cannot run until a GitHub repository remote is configured.
 
 ## Local Release Gate
 
@@ -51,7 +51,7 @@ RELEASE_CHECK=PASS
 DIST_CHECK=PASS
 adco 0.1.0
 ADCO_DOCTOR=PASS
-RELEASE_STATUS=BLOCKED_REMOTE_MISSING
+RELEASE_STATUS=READY_FOR_REMOTE_CHECKS
 DOCS_MODE=source
 DEMO=PASS
 NEXT_STATUS=WAITING_FOR_CONFIRMATION
@@ -62,20 +62,21 @@ SAMPLE=PASS
 DASHBOARD_AUDIT=PASS
 ```
 
-## Remote Setup Gate
+## Remote Verification Gate
 
-Required manual setup:
+Remote is configured:
 
 ```bash
-git remote add origin <github_repo_url>
-git push -u origin main
+git remote -v
+git push
 ```
 
-After push:
+Remote pass threshold:
 
 ```text
 GitHub Actions / check: PASS on Python 3.10 and 3.12
 GitHub Actions command: make release-check
+Actions use actions/checkout@v6 and actions/setup-python@v6
 README images render
 Issue templates visible
 PR template visible
@@ -96,8 +97,8 @@ Before public release, verify:
 ## Release Decision
 
 ```text
-release_status=BLOCKED_REMOTE_MISSING
+release_status=READY_FOR_REMOTE_CHECKS
 doctor=PASS
-remote_status=CHECK
-next_action=add GitHub remote, push main, wait for GitHub Actions check
+remote_status=PASS
+next_action=run first external-user trial and turn friction into focused improvements
 ```
