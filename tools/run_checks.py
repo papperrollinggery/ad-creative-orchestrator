@@ -59,6 +59,8 @@ def main() -> int:
         run([python, "tools/ad_creative_operator.py", "--version"])
         run([python, "tools/ad_creative_operator.py", "doctor"])
         run_json([python, "tools/ad_creative_operator.py", "doctor", "--json"])
+        run([python, "tools/ad_creative_operator.py", "release-status"])
+        run_json([python, "tools/ad_creative_operator.py", "release-status", "--json"])
         run([python, "tools/test_gates.py"])
         run([python, "tools/test_goal_workflow.py"])
     else:
@@ -80,6 +82,8 @@ def main() -> int:
         run([python, "-m", "ad_creative_operator", "--version"])
         run([python, "-m", "ad_creative_operator", "doctor"])
         run_json([python, "-m", "ad_creative_operator", "doctor", "--json"])
+        run([python, "-m", "ad_creative_operator", "release-status"])
+        run_json([python, "-m", "ad_creative_operator", "release-status", "--json"])
         run([python, "-m", "test_gates"])
         run([python, "-m", "test_goal_workflow"])
     if SOURCE_MODE:

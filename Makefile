@@ -23,6 +23,8 @@ install-smoke:
 	$$tmp_dir/venv/bin/adco --version; \
 	$$tmp_dir/venv/bin/adco doctor; \
 	$$tmp_dir/venv/bin/adco doctor --json >/dev/null; \
+	$$tmp_dir/venv/bin/adco release-status; \
+	$$tmp_dir/venv/bin/adco release-status --json >/dev/null; \
 	$$tmp_dir/venv/bin/adco-init $$tmp_dir/project >/dev/null; \
 	$$tmp_dir/venv/bin/adco init $$tmp_dir/init-project; \
 	$$tmp_dir/venv/bin/adco demo $$tmp_dir/demo --no-open; \
@@ -43,6 +45,8 @@ package-smoke:
 	$$tmp_dir/venv/bin/adco --version; \
 	$$tmp_dir/venv/bin/adco doctor; \
 	$$tmp_dir/venv/bin/adco doctor --json >/dev/null; \
+	$$tmp_dir/venv/bin/adco release-status; \
+	$$tmp_dir/venv/bin/adco release-status --json >/dev/null; \
 	$$tmp_dir/venv/bin/adco-init $$tmp_dir/init-project >/dev/null; \
 	$$tmp_dir/venv/bin/adco init $$tmp_dir/init-project-2; \
 	$$tmp_dir/venv/bin/adco-validate $$tmp_dir/init-project >/dev/null; \

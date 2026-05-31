@@ -17,6 +17,7 @@ adco next /tmp/adco-demo
 adco open-dashboard /tmp/adco-demo --no-open
 adco validate /tmp/adco-demo
 adco check
+adco release-status
 adco sample /tmp/adco-sample
 adco open-dashboard /tmp/adco-sample
 adco doctor
@@ -46,6 +47,7 @@ Open:
 - `adco run`: register real materials and produce first-pass requirements, gaps, dashboard, and council report.
 - `adco status`: show validation, blockers, pending confirmations, and the next action.
 - `adco next`: print the next safe action and automation-friendly next status.
+- `adco release-status`: summarize local release readiness and remote blockers.
 - Gate commands for references, search, visual assets, PPT/client pack, and non-developer handoff.
 
 ## Safety Model
@@ -94,6 +96,8 @@ adco --help
 adco --version
 adco doctor
 adco doctor --json
+adco release-status
+adco release-status --json
 adco init <项目目录>
 adco-init <项目目录>
 adco demo [项目目录]
@@ -351,6 +355,7 @@ package install: pip install . / adco init / adco demo / adco validate / adco ch
 wheel distribution check: make dist-check PASS
 version diagnostics: adco --version PASS
 doctor diagnostics: adco doctor PASS with remote warning when no git remote exists
+release diagnostics: adco release-status reports local readiness and remote blocker state
 status diagnostics: adco status reports next action, blockers, open gaps, and pending confirmations
 next diagnostics: adco next reports NEXT_STATUS and NEXT_ACTION
 support bundle: adco support-bundle PASS with sanitized project diagnostics

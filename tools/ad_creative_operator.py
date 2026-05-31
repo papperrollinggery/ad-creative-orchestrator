@@ -207,6 +207,56 @@ def doctor_report() -> tuple[str, list[str], list[str], list[str]]:
     return status, issues, warnings, evidence
 
 
+def evidence_map(evidence: list[str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for item in evidence:
+        if "=" in item:
+            key, value = item.split("=", 1)
+            values[key] = value
+    return values
+
+
+def release_status_payload() -> dict[str, object]:
+    doctor_status, issues, warnings, evidence = doctor_report()
+    values = evidence_map(evidence)
+    mode = values.get("mode", "unknown")
+    git_remote = values.get("git_remote", "unknown")
+    remote_status = "PASS"
+    if git_remote == "empty" or git_remote.startswith("git_remote_failed="):
+        remote_status = "CHECK"
+    elif git_remote == "not_source_git_checkout":
+        remote_status = "NOT_APPLICABLE"
+
+    if issues:
+        release_status = "CHECK"
+        next_action = "Fix doctor issues, then run make release-check."
+    elif mode != "source":
+        release_status = "INSTALLED_PACKAGE_OK"
+        next_action = "Run adco release-status inside the source checkout before publishing."
+    elif git_remote == "empty":
+        release_status = "BLOCKED_REMOTE_MISSING"
+        next_action = "Configure git remote, push the branch, and verify GitHub Actions."
+    elif git_remote.startswith("git_remote_failed="):
+        release_status = "CHECK"
+        next_action = "Fix git remote diagnostics, then run make release-check."
+    else:
+        release_status = "READY_FOR_REMOTE_CHECKS"
+        next_action = "Run make release-check, push the branch, and verify GitHub Actions."
+
+    return {
+        "release_status": release_status,
+        "doctor_status": doctor_status,
+        "remote_status": remote_status,
+        "mode": mode,
+        "git_remote": git_remote,
+        "verify_command": "make release-check",
+        "next_action": next_action,
+        "issues": issues,
+        "warnings": warnings,
+        "evidence": evidence,
+    }
+
+
 def sanitized_doctor_evidence(evidence: list[str]) -> list[str]:
     sanitized: list[str] = []
     for item in evidence:
@@ -4179,6 +4229,35 @@ def command_doctor(args: argparse.Namespace) -> int:
     return 0 if not issues else 1
 
 
+def command_release_status(args: argparse.Namespace) -> int:
+    payload = release_status_payload()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"RELEASE_STATUS={payload['release_status']}")
+        print(f"DOCTOR={payload['doctor_status']}")
+        print(f"REMOTE={payload['remote_status']}")
+        print(f"MODE={payload['mode']}")
+        print(f"GIT_REMOTE={payload['git_remote']}")
+        print(f"VERIFY_COMMAND={payload['verify_command']}")
+        print(f"NEXT_ACTION={payload['next_action']}")
+        warnings = payload["warnings"]
+        issues = payload["issues"]
+        print(f"WARNINGS={len(warnings)}")
+        print(f"ISSUES={len(issues)}")
+        if warnings:
+            print("RELEASE_WARNINGS:")
+            for warning in warnings:
+                print(f"- {warning}")
+        if issues:
+            print("RELEASE_ISSUES:")
+            for issue in issues:
+                print(f"- {issue}")
+    if args.strict and payload["release_status"] != "READY_FOR_REMOTE_CHECKS":
+        return 1
+    return 1 if payload["release_status"] == "CHECK" else 0
+
+
 def command_support_bundle(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     if not project.exists():
@@ -4600,6 +4679,11 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser = subparsers.add_parser("doctor", help="Diagnose installation, templates, optional dependencies, and release blockers.")
     doctor_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     doctor_parser.set_defaults(func=command_doctor)
+
+    release_parser = subparsers.add_parser("release-status", help="Summarize local release readiness and remote blockers.")
+    release_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    release_parser.add_argument("--strict", action="store_true", help="Return non-zero unless ready for remote checks.")
+    release_parser.set_defaults(func=command_release_status)
 
     support_parser = subparsers.add_parser("support-bundle", help="Write a sanitized support bundle for bug reports.")
     support_parser.add_argument("project", help="Project directory.")

@@ -39,3 +39,4 @@
 - Improved `adco status` with next action, active work, open gaps, and pending confirmations.
 - Added `adco next` for a compact next safe action decision.
 - Kept JSON diagnostics verified while reducing `adco check` output noise.
+- Added `adco release-status` for local release readiness and remote blocker summaries.
