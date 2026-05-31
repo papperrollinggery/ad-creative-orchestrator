@@ -38,6 +38,7 @@ AD-creative/handoff/操作台.html
 
 ```text
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py run <项目目录> --material <资料文件或文件夹>
+python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py open-dashboard <项目目录>
 ```
 
 产物：
@@ -141,6 +142,7 @@ python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operato
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py client-pack-gate <项目目录>
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py handoff-readiness-gate <项目目录>
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py audit-dashboard <项目目录> --render
+python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py open-dashboard <项目目录> --no-open
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/validate_project.py <项目目录>
 ```
 
@@ -158,5 +160,6 @@ PPTX_EDITABLE=PASS
 CLIENT_PACK_GATE=PASS
 HANDOFF_READINESS_GATE=PASS
 DASHBOARD_AUDIT=PASS
+DASHBOARD_OPEN=SKIPPED
 VALIDATION=PASS
 ```

@@ -17,6 +17,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import webbrowser
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -3849,6 +3850,28 @@ def command_render_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_open_dashboard(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    dashboard = render_dashboard(project)
+    errors, stats = validate(project)
+    open_status = "SKIPPED"
+    if not args.no_open:
+        open_status = "PASS" if webbrowser.open(dashboard.as_uri()) else "CHECK"
+    print(f"DASHBOARD={dashboard}")
+    print(f"DASHBOARD_OPEN={open_status}")
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    if errors or open_status == "CHECK":
+        if errors:
+            print("ERRORS:")
+            for error in errors:
+                print(f"- {error}")
+        return 1
+    return 0
+
+
 def command_intake(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     ensure_project(project)
@@ -4309,6 +4332,11 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard_parser = subparsers.add_parser("render-dashboard", help="Render static operation dashboard.")
     dashboard_parser.add_argument("project", help="Project directory.")
     dashboard_parser.set_defaults(func=command_render_dashboard)
+
+    open_dashboard_parser = subparsers.add_parser("open-dashboard", help="Render and open the operation dashboard.")
+    open_dashboard_parser.add_argument("project", help="Project directory.")
+    open_dashboard_parser.add_argument("--no-open", action="store_true", help="Render and validate without opening a browser.")
+    open_dashboard_parser.set_defaults(func=command_open_dashboard)
 
     intake_parser = subparsers.add_parser("intake", help="Extract first-pass requirements and gaps from registered materials.")
     intake_parser.add_argument("project", help="Project directory.")

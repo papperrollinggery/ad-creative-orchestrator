@@ -9,6 +9,7 @@
 - [ ] `adco --version`
 - [ ] `adco doctor`
 - [ ] `adco support-bundle <sample_project>`
+- [ ] `adco open-dashboard <sample_project> --no-open`
 
 ## Safety
 
