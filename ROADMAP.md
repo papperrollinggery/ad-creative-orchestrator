@@ -14,10 +14,11 @@ Make Ad Creative Orchestrator a usable, credible, open-source project for Codex-
 - Example projects, demo screenshots, first-run transcript, and regression checks
 - Local release gate covering source checks, wheel inspection, editable install, and normal package install
 - Public GitHub remote with Actions running `make release-check` on Python 3.10 and 3.12
+- Public clone trial passes from fresh `git clone` to `adco demo` and validation
 
 ## Next
 
-1. Run the first external-user trial from `adco demo` to real project intake.
+1. Run the first real external-user trial from `adco demo` to real project intake.
 2. Turn external trial issues into focused CLI/dashboard/docs improvements.
 3. Tighten first-five-minute onboarding from real user friction.
 
@@ -36,6 +37,7 @@ Make Ad Creative Orchestrator a usable, credible, open-source project for Codex-
 - Add issue templates and a GitHub release checklist.
 - Add GitHub Actions workflow for the full release gate.
 - Add public GitHub remote and verify Actions on Python 3.10 and 3.12.
+- Verify a public clone trial from install to demo validation.
 - Add documentation for real-world adoption patterns.
 - Expand Gate tests into fixture-level positive cases for PPTX and image PASS paths.
 - Add richer demo media for the first-run flow.

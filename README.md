@@ -363,6 +363,7 @@ support bundle: adco support-bundle PASS with sanitized project diagnostics
 dashboard open command: adco open-dashboard PASS
 local release check: make release-check PASS
 GitHub Actions: make release-check PASS on Python 3.10 / 3.12
+public clone trial: git clone + pip install . + adco demo/open-dashboard/validate PASS
 ```
 
 仍需真实项目负责人最终执行：

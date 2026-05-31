@@ -33,7 +33,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 | GitHub readiness | license, contribution, security, roadmap, release checklist, diagnostics | public remote, `docs/operating/github_release_checklist.md`, `adco --version`, `adco doctor --json`, `adco support-bundle`, `make dist-check`, `make release-check` | PASS |
 | CI | automated checks on push | `.github/workflows/check.yml` runs `make release-check` on Python 3.10 and 3.12; GitHub Actions PASS | PASS |
 | Public appeal | screenshots, demo, concise pitch | README pitch, `docs/assets/dashboard-*.png`, `docs/assets/first-run-transcript.md`, `docs/operating/demo_script.md` | PASS |
-| Adoption docs | new users can map the tool to real workflows | `docs/operating/adoption_patterns.md` | PASS |
+| Adoption docs | new users can map the tool to real workflows | `docs/operating/adoption_patterns.md`; public clone trial to `adco demo` and validation PASS | PASS |
 
 ## Execution Order
 
@@ -68,7 +68,8 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 29. Make wheel distribution inspection deterministic with no build isolation, a timeout, and a static manifest fallback. Status: source and package smoke PASS.
 30. Add docs command regression check to keep onboarding docs on the installed `adco` path. Status: source and package smoke PASS.
 31. Publish public GitHub remote and verify Actions on Python 3.10/3.12. Status: PASS.
-32. Iterate on issues from real users.
+32. Verify public clone trial from `git clone` to `adco demo` and validation. Status: PASS.
+33. Iterate on issues from real users.
 
 ## Stop Conditions
 

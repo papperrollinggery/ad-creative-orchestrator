@@ -9,6 +9,7 @@ repo: https://github.com/papperrollinggery/ad-creative-orchestrator
 git remote -v: origin https://github.com/papperrollinggery/ad-creative-orchestrator.git
 adco release-status: RELEASE_STATUS=READY_FOR_REMOTE_CHECKS
 GitHub Actions / check: PASS on Python 3.10 and 3.12
+public clone trial: git clone + pip install . + adco demo/open-dashboard/validate PASS
 ```
 
 ## Local Release Gate

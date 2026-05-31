@@ -45,3 +45,4 @@
 - Made wheel distribution inspection deterministic with no build isolation, a timeout, and a static manifest fallback.
 - Added a docs command regression check to keep onboarding docs on the installed `adco` path.
 - Published the public GitHub remote and verified Actions on Python 3.10 and 3.12.
+- Verified a public clone trial from install to demo validation.
