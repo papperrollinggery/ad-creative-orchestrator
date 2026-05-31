@@ -17,6 +17,7 @@ adco --help
 adco --version
 adco doctor
 adco doctor --json
+adco init <project_dir>
 adco-init <project_dir>
 adco demo [project_dir]
 adco sample <project_dir>
@@ -29,7 +30,7 @@ adco validate <project_dir> --json
 adco check
 ```
 
-Compatibility entrypoints remain available: `adco-check`, `adco-validate`.
+Compatibility entrypoints remain available: `adco-init`, `adco-check`, `adco-validate`.
 
 ## Development Install
 
@@ -39,7 +40,7 @@ Use editable mode while changing templates or code:
 python3 -m pip install -e .
 ```
 
-Runtime templates and the project skill draft are also packaged, so `adco sample` and `adco-init` work after normal `pip install .`.
+Runtime templates and the project skill draft are also packaged, so `adco init`, `adco sample`, and `adco-init` work after normal `pip install .`.
 
 ## Verify
 

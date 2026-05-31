@@ -25,7 +25,7 @@ adco check
 Manual equivalent:
 
 ```bash
-adco-init /tmp/adco-demo
+adco init /tmp/adco-demo
 adco run /tmp/adco-demo --material examples/simulated_qingling_outdoor_launch/00_项目资料_ProjectMaterials/01_客户资料_ClientMaterials/brief_v1.md
 adco goal-plan /tmp/adco-demo --title "Dual-lane demo" --objective "Run brand research and image workflow through gated goal mode."
 adco open-dashboard /tmp/adco-demo --no-open

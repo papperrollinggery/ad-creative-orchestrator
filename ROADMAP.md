@@ -7,7 +7,7 @@ Make Ad Creative Orchestrator a usable, credible, open-source project for Codex-
 ## Now
 
 - Local project template and non-developer launcher
-- Installable `adco` CLI with `demo`, `sample`, `doctor`, `support-bundle`, dashboard commands, and JSON diagnostics
+- Installable `adco` CLI with `init`, `demo`, `sample`, `doctor`, `support-bundle`, dashboard commands, and JSON diagnostics
 - Dashboard, Goal tab, and direct dashboard open flow
 - Intake, reference, visual, PPT, client-pack, and handoff Gates
 - Goal iteration plans and adversarial council Gate policy

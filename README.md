@@ -10,6 +10,7 @@ It turns messy briefs, references, image assets, PPT drafts, review gates, and c
 python3 -m pip install .
 adco --version
 adco demo
+adco init /tmp/adco-project
 adco status /tmp/adco-demo
 adco open-dashboard /tmp/adco-demo --no-open
 adco validate /tmp/adco-demo
@@ -89,6 +90,7 @@ adco --help
 adco --version
 adco doctor
 adco doctor --json
+adco init <项目目录>
 adco-init <项目目录>
 adco demo [项目目录]
 adco sample <项目目录>
@@ -101,7 +103,7 @@ adco validate <项目目录> --json
 adco check
 ```
 
-兼容入口仍保留：`adco-check`、`adco-validate`。
+兼容入口仍保留：`adco-init`、`adco-check`、`adco-validate`。
 
 不安装也可以直接用：
 
@@ -227,6 +229,7 @@ make package-smoke
 adco doctor
 adco support-bundle <项目目录>
 adco open-dashboard <项目目录> --no-open
+adco init <项目目录>
 adco demo <项目目录> --no-open
 adco status <项目目录> --json
 adco validate <项目目录>
@@ -336,7 +339,7 @@ Goal/Gate 回归测试: tools/test_goal_workflow.py PASS
 Gate 结构化回归测试: tools/test_gates.py PASS
 Gate 正向 fixture: visual PNG PASS / editable PPTX client-pack PASS / no-deps optional skip PASS
 editable CLI install: adco / adco-check smoke PASS
-package install: pip install . / adco demo / adco validate / adco check smoke PASS
+package install: pip install . / adco init / adco demo / adco validate / adco check smoke PASS
 wheel distribution check: make dist-check PASS
 version diagnostics: adco --version PASS
 doctor diagnostics: adco doctor PASS with remote warning when no git remote exists

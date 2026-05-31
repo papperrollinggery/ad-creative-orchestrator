@@ -22,13 +22,13 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 
 | Area | Required State | Current Evidence | Status |
 |---|---|---|---|
-| Install/run clarity | user can start without reading code | README Quickstart, `adco --version`, `adco demo`, `adco sample`, `adco doctor`, `adco support-bundle`, `adco open-dashboard`, `adco validate`, `adco check`, launcher, operator CLI | PASS |
+| Install/run clarity | user can start without reading code | README Quickstart, `adco --version`, `adco init`, `adco demo`, `adco sample`, `adco doctor`, `adco support-bundle`, `adco open-dashboard`, `adco validate`, `adco check`, launcher, operator CLI | PASS |
 | One-command verification | contributors can verify changes | `adco check`, `make check`, `tools/run_checks.py` | PASS |
 | Gate regression coverage | every Gate has a command-level regression path | `tools/test_gates.py`; PNG/PPTX positive fixtures when optional deps exist; no-deps skip path | PASS |
 | Safety model | client-visible risk is blocked | Gate policy, adversarial council, security doc | PASS |
 | Example quality | examples prove workflow | Moncler and Qingling examples validate | PASS |
 | Dashboard usability | non-developer can inspect state | dashboard audit PASS, Goal tab, `adco open-dashboard` | PASS |
-| Packaging | installable CLI | `pyproject.toml`, packaged runtime assets, `make install-smoke`, `make package-smoke`, `make dist-check` | PASS |
+| Packaging | installable CLI | `pyproject.toml`, packaged runtime assets, `adco init`, `make install-smoke`, `make package-smoke`, `make dist-check` | PASS |
 | Sample generation | user can try without real material | `adco demo`, `adco sample`, `tools/run_checks.py` temp sample | PASS |
 | GitHub readiness | license, contribution, security, roadmap, release checklist, diagnostics | added core files, `docs/operating/github_release_checklist.md`, `adco --version`, `adco doctor --json`, `adco support-bundle`, `make dist-check`, `make release-check` | PASS locally |
 | CI | automated checks on push | `.github/workflows/check.yml` runs `make release-check` on Python 3.10 and 3.12 | PASS once pushed |
@@ -59,7 +59,8 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 20. Add one-command demo. Status: `adco demo --no-open` PASS.
 21. Add unified `adco validate` and `adco check` subcommands. Status: local and install smoke PASS.
 22. Add JSON output for core diagnostics and validation. Status: `doctor/status/validate --json` local and install smoke PASS.
-23. Iterate on issues from real users.
+23. Add unified `adco init` subcommand. Status: source and install smoke PASS.
+24. Iterate on issues from real users.
 
 ## Stop Conditions
 

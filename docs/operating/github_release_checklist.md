@@ -21,6 +21,7 @@ adco --version
 adco doctor
 adco doctor --json
 git status --short
+python3 tools/ad_creative_operator.py init /tmp/adco-release-init
 python3 tools/ad_creative_operator.py demo /tmp/adco-release-demo --no-open
 python3 tools/ad_creative_operator.py sample /tmp/adco-release-sample
 python3 tools/ad_creative_operator.py support-bundle /tmp/adco-release-sample

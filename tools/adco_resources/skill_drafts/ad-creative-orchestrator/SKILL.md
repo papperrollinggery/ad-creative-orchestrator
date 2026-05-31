@@ -70,6 +70,7 @@ Installed CLI equivalent:
 
 ```text
 python3 -m pip install .
+adco init <project_dir>
 adco demo [project_dir]
 adco sample <project_dir>
 adco --version

@@ -3770,6 +3770,32 @@ def command_goal_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_init(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    template = Path(args.template).expanduser().resolve() if args.template else TEMPLATE_ROOT
+    if not template.exists():
+        print("INIT=CHECK")
+        print(f"ERROR=template not found: {template}")
+        return 1
+    project.mkdir(parents=True, exist_ok=True)
+    created, skipped = copy_template(template, project)
+    errors, stats = validate(project)
+    print(f"PROJECT={project}")
+    print(f"TEMPLATE={template}")
+    print(f"CREATED_FILES={created}")
+    print(f"SKIPPED_EXISTING_FILES={skipped}")
+    print(f"INIT={'PASS' if not errors else 'CHECK'}")
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    if errors:
+        print("ERRORS:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    return 0
+
+
 def command_run(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     created, skipped = ensure_project(project)
@@ -4424,6 +4450,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"adco {package_version()}")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    init_parser = subparsers.add_parser("init", help="Initialize a project from packaged templates.")
+    init_parser.add_argument("project", help="Project directory.")
+    init_parser.add_argument("--template", default="", help="Template directory. Defaults to packaged templates.")
+    init_parser.set_defaults(func=command_init)
 
     goal_parser = subparsers.add_parser("goal-plan", help="Create a reusable goal iteration execution plan.")
     goal_parser.add_argument("project", help="Project directory.")
