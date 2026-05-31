@@ -7,9 +7,10 @@ Status: usable patterns
 Use when the first client brief is messy and incomplete.
 
 ```bash
-adco sample /tmp/adco-sample
+adco demo /tmp/adco-sample --no-open
 adco run <project_dir> --material <brief_file_or_folder>
 adco status <project_dir>
+adco status <project_dir> --json
 ```
 
 Expected output:
