@@ -21,6 +21,7 @@ adco --version
 adco doctor
 git status --short
 python3 tools/ad_creative_operator.py sample /tmp/adco-release-sample
+python3 tools/ad_creative_operator.py support-bundle /tmp/adco-release-sample
 python3 tools/ad_creative_operator.py audit-dashboard examples/moncler_protocol_dry_run --render
 python3 tools/ad_creative_operator.py audit-dashboard examples/simulated_qingling_outdoor_launch --render
 ```
@@ -36,6 +37,7 @@ RELEASE_CHECK=PASS
 DIST_CHECK=PASS
 adco 0.1.0
 ADCO_DOCTOR=PASS
+SUPPORT_BUNDLE=PASS
 SAMPLE=PASS
 DASHBOARD_AUDIT=PASS
 ```

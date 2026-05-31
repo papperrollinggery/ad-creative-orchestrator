@@ -39,6 +39,7 @@ DASHBOARD_REL = Path("AD-creative/handoff/操作台.html")
 COUNCIL_REPORT_REL = Path("AD-creative/gates/THREE-COUNCIL-READINESS_report.md")
 GOAL_PLAN_TEMPLATE_REL = Path("AD-creative/orchestrator/goal_iteration_plan_template.md")
 GOAL_ITERATIONS_REL = Path("AD-creative/orchestrator/goal_iterations")
+SUPPORT_BUNDLE_REL = Path("AD-creative/handoff/support_bundle.md")
 SAMPLE_MATERIAL_REL = Path("00_项目资料_ProjectMaterials/01_客户资料_ClientMaterials/sample_brief.md")
 SAMPLE_GOAL = "用内置样例跑通品牌深度研究与图片功能双泳道，生成可审计的本地操作台。"
 SAMPLE_BRIEF = """# Sample Creative Brief
@@ -201,6 +202,101 @@ def doctor_report() -> tuple[str, list[str], list[str], list[str]]:
 
     status = "PASS" if not issues else "CHECK"
     return status, issues, warnings, evidence
+
+
+def sanitized_doctor_evidence(evidence: list[str]) -> list[str]:
+    sanitized: list[str] = []
+    for item in evidence:
+        if item.startswith("git_remote="):
+            value = item.split("=", 1)[1]
+            if value not in {"empty", "not_source_git_checkout"} and not value.startswith("git_remote_failed="):
+                sanitized.append("git_remote=configured")
+            else:
+                sanitized.append(item)
+        elif item.startswith(("runtime_root=", "template_root=", "skill_draft_dir=", "skill_draft=")):
+            key, value = item.split("=", 1)
+            sanitized.append(f"{key}={Path(value).name if value else value}")
+        else:
+            sanitized.append(item)
+    return sanitized
+
+
+def support_table(project: Path, rel_path: str, columns: list[str], limit: int = 5) -> list[str]:
+    _, rows = read_csv_rows(project / rel_path)
+    lines: list[str] = []
+    for row in rows[-limit:]:
+        values = [f"{column}={row.get(column, '')}" for column in columns if row.get(column, "")]
+        lines.append("- " + " | ".join(values) if values else "- row_present")
+    return lines or ["- none"]
+
+
+def render_support_bundle(project: Path) -> Path:
+    counts = read_counts(project)
+    errors, validate_stats = validate(project)
+    doctor_status, doctor_issues, doctor_warnings, doctor_evidence = doctor_report()
+    dashboard = project / DASHBOARD_REL
+    council_report = project / COUNCIL_REPORT_REL
+    report = project / SUPPORT_BUNDLE_REL
+    lines = [
+        "# Support Bundle",
+        "",
+        "content_policy: sanitized diagnostics only; no client brief text, material body, prompt body, or image content included.",
+        f"created_at: {now_iso()}",
+        f"project_name: {project.name}",
+        f"stage: {project_stage(project)}",
+        f"validation: {'PASS' if not errors else 'CHECK'}",
+        f"doctor: {doctor_status}",
+        "",
+        "## Environment",
+        "",
+        *[f"- {item}" for item in sanitized_doctor_evidence(doctor_evidence)],
+        "",
+        "## Doctor Warnings",
+        "",
+        *[f"- {warning}" for warning in doctor_warnings],
+        *(["- none"] if not doctor_warnings else []),
+        "",
+        "## Doctor Issues",
+        "",
+        *[f"- {issue}" for issue in doctor_issues],
+        *(["- none"] if not doctor_issues else []),
+        "",
+        "## Project Counts",
+        "",
+        *[f"- {key}: {value}" for key, value in counts.items()],
+        "",
+        "## Validation Counts",
+        "",
+        *[f"- {key}: {value}" for key, value in validate_stats.items()],
+        "",
+        "## Validation Errors",
+        "",
+        *[f"- {error}" for error in errors],
+        *(["- none"] if not errors else []),
+        "",
+        "## Key Files",
+        "",
+        f"- dashboard: {'exists' if dashboard.exists() else 'missing'}",
+        f"- council_report: {'exists' if council_report.exists() else 'missing'}",
+        "",
+        "## Latest Gates",
+        "",
+        *support_table(
+            project,
+            "AD-creative/orchestrator/gate_log.csv",
+            ["gate_id", "stage", "status", "next_state", "created_at", "owner"],
+        ),
+        "",
+        "## Latest Work Items",
+        "",
+        *support_table(
+            project,
+            "AD-creative/orchestrator/work_items.csv",
+            ["work_id", "stage", "status", "owner", "gate_required", "client_visibility"],
+        ),
+    ]
+    write_text(report, "\n".join(lines))
+    return report
 
 
 def check_global_skill(target: Path = DEFAULT_SKILL_INSTALL_DIR) -> dict[str, str | bool]:
@@ -3814,6 +3910,27 @@ def command_doctor(args: argparse.Namespace) -> int:
     return 0 if not issues else 1
 
 
+def command_support_bundle(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    if not project.exists():
+        print("SUPPORT_BUNDLE=CHECK")
+        print(f"ERROR=project not found: {project}")
+        return 1
+    report = render_support_bundle(project)
+    errors, stats = validate(project)
+    print(f"SUPPORT_BUNDLE={'PASS' if not errors else 'CHECK'}")
+    print(f"REPORT={report}")
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    if errors:
+        print("ERRORS:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    return 0
+
+
 def command_audit_dashboard(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     if args.render:
@@ -4184,6 +4301,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor_parser = subparsers.add_parser("doctor", help="Diagnose installation, templates, optional dependencies, and release blockers.")
     doctor_parser.set_defaults(func=command_doctor)
+
+    support_parser = subparsers.add_parser("support-bundle", help="Write a sanitized support bundle for bug reports.")
+    support_parser.add_argument("project", help="Project directory.")
+    support_parser.set_defaults(func=command_support_bundle)
 
     dashboard_parser = subparsers.add_parser("render-dashboard", help="Render static operation dashboard.")
     dashboard_parser.add_argument("project", help="Project directory.")

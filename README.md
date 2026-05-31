@@ -12,6 +12,7 @@ adco --version
 adco sample /tmp/adco-sample
 adco status /tmp/adco-sample
 adco doctor
+adco support-bundle /tmp/adco-sample
 adco-check
 ```
 
@@ -84,6 +85,7 @@ adco --version
 adco doctor
 adco-init <项目目录>
 adco sample <项目目录>
+adco support-bundle <项目目录>
 adco run <项目目录> --material <资料文件或文件夹>
 adco goal-plan <项目目录> --title "<目标标题>" --objective "<目标内容>"
 adco-check
@@ -210,6 +212,7 @@ make dist-check
 make release-check
 make package-smoke
 adco doctor
+adco support-bundle <项目目录>
 python3 tools/run_checks.py
 adco sample <项目目录>
 adco status <项目目录>
@@ -317,6 +320,7 @@ package install: pip install . / adco sample / adco-check smoke PASS
 wheel distribution check: make dist-check PASS
 version diagnostics: adco --version PASS
 doctor diagnostics: adco doctor PASS with remote warning when no git remote exists
+support bundle: adco support-bundle PASS with sanitized project diagnostics
 local release check: make release-check PASS
 GitHub Actions: make release-check on Python 3.10 / 3.12 once remote exists
 ```

@@ -28,3 +28,4 @@
 - Added `make dist-check` wheel content inspection for packaged templates, skill draft, metadata, and entry points.
 - Upgraded GitHub Actions to run the full `make release-check` gate on Python 3.10 and 3.12.
 - Hardened issue and pull request templates with version, doctor, reproduction, and release-gate evidence.
+- Added `adco support-bundle` for sanitized bug-report diagnostics without client material text.

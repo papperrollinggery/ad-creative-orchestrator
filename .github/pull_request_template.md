@@ -8,6 +8,7 @@
 - [ ] `make release-check`
 - [ ] `adco --version`
 - [ ] `adco doctor`
+- [ ] `adco support-bundle <sample_project>`
 
 ## Safety
 

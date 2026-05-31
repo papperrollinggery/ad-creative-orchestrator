@@ -22,7 +22,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 
 | Area | Required State | Current Evidence | Status |
 |---|---|---|---|
-| Install/run clarity | user can start without reading code | README Quickstart, `adco --version`, `adco sample`, `adco doctor`, launcher, operator CLI | PASS |
+| Install/run clarity | user can start without reading code | README Quickstart, `adco --version`, `adco sample`, `adco doctor`, `adco support-bundle`, launcher, operator CLI | PASS |
 | One-command verification | contributors can verify changes | `make check`, `tools/run_checks.py` | PASS |
 | Gate regression coverage | every Gate has a command-level regression path | `tools/test_gates.py`; PNG/PPTX positive fixtures when optional deps exist; no-deps skip path | PASS |
 | Safety model | client-visible risk is blocked | Gate policy, adversarial council, security doc | PASS |
@@ -30,7 +30,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 | Dashboard usability | non-developer can inspect state | dashboard audit PASS, Goal tab | PASS |
 | Packaging | installable CLI | `pyproject.toml`, packaged runtime assets, `make install-smoke`, `make package-smoke`, `make dist-check` | PASS |
 | Sample generation | user can try without real material | `adco sample`, `tools/run_checks.py` temp sample | PASS |
-| GitHub readiness | license, contribution, security, roadmap, release checklist, diagnostics | added core files, `docs/operating/github_release_checklist.md`, `adco --version`, `adco doctor`, `make dist-check`, `make release-check` | PASS locally |
+| GitHub readiness | license, contribution, security, roadmap, release checklist, diagnostics | added core files, `docs/operating/github_release_checklist.md`, `adco --version`, `adco doctor`, `adco support-bundle`, `make dist-check`, `make release-check` | PASS locally |
 | CI | automated checks on push | `.github/workflows/check.yml` runs `make release-check` on Python 3.10 and 3.12 | PASS once pushed |
 | Public appeal | screenshots, demo, concise pitch | README pitch, `docs/assets/dashboard-*.png`, `docs/assets/first-run-transcript.md`, `docs/operating/demo_script.md` | PASS locally |
 | Adoption docs | new users can map the tool to real workflows | `docs/operating/adoption_patterns.md` | PASS |
@@ -54,7 +54,8 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 15. Add install/release diagnostics. Status: `adco doctor` PASS.
 16. Add CLI version diagnostics. Status: `adco --version` PASS.
 17. Add wheel distribution inspection. Status: `make dist-check` PASS.
-18. Iterate on issues from real users.
+18. Add sanitized support bundle diagnostics. Status: `adco support-bundle` PASS.
+19. Iterate on issues from real users.
 
 ## Stop Conditions
 

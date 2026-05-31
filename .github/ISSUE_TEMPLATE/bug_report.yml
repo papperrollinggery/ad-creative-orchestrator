@@ -25,6 +25,7 @@ body:
       placeholder: |
         adco --version
         adco doctor
+        adco support-bundle <project_dir>
         adco-check or make release-check
     validations:
       required: true

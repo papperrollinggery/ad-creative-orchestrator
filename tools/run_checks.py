@@ -84,6 +84,7 @@ def main() -> int:
             shutil.copytree(ROOT / "examples/moncler_protocol_dry_run", moncler)
             shutil.copytree(ROOT / "examples/simulated_qingling_outdoor_launch", qingling)
         run([python, *operator, "sample", str(sample)])
+        run([python, *operator, "support-bundle", str(sample)])
         run([python, *validator, str(sample)])
         if SOURCE_MODE:
             run([python, *operator, "audit-dashboard", str(moncler), "--render"])
