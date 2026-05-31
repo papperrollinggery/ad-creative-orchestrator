@@ -43,10 +43,21 @@ adco-check = "run_checks:main"
 
 [tool.setuptools]
 package-dir = { "" = "tools" }
+packages = ["adco_resources"]
 py-modules = [
   "ad_creative_operator",
+  "check_packaged_assets",
   "init_project",
   "validate_project",
   "run_checks",
+  "runtime_paths",
+  "render_demo_transcript",
+  "test_gates",
   "test_goal_workflow"
+]
+
+[tool.setuptools.package-data]
+adco_resources = [
+  "templates/project/**/*",
+  "skill_drafts/ad-creative-orchestrator/*"
 ]

@@ -7,7 +7,7 @@ It turns messy briefs, references, image assets, PPT drafts, review gates, and c
 ## Quickstart
 
 ```bash
-python3 -m pip install -e .
+python3 -m pip install .
 adco sample /tmp/adco-sample
 adco status /tmp/adco-sample
 adco-check
@@ -71,7 +71,7 @@ Ad Creative Orchestrator 把这些变成本地文件协议和 Gate：
 源码安装：
 
 ```bash
-python3 -m pip install -e .
+python3 -m pip install .
 ```
 
 可用命令：
@@ -202,6 +202,7 @@ GitHub 协作：
 adco-check
 make check
 make release-check
+make package-smoke
 python3 tools/run_checks.py
 adco sample <项目目录>
 adco status <项目目录>
@@ -305,6 +306,7 @@ Goal/Gate 回归测试: tools/test_goal_workflow.py PASS
 Gate 结构化回归测试: tools/test_gates.py PASS
 Gate 正向 fixture: visual PNG PASS / editable PPTX client-pack PASS / no-deps optional skip PASS
 editable CLI install: adco / adco-check smoke PASS
+package install: pip install . / adco sample / adco-check smoke PASS
 local release check: make release-check PASS
 ```
 

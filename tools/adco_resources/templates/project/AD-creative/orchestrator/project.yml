@@ -1,0 +1,14 @@
+project:
+  name: ""
+  client: ""
+  stage: intake
+  status: draft
+  timezone: Asia/Shanghai
+  created_at: ""
+  updated_at: ""
+
+rules:
+  source_of_truth: AD-creative/orchestrator
+  user_handoff: AD-creative/handoff
+  client_visible_requires_gate: true
+  global_skill_install_requires_user_approval: true

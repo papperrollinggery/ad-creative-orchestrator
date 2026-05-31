@@ -9,8 +9,12 @@ import tempfile
 import shutil
 from pathlib import Path
 
+from runtime_paths import source_root, template_root
 
-ROOT = Path(__file__).resolve().parents[1]
+
+SOURCE_ROOT = source_root()
+ROOT = SOURCE_ROOT or Path(__file__).resolve().parent
+SOURCE_MODE = SOURCE_ROOT is not None
 
 
 def run(args: list[str]) -> None:
@@ -20,37 +24,66 @@ def run(args: list[str]) -> None:
 
 def main() -> int:
     python = sys.executable
-    run(
-        [
-            python,
-            "-m",
-            "py_compile",
-            "tools/ad_creative_operator.py",
-            "tools/render_demo_transcript.py",
-            "tools/test_gates.py",
-            "tools/test_goal_workflow.py",
-            "tools/validate_project.py",
-            "tools/init_project.py",
-        ]
-    )
-    run([python, "tools/render_demo_transcript.py", "--check"])
-    run([python, "tools/test_gates.py"])
-    run([python, "tools/test_goal_workflow.py"])
-    run([python, "tools/validate_project.py", "templates/project"])
-    run([python, "tools/validate_project.py", "examples/moncler_protocol_dry_run"])
-    run([python, "tools/validate_project.py", "examples/simulated_qingling_outdoor_launch"])
+    if SOURCE_MODE:
+        run(
+            [
+                python,
+                "-m",
+                "py_compile",
+                "tools/ad_creative_operator.py",
+                "tools/check_packaged_assets.py",
+                "tools/render_demo_transcript.py",
+                "tools/test_gates.py",
+                "tools/test_goal_workflow.py",
+                "tools/validate_project.py",
+                "tools/init_project.py",
+                "tools/runtime_paths.py",
+            ]
+        )
+        run([python, "tools/check_packaged_assets.py"])
+        run([python, "tools/render_demo_transcript.py", "--check"])
+        run([python, "tools/test_gates.py"])
+        run([python, "tools/test_goal_workflow.py"])
+    else:
+        run(
+            [
+                python,
+                "-m",
+                "py_compile",
+                "ad_creative_operator.py",
+                "check_packaged_assets.py",
+                "render_demo_transcript.py",
+                "test_gates.py",
+                "test_goal_workflow.py",
+                "validate_project.py",
+                "init_project.py",
+                "runtime_paths.py",
+            ]
+        )
+        run([python, "-m", "test_gates"])
+        run([python, "-m", "test_goal_workflow"])
+    if SOURCE_MODE:
+        run([python, "tools/validate_project.py", str(template_root())])
+        run([python, "tools/validate_project.py", "examples/moncler_protocol_dry_run"])
+        run([python, "tools/validate_project.py", "examples/simulated_qingling_outdoor_launch"])
+    else:
+        run([python, "-m", "validate_project", str(template_root())])
     with tempfile.TemporaryDirectory(prefix="adco-check-") as raw_tmp:
         tmp = Path(raw_tmp)
         moncler = tmp / "moncler_protocol_dry_run"
         qingling = tmp / "simulated_qingling_outdoor_launch"
         sample = tmp / "sample_project"
-        shutil.copytree(ROOT / "examples/moncler_protocol_dry_run", moncler)
-        shutil.copytree(ROOT / "examples/simulated_qingling_outdoor_launch", qingling)
-        run([python, "tools/ad_creative_operator.py", "sample", str(sample)])
-        run([python, "tools/validate_project.py", str(sample)])
-        run([python, "tools/ad_creative_operator.py", "audit-dashboard", str(moncler), "--render"])
-        run([python, "tools/ad_creative_operator.py", "audit-dashboard", str(qingling), "--render"])
-        run([python, "tools/ad_creative_operator.py", "audit-dashboard", str(sample), "--render"])
+        operator = ["tools/ad_creative_operator.py"] if SOURCE_MODE else ["-m", "ad_creative_operator"]
+        validator = ["tools/validate_project.py"] if SOURCE_MODE else ["-m", "validate_project"]
+        if SOURCE_MODE:
+            shutil.copytree(ROOT / "examples/moncler_protocol_dry_run", moncler)
+            shutil.copytree(ROOT / "examples/simulated_qingling_outdoor_launch", qingling)
+        run([python, *operator, "sample", str(sample)])
+        run([python, *validator, str(sample)])
+        if SOURCE_MODE:
+            run([python, *operator, "audit-dashboard", str(moncler), "--render"])
+            run([python, *operator, "audit-dashboard", str(qingling), "--render"])
+        run([python, *operator, "audit-dashboard", str(sample), "--render"])
     print("RUN_CHECKS=PASS")
     return 0
 

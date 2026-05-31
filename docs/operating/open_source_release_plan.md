@@ -28,7 +28,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 | Safety model | client-visible risk is blocked | Gate policy, adversarial council, security doc | PASS |
 | Example quality | examples prove workflow | Moncler and Qingling examples validate | PASS |
 | Dashboard usability | non-developer can inspect state | dashboard audit PASS, Goal tab | PASS |
-| Packaging | installable CLI | `pyproject.toml`, `adco`, `adco-init`, `adco-validate`, `adco-check`, `make install-smoke` | PASS for source install |
+| Packaging | installable CLI | `pyproject.toml`, packaged runtime assets, `make install-smoke`, `make package-smoke` | PASS |
 | Sample generation | user can try without real material | `adco sample`, `tools/run_checks.py` temp sample | PASS |
 | GitHub readiness | license, contribution, security, roadmap, release checklist | added core files, `docs/operating/github_release_checklist.md`, `make release-check` | PASS locally |
 | CI | automated checks on push | `.github/workflows/check.yml` | PASS once pushed |
@@ -50,7 +50,8 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 11. Add richer first-run demo transcript. Status: generated transcript PASS and stale-check wired into `run_checks`.
 12. Publish public README with clear problem, demo, and safety story. Status: local README release pitch PASS.
 13. Add single-command local release check. Status: `make release-check` PASS.
-14. Iterate on issues from real users.
+14. Add normal package install support. Status: `pip install .` smoke PASS.
+15. Iterate on issues from real users.
 
 ## Stop Conditions
 

@@ -28,6 +28,7 @@ Pass threshold:
 git status --short only contains intended release changes
 RUN_CHECKS=PASS
 INSTALL_SMOKE=PASS
+PACKAGE_SMOKE=PASS
 RELEASE_CHECK=PASS
 SAMPLE=PASS
 DASHBOARD_AUDIT=PASS

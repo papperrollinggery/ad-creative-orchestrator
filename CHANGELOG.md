@@ -21,3 +21,4 @@
 - Added generated first-run demo transcript and stale-check verification.
 - Improved README public quickstart, value proposition, and safety model.
 - Added `make release-check` local release gate.
+- Added packaged runtime assets plus normal `pip install .` smoke verification.

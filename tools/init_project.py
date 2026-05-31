@@ -4,30 +4,35 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 from pathlib import Path
+
+from runtime_paths import template_root as default_template_root
 
 
 def copy_template(template_root: Path, target_root: Path) -> tuple[int, int]:
     created = 0
     skipped = 0
-    sources = sorted(template_root.rglob("*"))
 
-    for source in sources:
-        relative = source.relative_to(template_root)
-        target = target_root / relative
+    def copy_node(source: Path, relative: Path = Path()) -> None:
+        nonlocal created, skipped
+        for child in sorted(source.iterdir(), key=lambda item: item.name):
+            child_relative = relative / child.name
+            target = target_root / child_relative
 
-        if source.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
-            continue
+            if child.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                copy_node(child, child_relative)
+                continue
 
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
-            skipped += 1
-            continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                skipped += 1
+                continue
 
-        shutil.copy2(source, target)
-        created += 1
+            target.write_bytes(child.read_bytes())
+            created += 1
+
+    copy_node(template_root)
 
     return created, skipped
 
@@ -37,7 +42,7 @@ def main() -> int:
     parser.add_argument("project", help="Target project directory")
     parser.add_argument(
         "--template",
-        default=str(Path(__file__).resolve().parents[1] / "templates/project"),
+        default=str(default_template_root()),
         help="Template directory. Defaults to this repository's templates/project.",
     )
     args = parser.parse_args()

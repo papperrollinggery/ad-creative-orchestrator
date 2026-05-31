@@ -22,12 +22,13 @@ from typing import Callable, Iterable
 import xml.etree.ElementTree as ET
 
 from init_project import copy_template
+from runtime_paths import repo_or_module_root, skill_draft_dir, template_root
 from validate_project import validate
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-TEMPLATE_ROOT = REPO_ROOT / "templates/project"
-SKILL_DRAFT_DIR = REPO_ROOT / "skill_drafts/ad-creative-orchestrator"
+REPO_ROOT = repo_or_module_root()
+TEMPLATE_ROOT = template_root()
+SKILL_DRAFT_DIR = skill_draft_dir()
 DEFAULT_SKILL_INSTALL_DIR = Path.home() / ".codex/skills/ad-creative-orchestrator"
 DASHBOARD_REL = Path("AD-creative/handoff/操作台.html")
 COUNCIL_REPORT_REL = Path("AD-creative/gates/THREE-COUNCIL-READINESS_report.md")
