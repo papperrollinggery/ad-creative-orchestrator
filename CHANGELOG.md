@@ -50,3 +50,4 @@
 - Added `adco quickstart` for one-command first run, validation, dashboard opening, and next-step output.
 - Added `adco quickstart --json` and covered it in source, editable install, and package install checks.
 - Added `adco support-bundle --json` for machine-readable sanitized diagnostics.
+- Added `adco audit-dashboard --json` for machine-readable dashboard usability checks.

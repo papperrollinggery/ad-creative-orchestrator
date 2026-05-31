@@ -40,6 +40,7 @@ AD-creative/handoff/操作台.html
 adco quickstart
 adco quickstart --json
 adco support-bundle <项目目录> --json
+adco audit-dashboard <项目目录> --render --json
 adco demo
 adco run <项目目录> --material <资料文件或文件夹>
 adco open-dashboard <项目目录>
@@ -154,6 +155,7 @@ adco export-pptx <项目目录>
 adco client-pack-gate <项目目录>
 adco handoff-readiness-gate <项目目录>
 adco audit-dashboard <项目目录> --render
+adco audit-dashboard <项目目录> --render --json
 adco open-dashboard <项目目录> --no-open
 adco validate <项目目录>
 ```

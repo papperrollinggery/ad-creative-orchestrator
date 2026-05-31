@@ -35,6 +35,7 @@ adco sample /tmp/adco-release-sample
 adco support-bundle /tmp/adco-release-sample
 adco support-bundle /tmp/adco-release-sample --json
 adco open-dashboard /tmp/adco-release-sample --no-open
+adco audit-dashboard /tmp/adco-release-sample --render --json
 adco status /tmp/adco-release-sample --json
 adco next /tmp/adco-release-sample
 adco next /tmp/adco-release-sample --json
@@ -64,6 +65,7 @@ NEXT_STATUS=WAITING_FOR_CONFIRMATION
 SUPPORT_BUNDLE=PASS
 support_bundle_json=PASS
 DASHBOARD_OPEN=SKIPPED
+dashboard_audit_json=PASS
 VALIDATION=PASS
 SAMPLE=PASS
 DASHBOARD_AUDIT=PASS

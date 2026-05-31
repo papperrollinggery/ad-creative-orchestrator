@@ -4450,6 +4450,16 @@ def command_audit_dashboard(args: argparse.Namespace) -> int:
         ensure_project(project)
         render_dashboard(project)
     issues = audit_dashboard(project)
+    payload = {
+        "dashboard_audit": "PASS" if not issues else "CHECK",
+        "project": str(project),
+        "dashboard": str(project / DASHBOARD_REL),
+        "rendered": bool(args.render),
+        "issues": issues,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if not issues else 1
     print(f"DASHBOARD_AUDIT={'PASS' if not issues else 'CHECK'}")
     print(f"DASHBOARD={project / DASHBOARD_REL}")
     if issues:
@@ -4890,6 +4900,7 @@ def build_parser() -> argparse.ArgumentParser:
     audit_parser = subparsers.add_parser("audit-dashboard", help="Audit dashboard usability markers.")
     audit_parser.add_argument("project", help="Project directory.")
     audit_parser.add_argument("--render", action="store_true", help="Render dashboard before auditing.")
+    audit_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     audit_parser.set_defaults(func=command_audit_dashboard)
 
     council_parser = subparsers.add_parser("council", help="Run three-council readiness audit.")

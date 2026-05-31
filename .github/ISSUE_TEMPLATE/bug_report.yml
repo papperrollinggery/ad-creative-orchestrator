@@ -27,6 +27,8 @@ body:
         adco doctor
         adco doctor --json
         adco support-bundle <project_dir>
+        adco support-bundle <project_dir> --json
+        adco audit-dashboard <project_dir> --render --json
         adco validate <project_dir>
         adco validate <project_dir> --json
         adco check

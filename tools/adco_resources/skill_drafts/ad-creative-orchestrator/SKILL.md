@@ -50,6 +50,7 @@ adco doctor
 adco support-bundle <project_dir>
 adco support-bundle <project_dir> --json
 adco open-dashboard <project_dir>
+adco audit-dashboard <project_dir> --render --json
 adco validate <project_dir>
 adco check
 adco run <project_dir> --material <materials_path>
@@ -80,6 +81,7 @@ adco demo [project_dir]
 adco sample <project_dir>
 adco --version
 adco support-bundle <project_dir> --json
+adco audit-dashboard <project_dir> --render --json
 adco doctor
 adco doctor --json
 adco release-status

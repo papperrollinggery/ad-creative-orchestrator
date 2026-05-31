@@ -35,6 +35,7 @@ install-smoke:
 	$$tmp_dir/venv/bin/adco support-bundle $$tmp_dir/project; \
 	$$tmp_dir/venv/bin/adco support-bundle $$tmp_dir/project --json >/dev/null; \
 	$$tmp_dir/venv/bin/adco open-dashboard $$tmp_dir/project --no-open; \
+	$$tmp_dir/venv/bin/adco audit-dashboard $$tmp_dir/project --render --json >/dev/null; \
 	$$tmp_dir/venv/bin/adco status $$tmp_dir/project --json >/dev/null; \
 	$$tmp_dir/venv/bin/adco validate $$tmp_dir/project; \
 	$$tmp_dir/venv/bin/adco validate $$tmp_dir/project --json >/dev/null; \
@@ -64,6 +65,7 @@ package-smoke:
 	$$tmp_dir/venv/bin/adco support-bundle $$tmp_dir/project; \
 	$$tmp_dir/venv/bin/adco support-bundle $$tmp_dir/project --json >/dev/null; \
 	$$tmp_dir/venv/bin/adco open-dashboard $$tmp_dir/project --no-open; \
+	$$tmp_dir/venv/bin/adco audit-dashboard $$tmp_dir/project --render --json >/dev/null; \
 	$$tmp_dir/venv/bin/adco status $$tmp_dir/project --json >/dev/null; \
 	$$tmp_dir/venv/bin/adco validate $$tmp_dir/project; \
 	$$tmp_dir/venv/bin/adco validate $$tmp_dir/project --json >/dev/null; \

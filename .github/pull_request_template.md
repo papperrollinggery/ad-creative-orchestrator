@@ -10,7 +10,9 @@
 - [ ] `adco doctor`
 - [ ] `adco demo <sample_project> --no-open`
 - [ ] `adco support-bundle <sample_project>`
+- [ ] `adco support-bundle <sample_project> --json`
 - [ ] `adco open-dashboard <sample_project> --no-open`
+- [ ] `adco audit-dashboard <sample_project> --render --json`
 - [ ] `adco validate <sample_project>`
 - [ ] `adco check`
 

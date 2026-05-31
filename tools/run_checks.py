@@ -132,6 +132,7 @@ def main() -> int:
             run([python, *operator, "audit-dashboard", str(moncler), "--render"])
             run([python, *operator, "audit-dashboard", str(qingling), "--render"])
         run([python, *operator, "audit-dashboard", str(sample), "--render"])
+        run_json([python, *operator, "audit-dashboard", str(sample), "--render", "--json"])
     print("RUN_CHECKS=PASS")
     return 0
 

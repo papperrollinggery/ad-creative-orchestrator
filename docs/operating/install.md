@@ -41,6 +41,7 @@ adco sample <project_dir>
 adco support-bundle <project_dir>
 adco support-bundle <project_dir> --json
 adco open-dashboard <project_dir>
+adco audit-dashboard <project_dir> --render --json
 adco run <project_dir> --material <material_file_or_folder>
 adco goal-plan <project_dir> --title "<goal title>" --objective "<goal objective>"
 adco status <project_dir>

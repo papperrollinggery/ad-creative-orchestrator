@@ -125,6 +125,7 @@ adco sample <项目目录>
 adco support-bundle <项目目录>
 adco support-bundle <项目目录> --json
 adco open-dashboard <项目目录>
+adco audit-dashboard <项目目录> --render --json
 adco run <项目目录> --material <资料文件或文件夹>
 adco goal-plan <项目目录> --title "<目标标题>" --objective "<目标内容>"
 adco status <项目目录>
@@ -284,6 +285,7 @@ adco client-pack-gate <项目目录>
 adco handoff-readiness-gate <项目目录>
 adco install-skill
 adco audit-dashboard <项目目录> --render
+adco audit-dashboard <项目目录> --render --json
 adco council <项目目录> --render-dashboard
 adco-check
 adco-init <项目目录>
@@ -380,6 +382,7 @@ next diagnostics: adco next reports NEXT_STATUS and NEXT_ACTION
 support bundle: adco support-bundle PASS with sanitized project diagnostics
 support bundle JSON: adco support-bundle --json PASS
 dashboard open command: adco open-dashboard PASS
+dashboard audit JSON: adco audit-dashboard --json PASS
 quickstart command: adco quickstart PASS
 quickstart JSON: adco quickstart --json PASS
 local release check: make release-check PASS

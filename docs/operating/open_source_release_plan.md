@@ -22,12 +22,12 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 
 | Area | Required State | Current Evidence | Status |
 |---|---|---|---|
-| Install/run clarity | user can start without reading code | README Quickstart, `adco --version`, `adco init`, `adco quickstart`, `adco quickstart --json`, `adco demo`, `adco sample`, `adco doctor`, `adco release-status`, `adco docs`, `adco support-bundle`, `adco support-bundle --json`, `adco open-dashboard`, `adco status`, `adco next`, `adco validate`, `adco check`, launcher, operator CLI | PASS |
+| Install/run clarity | user can start without reading code | README Quickstart, `adco --version`, `adco init`, `adco quickstart`, `adco quickstart --json`, `adco demo`, `adco sample`, `adco doctor`, `adco release-status`, `adco docs`, `adco support-bundle`, `adco support-bundle --json`, `adco open-dashboard`, `adco audit-dashboard --json`, `adco status`, `adco next`, `adco validate`, `adco check`, launcher, operator CLI | PASS |
 | One-command verification | contributors can verify changes | `adco check`, `make check`, `tools/run_checks.py` | PASS |
 | Gate regression coverage | every Gate has a command-level regression path | `tools/test_gates.py`; PNG/PPTX positive fixtures when optional deps exist; no-deps skip path | PASS |
 | Safety model | client-visible risk is blocked | Gate policy, adversarial council, security doc | PASS |
 | Example quality | examples prove workflow | Moncler and Qingling examples validate | PASS |
-| Dashboard usability | non-developer can inspect state | dashboard audit PASS, Goal tab, `adco open-dashboard` | PASS |
+| Dashboard usability | non-developer can inspect state | dashboard audit PASS, `adco audit-dashboard --json`, Goal tab, `adco open-dashboard` | PASS |
 | Packaging | installable CLI | `pyproject.toml`, packaged runtime assets, `adco init`, `make install-smoke`, `make package-smoke`, `make dist-check` | PASS |
 | Sample generation | user can try without real material | `adco demo`, `adco sample`, `tools/run_checks.py` temp sample | PASS |
 | GitHub readiness | license, contribution, security, roadmap, release checklist, diagnostics | public remote, `docs/operating/github_release_checklist.md`, `adco --version`, `adco doctor --json`, `adco support-bundle --json`, `make dist-check`, `make release-check` | PASS |
@@ -74,7 +74,8 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 34. Add `adco quickstart` one-command first run with validation and next-step output. Status: PASS.
 35. Add `adco quickstart --json` for automation-friendly onboarding. Status: PASS.
 36. Add `adco support-bundle --json` for machine-readable bug-report diagnostics. Status: PASS.
-37. Iterate on issues from real users.
+37. Add `adco audit-dashboard --json` for machine-readable dashboard usability checks. Status: PASS.
+38. Iterate on issues from real users.
 
 ## Stop Conditions
 
