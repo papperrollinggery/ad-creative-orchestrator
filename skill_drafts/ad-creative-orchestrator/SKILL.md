@@ -42,6 +42,7 @@ Run:
 
 ```text
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py sample <project_dir>
+python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py doctor
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py run <project_dir> --material <materials_path>
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py intake <project_dir>
@@ -64,6 +65,7 @@ Installed CLI equivalent:
 ```text
 python3 -m pip install .
 adco sample <project_dir>
+adco doctor
 adco run <project_dir> --material <materials_path>
 adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
 adco-check

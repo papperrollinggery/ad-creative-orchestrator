@@ -17,6 +17,7 @@ install-smoke:
 	$$tmp_dir/venv/bin/python -m pip install --upgrade pip >/dev/null; \
 	$$tmp_dir/venv/bin/python -m pip install -e . --no-deps >/dev/null; \
 	$$tmp_dir/venv/bin/adco --help >/dev/null; \
+	$$tmp_dir/venv/bin/adco doctor; \
 	$$tmp_dir/venv/bin/adco-init $$tmp_dir/project >/dev/null; \
 	$$tmp_dir/venv/bin/adco-validate $$tmp_dir/project; \
 	$$tmp_dir/venv/bin/adco-check; \
@@ -27,6 +28,7 @@ package-smoke:
 	$(PYTHON) -m venv $$tmp_dir/venv; \
 	$$tmp_dir/venv/bin/python -m pip install --upgrade pip >/dev/null; \
 	$$tmp_dir/venv/bin/python -m pip install . --no-deps >/dev/null; \
+	$$tmp_dir/venv/bin/adco doctor; \
 	$$tmp_dir/venv/bin/adco-init $$tmp_dir/init-project >/dev/null; \
 	$$tmp_dir/venv/bin/adco-validate $$tmp_dir/init-project >/dev/null; \
 	$$tmp_dir/venv/bin/adco sample $$tmp_dir/project >/dev/null; \

@@ -10,6 +10,7 @@ It turns messy briefs, references, image assets, PPT drafts, review gates, and c
 python3 -m pip install .
 adco sample /tmp/adco-sample
 adco status /tmp/adco-sample
+adco doctor
 adco-check
 ```
 
@@ -78,6 +79,7 @@ python3 -m pip install .
 
 ```bash
 adco --help
+adco doctor
 adco-init <项目目录>
 adco sample <项目目录>
 adco run <项目目录> --material <资料文件或文件夹>
@@ -203,6 +205,7 @@ adco-check
 make check
 make release-check
 make package-smoke
+adco doctor
 python3 tools/run_checks.py
 adco sample <项目目录>
 adco status <项目目录>
@@ -307,6 +310,7 @@ Gate 结构化回归测试: tools/test_gates.py PASS
 Gate 正向 fixture: visual PNG PASS / editable PPTX client-pack PASS / no-deps optional skip PASS
 editable CLI install: adco / adco-check smoke PASS
 package install: pip install . / adco sample / adco-check smoke PASS
+doctor diagnostics: adco doctor PASS with remote warning when no git remote exists
 local release check: make release-check PASS
 ```
 

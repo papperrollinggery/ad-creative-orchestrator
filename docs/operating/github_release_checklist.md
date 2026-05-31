@@ -16,6 +16,7 @@ Run from repository root:
 
 ```bash
 make release-check
+adco doctor
 git status --short
 python3 tools/ad_creative_operator.py sample /tmp/adco-release-sample
 python3 tools/ad_creative_operator.py audit-dashboard examples/moncler_protocol_dry_run --render
@@ -30,6 +31,7 @@ RUN_CHECKS=PASS
 INSTALL_SMOKE=PASS
 PACKAGE_SMOKE=PASS
 RELEASE_CHECK=PASS
+ADCO_DOCTOR=PASS
 SAMPLE=PASS
 DASHBOARD_AUDIT=PASS
 ```

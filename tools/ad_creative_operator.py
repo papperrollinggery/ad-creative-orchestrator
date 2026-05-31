@@ -11,6 +11,8 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,7 +24,7 @@ from typing import Callable, Iterable
 import xml.etree.ElementTree as ET
 
 from init_project import copy_template
-from runtime_paths import repo_or_module_root, skill_draft_dir, template_root
+from runtime_paths import repo_or_module_root, skill_draft_dir, source_root, template_root
 from validate_project import validate
 
 
@@ -100,6 +102,80 @@ def install_global_skill(target: Path = DEFAULT_SKILL_INSTALL_DIR) -> dict[str, 
         "target_hash": target_hash,
         "match": source_hash == target_hash,
     }
+
+
+def module_available(name: str) -> tuple[bool, str]:
+    try:
+        imported = __import__(name)
+        return True, str(getattr(imported, "__version__", "available") or "available")
+    except Exception as exc:  # noqa: BLE001 - doctor should report exact import problem
+        return False, str(exc)
+
+
+def git_remote_summary() -> tuple[bool, str]:
+    root = source_root()
+    if not root or not (root / ".git").exists():
+        return False, "not_source_git_checkout"
+    try:
+        result = subprocess.run(
+            ["git", "remote", "-v"],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - actionable local diagnostic
+        return False, f"git_remote_failed={exc}"
+    remote_text = result.stdout.strip()
+    if not remote_text:
+        return False, "empty"
+    return True, remote_text.replace("\n", " | ")
+
+
+def doctor_report() -> tuple[str, list[str], list[str], list[str]]:
+    issues: list[str] = []
+    warnings: list[str] = []
+    evidence: list[str] = [
+        f"python={sys.version.split()[0]}",
+        f"mode={'source' if source_root() else 'installed'}",
+        f"runtime_root={REPO_ROOT}",
+        f"template_root={TEMPLATE_ROOT}",
+        f"skill_draft_dir={SKILL_DRAFT_DIR}",
+    ]
+
+    required_template_files = [
+        "AD-creative/orchestrator/project.yml",
+        "AD-creative/orchestrator/requirements.csv",
+        "AD-creative/handoff/项目看板.md",
+        "AD-creative/gates/adversarial_council_gate_template.md",
+    ]
+    if not TEMPLATE_ROOT.exists():
+        issues.append(f"template root missing: {TEMPLATE_ROOT}")
+    else:
+        evidence.append("template_root_exists=true")
+        for rel_path in required_template_files:
+            if not (TEMPLATE_ROOT / rel_path).exists():
+                issues.append(f"template file missing: {rel_path}")
+
+    skill_path = SKILL_DRAFT_DIR / "SKILL.md"
+    if not skill_path.exists():
+        issues.append(f"skill draft missing: {skill_path}")
+    else:
+        evidence.append(f"skill_draft={skill_path}")
+
+    for module_name in ["PIL", "pptx"]:
+        ok, note = module_available(module_name)
+        evidence.append(f"module_{module_name}={note if ok else 'missing'}")
+        if not ok:
+            warnings.append(f"optional dependency unavailable: {module_name}: {note}")
+
+    has_remote, remote_note = git_remote_summary()
+    evidence.append(f"git_remote={remote_note}")
+    if not has_remote and remote_note == "empty":
+        warnings.append("git remote is not configured; push and GitHub Actions cannot run.")
+
+    status = "PASS" if not issues else "CHECK"
+    return status, issues, warnings, evidence
 
 
 def check_global_skill(target: Path = DEFAULT_SKILL_INSTALL_DIR) -> dict[str, str | bool]:
@@ -3695,6 +3771,24 @@ def command_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_doctor(args: argparse.Namespace) -> int:
+    status, issues, warnings, evidence = doctor_report()
+    print(f"ADCO_DOCTOR={status}")
+    print(f"ISSUES={len(issues)}")
+    print(f"WARNINGS={len(warnings)}")
+    for item in evidence:
+        print(f"EVIDENCE={item}")
+    if warnings:
+        print("DOCTOR_WARNINGS:")
+        for warning in warnings:
+            print(f"- {warning}")
+    if issues:
+        print("DOCTOR_ISSUES:")
+        for issue in issues:
+            print(f"- {issue}")
+    return 0 if not issues else 1
+
+
 def command_audit_dashboard(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     if args.render:
@@ -4061,6 +4155,9 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser = subparsers.add_parser("status", help="Print current project status.")
     status_parser.add_argument("project", help="Project directory.")
     status_parser.set_defaults(func=command_status)
+
+    doctor_parser = subparsers.add_parser("doctor", help="Diagnose installation, templates, optional dependencies, and release blockers.")
+    doctor_parser.set_defaults(func=command_doctor)
 
     dashboard_parser = subparsers.add_parser("render-dashboard", help="Render static operation dashboard.")
     dashboard_parser.add_argument("project", help="Project directory.")
