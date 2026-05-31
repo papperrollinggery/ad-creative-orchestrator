@@ -318,6 +318,7 @@ wheel distribution check: make dist-check PASS
 version diagnostics: adco --version PASS
 doctor diagnostics: adco doctor PASS with remote warning when no git remote exists
 local release check: make release-check PASS
+GitHub Actions: make release-check on Python 3.10 / 3.12 once remote exists
 ```
 
 仍需真实项目负责人最终执行：

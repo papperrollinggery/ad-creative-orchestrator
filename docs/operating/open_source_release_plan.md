@@ -31,7 +31,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 | Packaging | installable CLI | `pyproject.toml`, packaged runtime assets, `make install-smoke`, `make package-smoke`, `make dist-check` | PASS |
 | Sample generation | user can try without real material | `adco sample`, `tools/run_checks.py` temp sample | PASS |
 | GitHub readiness | license, contribution, security, roadmap, release checklist, diagnostics | added core files, `docs/operating/github_release_checklist.md`, `adco --version`, `adco doctor`, `make dist-check`, `make release-check` | PASS locally |
-| CI | automated checks on push | `.github/workflows/check.yml` | PASS once pushed |
+| CI | automated checks on push | `.github/workflows/check.yml` runs `make release-check` on Python 3.10 and 3.12 | PASS once pushed |
 | Public appeal | screenshots, demo, concise pitch | README pitch, `docs/assets/dashboard-*.png`, `docs/assets/first-run-transcript.md`, `docs/operating/demo_script.md` | PASS locally |
 | Adoption docs | new users can map the tool to real workflows | `docs/operating/adoption_patterns.md` | PASS |
 

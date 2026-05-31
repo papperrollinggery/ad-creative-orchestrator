@@ -26,3 +26,4 @@
 - Added `adco doctor` install/resource/dependency/release diagnostic command.
 - Added `adco --version` for issue reports and install diagnostics.
 - Added `make dist-check` wheel content inspection for packaged templates, skill draft, metadata, and entry points.
+- Upgraded GitHub Actions to run the full `make release-check` gate on Python 3.10 and 3.12.

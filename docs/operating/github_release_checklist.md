@@ -52,7 +52,8 @@ git push -u origin main
 After push:
 
 ```text
-GitHub Actions / check: PASS
+GitHub Actions / check: PASS on Python 3.10 and 3.12
+GitHub Actions command: make release-check
 README images render
 Issue templates visible
 PR template visible
