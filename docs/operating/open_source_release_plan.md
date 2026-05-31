@@ -27,7 +27,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 | Safety model | client-visible risk is blocked | Gate policy, adversarial council, security doc | PASS |
 | Example quality | examples prove workflow | Moncler and Qingling examples validate | PASS |
 | Dashboard usability | non-developer can inspect state | dashboard audit PASS, Goal tab | PASS |
-| Packaging | installable CLI | not packaged yet | TODO |
+| Packaging | installable CLI | `pyproject.toml`, `adco`, `adco-init`, `adco-validate`, `adco-check`, `make install-smoke` | PASS for source install |
 | GitHub readiness | license, contribution, security, roadmap | added core files | PASS |
 | CI | automated checks on push | `.github/workflows/check.yml` | PASS once pushed |
 | Public appeal | screenshots, demo, concise pitch | not built yet | TODO |
@@ -36,7 +36,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 
 1. Stabilize local checks and examples.
 2. Initialize repository and commit baseline.
-3. Package CLI.
+3. Harden source install and CLI smoke tests. Status: local smoke PASS.
 4. Add screenshots/demo media.
 5. Push repository so GitHub Actions can run remotely.
 6. Publish public README with clear problem, demo, and safety story.

@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ad-creative-orchestrator"
+version = "0.1.0"
+description = "Local-first Codex workflow for advertising creative project orchestration."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Ad Creative Orchestrator contributors" }
+]
+keywords = [
+  "advertising",
+  "creative-operations",
+  "codex",
+  "workflow",
+  "local-first",
+  "ppt",
+  "image-generation"
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: End Users/Desktop",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Office/Business",
+  "Topic :: Multimedia :: Graphics"
+]
+dependencies = [
+  "Pillow>=10.0",
+  "python-pptx>=0.6.23"
+]
+
+[project.scripts]
+adco = "ad_creative_operator:main"
+adco-init = "init_project:main"
+adco-validate = "validate_project:main"
+adco-check = "run_checks:main"
+
+[tool.setuptools]
+package-dir = { "" = "tools" }
+py-modules = [
+  "ad_creative_operator",
+  "init_project",
+  "validate_project",
+  "run_checks",
+  "test_goal_workflow"
+]

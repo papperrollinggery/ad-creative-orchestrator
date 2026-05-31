@@ -4,6 +4,42 @@ Codex-first 广告创意项目编排工作流。
 
 当前目标不是做独立 SaaS，也不是直接安装全局 Skill。
 
+## Why This Exists
+
+广告创意项目最容易失控的地方不是“写几页方案”，而是客户资料、补充反馈、参考来源、AI 图、PPT、客户可见风险在多个版本里互相污染。
+
+Ad Creative Orchestrator 把这些变成本地文件协议和 Gate：
+
+```text
+资料 → 需求/缺口 → 参考证据 → 创意方向 → 图片资产 → 客户审阅包 → PPT/Final Gate → 反馈合并
+```
+
+所有客户可见内容必须能追溯到 requirement / reference / asset / Gate。
+
+## Install
+
+源码安装：
+
+```bash
+python3 -m pip install -e .
+```
+
+可用命令：
+
+```bash
+adco --help
+adco-init <项目目录>
+adco run <项目目录> --material <资料文件或文件夹>
+adco goal-plan <项目目录> --title "<目标标题>" --objective "<目标内容>"
+adco-check
+```
+
+不安装也可以直接用：
+
+```bash
+python3 tools/ad_creative_operator.py --help
+```
+
 当前目标：
 
 ```text
@@ -74,6 +110,7 @@ examples/simulated_qingling_outdoor_launch/
 操作手册：
 
 ```text
+docs/operating/install.md
 docs/operating/operating_manual.md
 docs/operating/dual_lane_goal_delivery_workflow.md
 docs/operating/dual_lane_goal_optimization_plan.md
@@ -108,8 +145,11 @@ GitHub 协作：
 验证工具：
 
 ```text
+adco-check
 make check
 python3 tools/run_checks.py
+adco status <项目目录>
+adco goal-plan <项目目录> --title <目标标题> --objective <目标内容>
 python3 tools/ad_creative_operator.py status <项目目录>
 python3 tools/ad_creative_operator.py goal-plan <项目目录> --title <目标标题> --objective <目标内容>
 python3 tools/ad_creative_operator.py intake <项目目录>
@@ -203,6 +243,7 @@ goal-plan 执行记录生成: examples/moncler_protocol_dry_run / examples/simul
 反驳性议会 Gate 策略: 无记录时 PASS→PARTIAL_PASS / 有记录时 PASS 回归测试 PASS
 操作台 Goal Tab: audit-dashboard PASS
 Goal/Gate 回归测试: tools/test_goal_workflow.py PASS
+editable CLI install: adco / adco-check smoke PASS
 ```
 
 仍需真实项目负责人最终执行：

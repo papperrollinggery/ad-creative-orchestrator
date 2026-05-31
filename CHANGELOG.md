@@ -9,3 +9,6 @@
 - Added `tools/run_checks.py` unified verification entry point.
 - Added open-source readiness files: `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `ROADMAP.md`, `.gitignore`, `Makefile`, `requirements.txt`.
 - Added GitHub Actions check workflow plus issue and pull request templates.
+- Added `pyproject.toml` and console scripts: `adco`, `adco-init`, `adco-validate`, `adco-check`.
+- Added source install guide.
+- Added `make install-smoke` for editable install verification.

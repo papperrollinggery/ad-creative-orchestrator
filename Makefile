@@ -1,9 +1,23 @@
-.PHONY: check validate dashboards clean
+.PHONY: check install-dev install-smoke validate dashboards clean
 
 PYTHON ?= python3
 
 check:
 	$(PYTHON) tools/run_checks.py
+
+install-dev:
+	$(PYTHON) -m pip install -e .
+
+install-smoke:
+	tmp_dir=$$(mktemp -d /tmp/adco-install-XXXXXX); \
+	$(PYTHON) -m venv $$tmp_dir/venv; \
+	$$tmp_dir/venv/bin/python -m pip install --upgrade pip >/dev/null; \
+	$$tmp_dir/venv/bin/python -m pip install -e . --no-deps >/dev/null; \
+	$$tmp_dir/venv/bin/adco --help >/dev/null; \
+	$$tmp_dir/venv/bin/adco-init $$tmp_dir/project >/dev/null; \
+	$$tmp_dir/venv/bin/adco-validate $$tmp_dir/project; \
+	$$tmp_dir/venv/bin/adco-check; \
+	echo "INSTALL_SMOKE=PASS $$tmp_dir"
 
 validate:
 	$(PYTHON) tools/validate_project.py templates/project
