@@ -37,6 +37,7 @@ AD-creative/handoff/操作台.html
 命令行方式：
 
 ```text
+python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py demo
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py run <项目目录> --material <资料文件或文件夹>
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py open-dashboard <项目目录>
 ```

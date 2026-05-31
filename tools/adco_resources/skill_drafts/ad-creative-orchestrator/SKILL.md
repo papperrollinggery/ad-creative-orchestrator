@@ -42,6 +42,7 @@ Run:
 
 ```text
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py sample <project_dir>
+python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py demo [project_dir]
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py --version
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py doctor
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py support-bundle <project_dir>
@@ -67,6 +68,7 @@ Installed CLI equivalent:
 
 ```text
 python3 -m pip install .
+adco demo [project_dir]
 adco sample <project_dir>
 adco --version
 adco doctor

@@ -9,6 +9,7 @@ It turns messy briefs, references, image assets, PPT drafts, review gates, and c
 ```bash
 python3 -m pip install .
 adco --version
+adco demo
 adco sample /tmp/adco-sample
 adco status /tmp/adco-sample
 adco open-dashboard /tmp/adco-sample
@@ -20,6 +21,7 @@ adco-check
 Expected:
 
 ```text
+DEMO=PASS
 SAMPLE=PASS
 VALIDATION=PASS
 RUN_CHECKS=PASS
@@ -85,6 +87,7 @@ adco --help
 adco --version
 adco doctor
 adco-init <项目目录>
+adco demo [项目目录]
 adco sample <项目目录>
 adco support-bundle <项目目录>
 adco open-dashboard <项目目录>
@@ -216,6 +219,7 @@ make package-smoke
 adco doctor
 adco support-bundle <项目目录>
 adco open-dashboard <项目目录> --no-open
+adco demo <项目目录> --no-open
 python3 tools/run_checks.py
 adco sample <项目目录>
 adco status <项目目录>
@@ -312,6 +316,7 @@ image_gen 输出入库链路: import-imagegen + manifest + import log + visual g
 操作台 Playwright Chromium desktop/mobile screenshots: PASS
 公开 demo 截图: docs/assets/dashboard-desktop.png / docs/assets/dashboard-mobile.png
 sample project generator: adco sample / run_checks temp sample PASS
+demo command: adco demo PASS
 goal-plan 执行记录生成: examples/moncler_protocol_dry_run / examples/simulated_qingling_outdoor_launch PASS
 反驳性议会 Gate 策略: 无记录时 PASS→PARTIAL_PASS / 有记录时 PASS 回归测试 PASS
 操作台 Goal Tab: audit-dashboard PASS

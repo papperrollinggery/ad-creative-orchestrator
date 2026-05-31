@@ -30,3 +30,4 @@
 - Hardened issue and pull request templates with version, doctor, reproduction, and release-gate evidence.
 - Added `adco support-bundle` for sanitized bug-report diagnostics without client material text.
 - Added `adco open-dashboard` to render and open the local operation dashboard directly.
+- Added `adco demo` as a one-command sample project and dashboard demo.

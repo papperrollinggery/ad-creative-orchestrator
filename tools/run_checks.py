@@ -78,12 +78,14 @@ def main() -> int:
         moncler = tmp / "moncler_protocol_dry_run"
         qingling = tmp / "simulated_qingling_outdoor_launch"
         sample = tmp / "sample_project"
+        demo = tmp / "demo_project"
         operator = ["tools/ad_creative_operator.py"] if SOURCE_MODE else ["-m", "ad_creative_operator"]
         validator = ["tools/validate_project.py"] if SOURCE_MODE else ["-m", "validate_project"]
         if SOURCE_MODE:
             shutil.copytree(ROOT / "examples/moncler_protocol_dry_run", moncler)
             shutil.copytree(ROOT / "examples/simulated_qingling_outdoor_launch", qingling)
         run([python, *operator, "sample", str(sample)])
+        run([python, *operator, "demo", str(demo), "--no-open"])
         run([python, *operator, "support-bundle", str(sample)])
         run([python, *operator, "open-dashboard", str(sample), "--no-open"])
         run([python, *validator, str(sample)])

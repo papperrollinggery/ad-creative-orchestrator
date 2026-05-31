@@ -20,6 +20,7 @@ make dist-check
 adco --version
 adco doctor
 git status --short
+python3 tools/ad_creative_operator.py demo /tmp/adco-release-demo --no-open
 python3 tools/ad_creative_operator.py sample /tmp/adco-release-sample
 python3 tools/ad_creative_operator.py support-bundle /tmp/adco-release-sample
 python3 tools/ad_creative_operator.py open-dashboard /tmp/adco-release-sample --no-open
@@ -38,6 +39,7 @@ RELEASE_CHECK=PASS
 DIST_CHECK=PASS
 adco 0.1.0
 ADCO_DOCTOR=PASS
+DEMO=PASS
 SUPPORT_BUNDLE=PASS
 DASHBOARD_OPEN=SKIPPED
 SAMPLE=PASS

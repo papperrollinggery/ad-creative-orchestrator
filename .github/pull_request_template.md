@@ -8,6 +8,7 @@
 - [ ] `make release-check`
 - [ ] `adco --version`
 - [ ] `adco doctor`
+- [ ] `adco demo <sample_project> --no-open`
 - [ ] `adco support-bundle <sample_project>`
 - [ ] `adco open-dashboard <sample_project> --no-open`
 

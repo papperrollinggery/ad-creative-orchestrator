@@ -17,6 +17,7 @@ adco --help
 adco --version
 adco doctor
 adco-init <project_dir>
+adco demo [project_dir]
 adco sample <project_dir>
 adco support-bundle <project_dir>
 adco open-dashboard <project_dir>

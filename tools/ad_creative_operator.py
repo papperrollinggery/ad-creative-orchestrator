@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -42,6 +43,7 @@ GOAL_PLAN_TEMPLATE_REL = Path("AD-creative/orchestrator/goal_iteration_plan_temp
 GOAL_ITERATIONS_REL = Path("AD-creative/orchestrator/goal_iterations")
 SUPPORT_BUNDLE_REL = Path("AD-creative/handoff/support_bundle.md")
 SAMPLE_MATERIAL_REL = Path("00_项目资料_ProjectMaterials/01_客户资料_ClientMaterials/sample_brief.md")
+DEFAULT_DEMO_PROJECT = Path(tempfile.gettempdir()) / "adco-demo"
 SAMPLE_GOAL = "用内置样例跑通品牌深度研究与图片功能双泳道，生成可审计的本地操作台。"
 SAMPLE_BRIEF = """# Sample Creative Brief
 
@@ -3842,6 +3844,62 @@ def command_sample(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_demo(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve() if args.project else DEFAULT_DEMO_PROJECT
+    created, skipped = ensure_project(project)
+    material, material_action = write_sample_brief(project, force=args.force_material)
+    source_ids = existing_source_ids_for_material(project, material)
+    registered_sources = 0
+    if not source_ids:
+        source_ids = register_materials(project, [material], SAMPLE_GOAL)
+        registered_sources = len(source_ids)
+    ensure_intake_work(project, source_ids, SAMPLE_GOAL)
+    intake_stats = perform_intake(project, source_ids, SAMPLE_GOAL)
+    render_handoff(project, SAMPLE_GOAL, source_ids)
+    goal_id = args.goal_id or default_goal_id()
+    goal_plan = render_goal_iteration_plan(
+        project,
+        goal_id=goal_id,
+        title=args.title,
+        objective=SAMPLE_GOAL,
+        owner="Main Controller",
+        force=args.force_goal,
+    )
+    dashboard = render_dashboard(project)
+    overall, _, report = run_council(project)
+    dashboard = render_dashboard(project)
+    open_status = "SKIPPED"
+    if not args.no_open:
+        open_status = "PASS" if webbrowser.open(dashboard.as_uri()) else "CHECK"
+    errors, stats = validate(project)
+    print(f"DEMO={'PASS' if not errors and open_status != 'CHECK' else 'CHECK'}")
+    print(f"PROJECT={project}")
+    print(f"CREATED_FILES={created}")
+    print(f"SKIPPED_EXISTING_FILES={skipped}")
+    print(f"SAMPLE_MATERIAL={material}")
+    print(f"SAMPLE_MATERIAL_ACTION={material_action}")
+    print(f"REGISTERED_SOURCES={registered_sources}")
+    print(f"SOURCE_IDS={';'.join(source_ids)}")
+    print(f"INTAKE_MATERIALS={intake_stats['materials']}")
+    print(f"INTAKE_REQUIREMENTS={intake_stats['requirements']}")
+    print(f"INTAKE_GAPS={intake_stats['gaps']}")
+    print(f"GOAL_PLAN={goal_plan}")
+    print(f"DASHBOARD={dashboard}")
+    print(f"DASHBOARD_OPEN={open_status}")
+    print(f"COUNCIL={overall}")
+    print(f"COUNCIL_REPORT={report}")
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    if errors or open_status == "CHECK":
+        if errors:
+            print("ERRORS:")
+            for error in errors:
+                print(f"- {error}")
+        return 1
+    return 0
+
+
 def command_render_dashboard(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     ensure_project(project)
@@ -4317,6 +4375,15 @@ def build_parser() -> argparse.ArgumentParser:
     sample_parser.add_argument("--force-material", action="store_true", help="Overwrite the bundled sample brief.")
     sample_parser.add_argument("--force-goal", action="store_true", help="Overwrite an existing sample goal plan with the same id.")
     sample_parser.set_defaults(func=command_sample)
+
+    demo_parser = subparsers.add_parser("demo", help="Create a sample project and open the dashboard.")
+    demo_parser.add_argument("project", nargs="?", help="Project directory. Defaults to the system temp adco-demo folder.")
+    demo_parser.add_argument("--title", default="Bundled sample dual-lane run", help="Sample goal title.")
+    demo_parser.add_argument("--goal-id", default="", help="Stable sample goal id. Defaults to timestamp.")
+    demo_parser.add_argument("--force-material", action="store_true", help="Overwrite the bundled sample brief.")
+    demo_parser.add_argument("--force-goal", action="store_true", help="Overwrite an existing sample goal plan with the same id.")
+    demo_parser.add_argument("--no-open", action="store_true", help="Render and validate without opening a browser.")
+    demo_parser.set_defaults(func=command_demo)
 
     status_parser = subparsers.add_parser("status", help="Print current project status.")
     status_parser.add_argument("project", help="Project directory.")
