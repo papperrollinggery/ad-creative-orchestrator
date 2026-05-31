@@ -35,6 +35,12 @@ dependencies = [
   "python-pptx>=0.6.23"
 ]
 
+[project.urls]
+Homepage = "https://github.com/papperrollinggery/ad-creative-orchestrator#readme"
+Repository = "https://github.com/papperrollinggery/ad-creative-orchestrator"
+Issues = "https://github.com/papperrollinggery/ad-creative-orchestrator/issues"
+Changelog = "https://github.com/papperrollinggery/ad-creative-orchestrator/blob/main/CHANGELOG.md"
+
 [project.scripts]
 adco = "ad_creative_operator:main"
 adco-init = "init_project:main"

@@ -1,28 +1,31 @@
 # Ad Creative Orchestrator
 
+[![check](https://github.com/papperrollinggery/ad-creative-orchestrator/actions/workflows/check.yml/badge.svg)](https://github.com/papperrollinggery/ad-creative-orchestrator/actions/workflows/check.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Local-first, Codex-first workflow for advertising creative operations.
 
 It turns messy briefs, references, image assets, PPT drafts, review gates, and client-visible risk into a traceable project folder.
 
 ## Quickstart
 
+From GitHub to a working demo:
+
 ```bash
-python3 -m pip install .
+git clone https://github.com/papperrollinggery/ad-creative-orchestrator.git
+cd ad-creative-orchestrator
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install .
 adco --version
-adco demo
-adco init /tmp/adco-project
+adco demo /tmp/adco-demo --no-open
 adco status /tmp/adco-demo
-adco status /tmp/adco-demo --json
 adco next /tmp/adco-demo
-adco open-dashboard /tmp/adco-demo --no-open
+adco open-dashboard /tmp/adco-demo
 adco validate /tmp/adco-demo
 adco check
 adco release-status
-adco sample /tmp/adco-sample
-adco open-dashboard /tmp/adco-sample
-adco doctor
-adco docs
-adco support-bundle /tmp/adco-sample
 ```
 
 Expected:
@@ -37,6 +40,15 @@ Open:
 
 ```text
 /tmp/adco-demo/AD-creative/handoff/操作台.html
+```
+
+For a real project:
+
+```bash
+adco init <project_dir>
+adco run <project_dir> --material <material_file_or_folder>
+adco open-dashboard <project_dir>
+adco next <project_dir>
 ```
 
 ## What You Get

@@ -4,7 +4,18 @@ Status: source and local package install supported
 
 ## Recommended
 
-Install from the repository root:
+Install from GitHub:
+
+```bash
+git clone https://github.com/papperrollinggery/ad-creative-orchestrator.git
+cd ad-creative-orchestrator
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install .
+```
+
+Install from an existing repository root:
 
 ```bash
 python3 -m pip install .
