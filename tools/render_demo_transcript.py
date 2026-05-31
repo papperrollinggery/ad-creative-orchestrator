@@ -41,14 +41,15 @@ def render() -> str:
         project = Path(raw_tmp) / "project"
         blocks = [
             run(
-                f"adco sample {DISPLAY_PROJECT} --goal-id {DEMO_GOAL_ID}",
+                f"adco demo {DISPLAY_PROJECT} --goal-id {DEMO_GOAL_ID} --no-open",
                 [
                     python,
                     "tools/ad_creative_operator.py",
-                    "sample",
+                    "demo",
                     str(project),
                     "--goal-id",
                     DEMO_GOAL_ID,
+                    "--no-open",
                 ],
                 project,
             ),
@@ -58,8 +59,24 @@ def render() -> str:
                 project,
             ),
             run(
-                f"adco-validate {DISPLAY_PROJECT}",
-                [python, "tools/validate_project.py", str(project)],
+                f"adco validate {DISPLAY_PROJECT}",
+                [python, "tools/ad_creative_operator.py", "validate", str(project)],
+                project,
+            ),
+            run(
+                f"adco open-dashboard {DISPLAY_PROJECT} --no-open",
+                [
+                    python,
+                    "tools/ad_creative_operator.py",
+                    "open-dashboard",
+                    str(project),
+                    "--no-open",
+                ],
+                project,
+            ),
+            run(
+                f"adco support-bundle {DISPLAY_PROJECT}",
+                [python, "tools/ad_creative_operator.py", "support-bundle", str(project)],
                 project,
             ),
             run(

@@ -9,8 +9,8 @@ python3 tools/render_demo_transcript.py
 ```
 
 ```console
-$ adco sample /tmp/adco-first-run --goal-id GOAL-DEMO-FIRST-RUN
-SAMPLE=PASS
+$ adco demo /tmp/adco-first-run --goal-id GOAL-DEMO-FIRST-RUN --no-open
+DEMO=PASS
 PROJECT=/tmp/adco-first-run
 CREATED_FILES=69
 SKIPPED_EXISTING_FILES=0
@@ -23,6 +23,7 @@ INTAKE_REQUIREMENTS=9
 INTAKE_GAPS=5
 GOAL_PLAN=/tmp/adco-first-run/AD-creative/orchestrator/goal_iterations/GOAL-DEMO-FIRST-RUN.md
 DASHBOARD=/tmp/adco-first-run/AD-creative/handoff/操作台.html
+DASHBOARD_OPEN=SKIPPED
 COUNCIL=PASS
 COUNCIL_REPORT=/tmp/adco-first-run/AD-creative/gates/THREE-COUNCIL-READINESS_report.md
 SOURCE_EVENTS=1
@@ -54,7 +55,41 @@ COUNCIL_REPORT=/tmp/adco-first-run/AD-creative/gates/THREE-COUNCIL-READINESS_rep
 ```
 
 ```console
-$ adco-validate /tmp/adco-first-run
+$ adco validate /tmp/adco-first-run
+SOURCE_EVENTS=1
+REQUIREMENTS=9
+WORK_ITEMS=1
+AGENT_RUNS=0
+ARTIFACTS=3
+GATES=2
+VERSIONS=0
+REFERENCES=0
+ASSETS=0
+ERRORS=0
+VALIDATION=PASS
+```
+
+```console
+$ adco open-dashboard /tmp/adco-first-run --no-open
+DASHBOARD=/tmp/adco-first-run/AD-creative/handoff/操作台.html
+DASHBOARD_OPEN=SKIPPED
+SOURCE_EVENTS=1
+REQUIREMENTS=9
+WORK_ITEMS=1
+AGENT_RUNS=0
+ARTIFACTS=3
+GATES=2
+VERSIONS=0
+REFERENCES=0
+ASSETS=0
+ERRORS=0
+VALIDATION=PASS
+```
+
+```console
+$ adco support-bundle /tmp/adco-first-run
+SUPPORT_BUNDLE=PASS
+REPORT=/tmp/adco-first-run/AD-creative/handoff/support_bundle.md
 SOURCE_EVENTS=1
 REQUIREMENTS=9
 WORK_ITEMS=1

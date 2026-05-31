@@ -16,9 +16,10 @@ From the repository root:
 
 ```bash
 python3 -m pip install -e .
-adco sample /tmp/adco-sample
-adco status /tmp/adco-sample
-adco-check
+adco demo /tmp/adco-sample --no-open
+adco open-dashboard /tmp/adco-sample --no-open
+adco validate /tmp/adco-sample
+adco check
 ```
 
 Manual equivalent:
@@ -27,16 +28,18 @@ Manual equivalent:
 adco-init /tmp/adco-demo
 adco run /tmp/adco-demo --material examples/simulated_qingling_outdoor_launch/00_项目资料_ProjectMaterials/01_客户资料_ClientMaterials/brief_v1.md
 adco goal-plan /tmp/adco-demo --title "Dual-lane demo" --objective "Run brand research and image workflow through gated goal mode."
-adco status /tmp/adco-demo
-adco-check
+adco open-dashboard /tmp/adco-demo --no-open
+adco validate /tmp/adco-demo
+adco check
 ```
 
 Expected verification:
 
 ```text
+DEMO=PASS
+DASHBOARD_OPEN=SKIPPED
 VALIDATION=PASS
 DASHBOARD=.../AD-creative/handoff/操作台.html
-SAMPLE=PASS
 RUN_CHECKS=PASS
 ```
 
