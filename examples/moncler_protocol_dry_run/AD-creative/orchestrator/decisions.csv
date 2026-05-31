@@ -1,0 +1,2 @@
+decision_id,created_at,decision_owner,decision,reason,linked_requirement_ids,linked_artifacts,status,supersedes_decision_id
+D-MON-001,2026-05-13T10:25:00+08:00,codex,"Do not generate client-visible images before official references are verified.","Avoid fake brand visuals and unsupported visual claims.","R-MON-002;R-MON-003",,proposed,

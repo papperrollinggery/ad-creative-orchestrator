@@ -1,0 +1,10 @@
+# Changelog
+
+## Unreleased
+
+- Added `goal-plan` command for durable goal iteration records.
+- Added adversarial council Gate policy: clean Gates without council evidence downgrade to `PARTIAL_PASS`.
+- Added Goal tab to the local dashboard.
+- Added `tools/test_goal_workflow.py` regression checks.
+- Added `tools/run_checks.py` unified verification entry point.
+- Added open-source readiness files: `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `ROADMAP.md`, `.gitignore`, `Makefile`, `requirements.txt`.

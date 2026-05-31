@@ -1,0 +1,2 @@
+resolution_id,created_at,source_owner,issue,proposal,status,linked_requirement_ids,linked_work_ids,notes
+RES-MON-001,2026-05-13T10:30:00+08:00,codex,"Need to proceed without real client materials.","Use dry-run placeholders and mark all client-visible outputs blocked.",accepted,"R-MON-001;R-MON-002","W-MON-001","Protocol validation only."

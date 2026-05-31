@@ -1,0 +1,10 @@
+requirement_id,source_event_id,owner,statement,requirement_type,priority,status,confidence,scope,affected_stage,linked_artifacts,supersedes_requirement_id,open_questions
+R-QLO-001,SE-QLO-001,client,"Deliver a 30s film creative proposal and editable PPT later.",delivery,high,confirmed,0.95,project,"proposal_architecture;ppt_gate",ART-QLO-001,,""
+R-QLO-002,SE-QLO-004,client,"Create two directions: OP1 emotional city-to-nature, OP2 functional weather-ready.",creative,high,changed,0.95,project,"creative_council;proposal_architecture",ART-QLO-002,,""
+R-QLO-003,SE-QLO-001,client,"Product must feel light, sun-protective, light-rain-ready, and suitable for commute/weekend.",product,high,confirmed,0.9,project,"creative_council;visual_plan",ART-QLO-002,,"Need product specs and approved wording."
+R-QLO-004,SE-QLO-001,client,"Avoid extreme outdoor, hard-shell mountaineering, snow, climbing, unauthorized celebrity, fake logo.",legal_risk,high,confirmed,0.95,project,"visual_review;client_review",,,""
+R-QLO-005,SE-QLO-002,client,"First review should include moodboard, photography reference, and key frames.",visual,high,confirmed,0.9,project,"proposal_architecture;visual_plan",ART-QLO-003,,""
+R-QLO-006,SE-QLO-004,client,"Each direction needs at least six key frames.",visual,high,changed,0.95,project,"visual_plan;image_job",ART-QLO-004,,""
+R-QLO-007,SE-QLO-003,director,"Use natural light, handheld, urban wind, rain pavement, and city-to-nature transition.",director_execution,medium,confirmed,0.75,project,"storyline;visual_plan",,,"Execution guidance, not client hard requirement."
+R-QLO-008,SE-QLO-004,client,"Reference video links are important for client review.",reference,high,confirmed,0.95,project,"research_plan;reference_research",ART-QLO-005,,"Need approval for platform search."
+R-QLO-009,SE-QLO-004,client,"Do not use '把风景穿在身上' as main slogan.",copy,high,deprecated,0.95,project,"copywriting",,,"Can remain internal mood reference."

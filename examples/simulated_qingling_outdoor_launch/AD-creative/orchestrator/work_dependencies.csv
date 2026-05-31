@@ -1,0 +1,8 @@
+work_id,depends_on_work_id,dependency_type,status,notes
+W-QLO-004,W-QLO-002,reference_dependency,resolved,"Reference pack exists. Visual slots can proceed internal_only."
+W-QLO-003,W-QLO-002,reference_dependency,resolved,"Proposal skeleton can use reference pack for internal planning."
+W-QLO-007,W-QLO-004,visual_plan_dependency,resolved,"Visual review can run on prompt jobs and policy before any actual generated image exists."
+W-QLO-008,W-QLO-007,visual_review_dependency,resolved,"PPT plan can proceed with placeholders and blocked client-visibility rules."
+W-QLO-009,W-QLO-008,client_review_dependency,resolved,"Feedback merge can map known change event into v002 plan."
+W-QLO-010,W-QLO-009,feedback_dependency,resolved,"Final internal gate can run after delivery note and version plan."
+W-QLO-011,W-QLO-010,delivery_dependency,resolved,"Skill mining can run after end-to-end simulation has enough evidence."

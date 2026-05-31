@@ -1,0 +1,4 @@
+gap_id,linked_requirement_id,impact,status,description,recommended_action,owner,question_for_user,question_for_client,question_for_director
+G-MON-001,R-MON-002,blocking,open,"No verified official reference set yet.","Ask user whether to run official source search first.",user,"是否先搜索 Moncler 官网、官方社媒、官方 campaign archive？",,
+G-MON-002,R-MON-003,high_impact,open,"Visual asset role not locked. Could wrongly generate storyboard when project needs KV/mockup/BTS.","Confirm first visual package type.",user,"第一轮视觉包更偏 KV/mockup/BTS，还是 storyboard？",,
+G-MON-003,R-MON-004,medium,open,"Editable PPT requirement exists, but SlideSpec path not started.","Defer until visual direction approved.",codex,,,

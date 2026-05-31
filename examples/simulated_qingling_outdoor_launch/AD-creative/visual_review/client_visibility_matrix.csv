@@ -1,0 +1,6 @@
+item_id,item_type,path,current_visibility,required_gate,can_show_client,reason,next_action
+CV-QLO-001,prompt_pack,AD-creative/image_jobs/image_prompt_pack.json,internal_only,Visual Review Gate,no,"Prompt pack contains internal generation logic and placeholder notes.","Keep internal."
+CV-QLO-002,raw_generated_image,AD-creative/visual_assets/raw/,internal_only,Visual Review Gate,no,"Raw generated images are never client visible.","Review and promote only selected assets."
+CV-QLO-003,selected_generated_image,AD-creative/visual_assets/selected/,client_visible_pending,Visual Review Gate + Delivery Gate,conditional,"Can be shown only after user approves AI visibility and QA passes.","Ask user before client deck."
+CV-QLO-004,ppt_placeholder,AD-creative/ppt/placeholders/,internal_or_client_visible,Delivery Gate,conditional,"Placeholders can enter draft PPT if clearly replaced or intentionally styled.","Mark placeholder status."
+CV-QLO-005,reference_video,AD-creative/references/reference_shortlist.md,internal_only,Research Gate,no,"Current references are simulated and cannot be cited.","Replace with real links before client review."

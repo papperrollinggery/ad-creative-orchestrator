@@ -1,0 +1,27 @@
+{
+  "artifact_id": "",
+  "status": "draft",
+  "visibility": "internal_only",
+  "model_route": "built_in_image_gen_default",
+  "execution_policy": {
+    "generate_before_user_confirmation": false,
+    "project_bound_outputs_must_be_saved_in_workspace": true,
+    "frame_generation_requires_asset_lock": true
+  },
+  "asset_design_lock": {
+    "character_design": "pending",
+    "product_design": "pending",
+    "environment_design": "pending",
+    "visual_style": "pending"
+  },
+  "global_avoid": [
+    "fake logo",
+    "fake packaging text",
+    "invented brand mark",
+    "unauthorized celebrity",
+    "unreadable text",
+    "contact sheet",
+    "internal notes in image"
+  ],
+  "jobs": []
+}

@@ -1,0 +1,5 @@
+requirement_id,source_event_id,owner,statement,requirement_type,priority,status,confidence,scope,affected_stage,linked_artifacts,supersedes_requirement_id,open_questions
+R-MON-001,SE-MON-001,user,"Use Moncler workflow as reusable visual proposal pattern.",creative,high,confirmed,0.8,project,"intake;proposal_architecture",ART-MON-001,,""
+R-MON-002,SE-MON-001,user,"Research official brand/product/visual references before visual generation.",reference,high,missing,0.9,project,"reference_research;visual_plan",,,"Which official channels should be searched first?"
+R-MON-003,SE-MON-001,user,"Create master scene and prompt pack before generating asset package.",visual,high,inferred,0.8,project,"visual_plan;image_job",,,"Should first pack focus on KV/mockup/BTS?"
+R-MON-004,SE-MON-001,user,"Final PPT must be editable and pass QA before handoff.",delivery,high,confirmed,0.9,project,"ppt_gate;delivery",,,""

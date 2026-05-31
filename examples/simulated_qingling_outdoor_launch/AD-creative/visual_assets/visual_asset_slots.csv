@@ -1,0 +1,13 @@
+slot_id,direction,frame_id,requirement_id,reference_ids,use_case,ratio,visibility,status,notes
+OP1-F01,OP1,OP1-F01,R-QLO-006,"REF-QLO-001;REF-QLO-004",key_frame,16:9,internal_only,draft,"Window fabric wind opening mood."
+OP1-F02,OP1,OP1-F02,R-QLO-006,"REF-QLO-001;REF-QLO-003",key_frame,16:9,internal_only,draft,"Commute tree-shadow wearing state."
+OP1-F03,OP1,OP1-F03,R-QLO-006,"REF-QLO-001;REF-QLO-004",key_frame,16:9,internal_only,draft,"Post-rain city road transition."
+OP1-F04,OP1,OP1-F04,R-QLO-006,"REF-QLO-003;REF-QLO-004",key_frame,16:9,internal_only,draft,"Office chair product role."
+OP1-F05,OP1,OP1-F05,R-QLO-006,"REF-QLO-001;REF-QLO-003",key_frame,16:9,internal_only,draft,"City edge green walkway."
+OP1-F06,OP1,OP1-F06,R-QLO-006,"REF-QLO-001;REF-QLO-004",key_frame,16:9,internal_only,draft,"Weekend light camp ending."
+OP2-F01,OP2,OP2-F01,R-QLO-006,"REF-QLO-002;REF-QLO-004",key_frame,16:9,internal_only,draft,"Weather check setup."
+OP2-F02,OP2,OP2-F02,R-QLO-006,"REF-QLO-002;REF-QLO-005",key_frame,16:9,internal_only,draft,"Strong sunlight commute."
+OP2-F03,OP2,OP2-F03,R-QLO-006,"REF-QLO-002;REF-QLO-004",key_frame,16:9,internal_only,draft,"Wind silhouette."
+OP2-F04,OP2,OP2-F04,R-QLO-006,"REF-QLO-002;REF-QLO-005",key_frame,16:9,internal_only,blocked,"Rain sleeve detail needs product asset."
+OP2-F05,OP2,OP2-F05,R-QLO-006,REF-QLO-005,product_detail,16:9,internal_only,blocked,"Zipper/cuff macro needs real product image."
+OP2-F06,OP2,OP2-F06,R-QLO-006,"REF-QLO-002;REF-QLO-004",key_frame,16:9,internal_only,draft,"Evening outdoor relaxed ending."

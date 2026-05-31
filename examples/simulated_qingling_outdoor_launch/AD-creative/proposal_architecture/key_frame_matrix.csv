@@ -1,0 +1,13 @@
+direction,frame_id,scene,role,product_presence,reference_needed,status
+OP1,OP1-F01,窗边衣料风动,opening_mood,texture_closeup,visual_mood,internal_draft
+OP1,OP1-F02,通勤树影,city_life,wearing_state,video_reference,internal_draft
+OP1,OP1-F03,微雨路面,weather_transition,surface_detail,video_reference,internal_draft
+OP1,OP1-F04,办公室椅背,product_role,product_in_context,photo_reference,internal_draft
+OP1,OP1-F05,城市边缘步道,transition,wearing_state,video_reference,internal_draft
+OP1,OP1-F06,轻露营收束,weekend,full_body_product,photo_reference,internal_draft
+OP2,OP2-F01,出门看天气,setup,product_ready,video_reference,internal_draft
+OP2,OP2-F02,强光通勤,function_sun,hood_or_fabric,photo_reference,internal_draft
+OP2,OP2-F03,风吹衣摆,function_wind,silhouette,video_reference,internal_draft
+OP2,OP2-F04,小雨袖口,function_rain,water_beads,macro_reference,internal_draft
+OP2,OP2-F05,拉链袖口近景,feature_detail,feature_closeups,product_assets,blocked
+OP2,OP2-F06,傍晚户外,function_lifestyle,full_body_product,video_reference,internal_draft

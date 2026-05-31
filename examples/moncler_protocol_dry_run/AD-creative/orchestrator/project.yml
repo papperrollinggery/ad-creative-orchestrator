@@ -1,0 +1,14 @@
+project:
+  name: Moncler Visual Direction Dry Run
+  client: Moncler
+  stage: reference_research
+  status: partial_pass
+  timezone: Asia/Shanghai
+  created_at: "2026-05-13"
+  updated_at: "2026-05-13"
+
+rules:
+  source_of_truth: AD-creative/orchestrator
+  user_handoff: AD-creative/handoff
+  client_visible_requires_gate: true
+  global_skill_install_requires_user_approval: true

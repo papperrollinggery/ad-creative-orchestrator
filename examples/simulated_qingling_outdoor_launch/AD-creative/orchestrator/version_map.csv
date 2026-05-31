@@ -1,0 +1,12 @@
+version_id,artifact_id,version,status,created_at,source_event_ids,supersedes_version_id,notes
+VER-QLO-001,ART-QLO-001,v001,active,2026-05-13T11:35:00+08:00,"SE-QLO-001;SE-QLO-002;SE-QLO-003;SE-QLO-004",,"Initial intake with client change merged."
+VER-QLO-002,ART-QLO-002,v001,draft,2026-05-13T11:40:00+08:00,SE-QLO-004,,"Two-option structure pending research references."
+VER-QLO-002B,ART-QLO-003,v001,active,2026-05-13T15:35:00+08:00,"SE-QLO-002;SE-QLO-003",,"Moodboard and photography reference requirement trace."
+VER-QLO-003,ART-QLO-008,v001,active,2026-05-13T12:35:00+08:00,"SE-QLO-004;SE-QLO-005",,"Simulated reference pack for internal planning."
+VER-QLO-004,ART-QLO-011,v001,active,2026-05-13T13:15:00+08:00,"SE-QLO-004;SE-QLO-005",,"Two-option creative package for internal planning."
+VER-QLO-005,ART-QLO-016,v001,active,2026-05-13T14:00:00+08:00,"SE-QLO-004;SE-QLO-005",,"Image prompt pack for internal visual planning. No real generation yet."
+VER-QLO-006,ART-QLO-018,v001,active,2026-05-13T14:20:00+08:00,"SE-QLO-004;SE-QLO-005",,"Visual QA and client visibility rules before image production."
+VER-QLO-007,ART-QLO-023,v001,active,2026-05-13T14:40:00+08:00,"SE-QLO-001;SE-QLO-002;SE-QLO-004",,"Slide spec for client review pack with placeholder policy."
+VER-QLO-008,ART-QLO-027,v001,active,2026-05-13T14:55:00+08:00,SE-QLO-004,,"Known client change mapped into requirements and artifacts."
+VER-QLO-009,ART-QLO-030,v001,draft,2026-05-13T15:05:00+08:00,"SE-QLO-001;SE-QLO-004",,"Internal simulation delivery note, not sendable to client."
+VER-QLO-010,ART-QLO-033,v001,draft,2026-05-13T15:20:00+08:00,"SE-QLO-004;SE-QLO-005",,"Project-local visual review gate Skill draft. Not installed."

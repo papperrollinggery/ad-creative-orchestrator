@@ -1,0 +1,3 @@
+work_id,depends_on_work_id,dependency_type,status,notes
+W-MON-003,W-MON-002,reference_dependency,blocked,"Proposal architecture depends on official reference scope."
+W-MON-004,W-MON-002,reference_dependency,blocked,"Image generation must not proceed before official reference roles are defined."

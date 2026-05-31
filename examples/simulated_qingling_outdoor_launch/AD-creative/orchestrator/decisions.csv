@@ -1,0 +1,3 @@
+decision_id,created_at,decision_owner,decision,reason,linked_requirement_ids,linked_artifacts,status,supersedes_decision_id
+D-QLO-001,2026-05-13T11:32:00+08:00,codex,"Treat '把风景穿在身上' as internal mood reference only.","Client follow-up explicitly rejected it as main slogan.","R-QLO-009",,accepted,
+D-QLO-002,2026-05-13T11:34:00+08:00,codex,"Do not generate client-visible images until search and asset permissions are confirmed.","Reference videos and approved product assets are missing.","R-QLO-003;R-QLO-008",,proposed,

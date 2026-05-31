@@ -1,0 +1,3 @@
+resolution_id,created_at,source_owner,issue,proposal,status,linked_requirement_ids,linked_work_ids,notes
+RES-QLO-001,2026-05-13T11:36:00+08:00,codex,"Client wants soft product feature expression but still needs feature visibility.","Use visual actions and close-ups rather than hard parameter copy.",proposed,"R-QLO-003;R-QLO-006","W-QLO-004","Needs product spec confirmation."
+RES-QLO-002,2026-05-13T11:37:00+08:00,codex,"Director notes are useful but not client hard requirements.","Route director notes into Visual Plan and Storyline as execution constraints.",accepted,"R-QLO-007","W-QLO-005","Do not overwrite client direction split."

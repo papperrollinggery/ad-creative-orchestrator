@@ -1,0 +1,146 @@
+{
+  "artifact_id": "ART-QLO-016",
+  "status": "ready_internal",
+  "visibility": "internal_only",
+  "model_route": "built_in_image_gen_default",
+  "execution_policy": {
+    "generate_before_user_confirmation": false,
+    "project_bound_outputs_must_be_saved_in_workspace": true,
+    "frame_generation_requires_asset_lock": true,
+    "current_simulation_mode": "spec_only_no_real_generation"
+  },
+  "asset_design_lock": {
+    "character_design": {
+      "status": "ready_internal",
+      "description": "Generic young city professional, calm and natural, no celebrity resemblance, wardrobe-neutral styling."
+    },
+    "product_design": {
+      "status": "placeholder_only",
+      "description": "Unbranded lightweight shell jacket silhouette, no logo, no invented technology label, no exact product claims."
+    },
+    "environment_design": {
+      "status": "ready_internal",
+      "description": "Morning apartment window, tree-shadow commute, office chair, post-rain street, greenway, light weekend camp."
+    },
+    "visual_style": {
+      "status": "ready_internal",
+      "description": "Photorealistic natural lifestyle photography, soft daylight, restrained outdoor palette, handheld editorial realism."
+    }
+  },
+  "global_avoid": [
+    "fake logo",
+    "fake packaging text",
+    "invented brand mark",
+    "unauthorized celebrity",
+    "unreadable text",
+    "contact sheet",
+    "internal notes inside image",
+    "hard mountain expedition",
+    "skiing",
+    "climbing",
+    "tactical military styling"
+  ],
+  "jobs": [
+    {
+      "image_job_id": "IMGJOB-QLO-CHAR-001",
+      "slot_id": "CHAR-001",
+      "status": "ready_internal",
+      "use_case": "photorealistic-natural",
+      "asset_type": "character_design_reference",
+      "primary_request": "Create a neutral character design reference for a city-to-weekend outdoor campaign.",
+      "input_image_roles": [],
+      "scene": "simple natural daylight portrait setup, no brand environment",
+      "subject": "generic young city professional, calm expression, natural posture, no celebrity resemblance",
+      "style_medium": "photorealistic editorial lifestyle photography",
+      "composition_framing": "waist-up and full-body readable in one clean frame, generous negative space",
+      "lighting_mood": "soft morning daylight, quiet and natural",
+      "color_palette": "mist gray, pine green, sand white, urban neutrals",
+      "materials_textures": "light shell fabric, cotton tee, simple commuter styling",
+      "text_verbatim": "",
+      "constraints": "No visible logo. No text. No celebrity likeness. Use as internal character reference only.",
+      "avoid": "fake logo, unreadable text, contact sheet, fashion runway styling",
+      "output_contract": {
+        "ratio": "16:9",
+        "target_path": "AD-creative/visual_assets/raw/IMG-QLO-CHAR-001.png",
+        "visibility": "internal_only"
+      }
+    },
+    {
+      "image_job_id": "IMGJOB-QLO-PRODUCT-001",
+      "slot_id": "PROD-001",
+      "status": "blocked",
+      "use_case": "product-mockup",
+      "asset_type": "product_design_reference",
+      "primary_request": "Create an unbranded placeholder reference for a lightweight sun-protective shell jacket.",
+      "input_image_roles": [],
+      "scene": "plain studio surface",
+      "subject": "lightweight shell jacket silhouette without logo or labels",
+      "style_medium": "clean product reference photography",
+      "composition_framing": "front view and detail crops would be needed, but not generated until product assets arrive",
+      "lighting_mood": "soft neutral studio light",
+      "color_palette": "mist gray, pale green, off white",
+      "materials_textures": "matte lightweight shell fabric, zipper, cuff, hood edge",
+      "text_verbatim": "",
+      "constraints": "Blocked until official product image or user approval for placeholder product exploration.",
+      "avoid": "fake logo, invented technology label, incorrect product claims",
+      "output_contract": {
+        "ratio": "16:9",
+        "target_path": "AD-creative/visual_assets/raw/IMG-QLO-PRODUCT-001.png",
+        "visibility": "internal_only"
+      }
+    },
+    {
+      "image_job_id": "IMGJOB-QLO-OP1-F01",
+      "slot_id": "OP1-F01",
+      "status": "ready_internal",
+      "use_case": "photorealistic-natural",
+      "asset_type": "key_frame",
+      "primary_request": "Opening key frame for OP1: morning window, lightweight jacket fabric moving gently in wind.",
+      "input_image_roles": [
+        "CHAR-001 character design reference when available",
+        "PROD-001 product placeholder only if approved"
+      ],
+      "scene": "small city apartment near a window, morning light, curtain moving subtly",
+      "subject": "unbranded lightweight shell jacket on chair or being picked up, no logo visible",
+      "style_medium": "photorealistic natural lifestyle film still",
+      "composition_framing": "wide 16:9 cinematic frame, jacket and window light as visual hook",
+      "lighting_mood": "soft morning daylight, gentle wind, quiet beginning",
+      "color_palette": "mist gray, sand white, soft green accent",
+      "materials_textures": "light shell fabric motion, matte surface, natural shadows",
+      "text_verbatim": "",
+      "constraints": "No logo. No text. No product claim. Internal mood key frame only.",
+      "avoid": "hard outdoor scene, mountain, fake brand, contact sheet, internal notes",
+      "output_contract": {
+        "ratio": "16:9",
+        "target_path": "AD-creative/visual_assets/raw/IMG-QLO-OP1-F01.png",
+        "visibility": "internal_only"
+      }
+    },
+    {
+      "image_job_id": "IMGJOB-QLO-OP2-F04",
+      "slot_id": "OP2-F04",
+      "status": "blocked",
+      "use_case": "product-mockup",
+      "asset_type": "product_detail_key_frame",
+      "primary_request": "OP2 product detail key frame: light rain beads on sleeve and shoulder.",
+      "input_image_roles": [
+        "Official product image required"
+      ],
+      "scene": "urban post-rain street, close product detail",
+      "subject": "actual approved product sleeve and shoulder, not placeholder",
+      "style_medium": "photorealistic macro product film still",
+      "composition_framing": "close 16:9 detail shot",
+      "lighting_mood": "overcast soft light, fresh rain texture",
+      "color_palette": "mist gray, wet pavement gray, soft green background",
+      "materials_textures": "water beads, lightweight shell fabric, cuff detail",
+      "text_verbatim": "",
+      "constraints": "Do not generate until official product asset is provided or placeholder use is explicitly approved.",
+      "avoid": "fake logo, invented waterproof label, overclaiming waterproof performance",
+      "output_contract": {
+        "ratio": "16:9",
+        "target_path": "AD-creative/visual_assets/raw/IMG-QLO-OP2-F04.png",
+        "visibility": "internal_only"
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+gap_id,linked_requirement_id,impact,status,description,recommended_action,owner,question_for_user,question_for_client,question_for_director
+G-QLO-001,R-QLO-008,blocking,resolved,"Reference video links required, search scope approved in simulation.","Research Agent produced simulated reference pack.",user,"已模拟批准搜索。",,
+G-QLO-002,R-QLO-003,high_impact,open,"Product specs and approved product wording missing.","Ask client for logo pack, product renders, fabric claims, approved wording.",client,,"请补充产品高清图、logo 使用规范、防晒/防小雨的官方表述。", 
+G-QLO-003,R-QLO-005,high_impact,open,"AI-generated reference visibility not confirmed.","Keep generated visuals internal until user confirms.",user,"AI 参考图是否只内部使用，还是可进入客户审阅稿？",,
+G-QLO-004,R-QLO-001,medium,open,"HTML vs PPT first review path not locked.","Recommend text/structure first, then PPT after visual direction lock.",user,"第一轮先 HTML/Markdown 审结构，还是直接做 PPT？",,

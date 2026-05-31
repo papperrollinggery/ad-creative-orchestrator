@@ -1,0 +1,5 @@
+review_id,asset_id,slot_id,direction,check_type,result,score,issue,action,reviewer,created_at
+VR-QLO-001,IMG-QLO-CHAR-001,CHAR-001,shared,preflight,PASS,86,"Prompt blocks celebrity likeness and visible logos.","Can generate internal character reference if user approves internal image generation.",QA Agent,2026-05-13T14:25:00+08:00
+VR-QLO-002,IMG-QLO-PRODUCT-001,PROD-001,shared,preflight,BLOCKED,40,"Official product image missing; placeholder use not explicitly approved.","Keep blocked or ask user/client for product image.",QA Agent,2026-05-13T14:25:00+08:00
+VR-QLO-003,IMG-QLO-OP1-F01,OP1-F01,OP1,preflight,PASS,84,"Internal mood frame prompt is safe if no logo/text appears.","Can generate internal-only mood key frame after user approval.",QA Agent,2026-05-13T14:25:00+08:00
+VR-QLO-004,IMG-QLO-OP2-F04,OP2-F04,OP2,preflight,BLOCKED,35,"Product-detail rain-bead frame requires official product asset.","Keep blocked until asset arrives or placeholder is approved.",QA Agent,2026-05-13T14:25:00+08:00

@@ -1,0 +1,3 @@
+direction_id,name,role,core_thought,target_feeling,product_role,key_frames,reference_ids,status,notes
+OP1,城市到自然,emotional,"一件外套把普通城市日程自然过渡到周末户外。","轻、自然、松弛、可亲近","生活方式陪伴，低压露出功能","window_light;tree_shadow_commute;post_rain_transit;office_chair_detail;greenway_walk;weekend_light_camping","REF-QLO-001;REF-QLO-002;REF-QLO-004",selected_for_visual_plan,"第一轮更适合 moodboard + key frames。"
+OP2,天气变化也能轻松应对,functional,"城市天气不断变化，但人物状态不断线。","安心、轻便、从容、可信","用画面证明防晒、轻风、小雨、收纳和细节","weather_check;sun_commute;wind_fabric;rain_beads;detail_sequence;evening_activity","REF-QLO-002;REF-QLO-003;REF-QLO-005",selected_for_visual_plan,"产品参数未确认前只做视觉证据，不写硬指标。"

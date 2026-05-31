@@ -1,0 +1,14 @@
+project:
+  name: "Qingling Outdoor SS Launch Sim"
+  client: "青岭户外"
+  stage: research_plan
+  status: partial_pass
+  timezone: Asia/Shanghai
+  created_at: "2026-05-13T11:00:00+08:00"
+  updated_at: "2026-05-13T11:40:00+08:00"
+
+rules:
+  source_of_truth: AD-creative/orchestrator
+  user_handoff: AD-creative/handoff
+  client_visible_requires_gate: true
+  global_skill_install_requires_user_approval: true

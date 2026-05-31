@@ -1,0 +1,2 @@
+asset_id,slot_id,requirement_id,reference_id,path,asset_type,stage,version,status,visibility,qa_status,risk_level,prompt_or_edit_ref,notes
+IMG-MON-PLACEHOLDER-001,COVER-KV-01,R-MON-003,pending,AD-creative/visual_assets/raw/pending,generated_image,image_job,v001,blocked,internal_only,NOT_RUN,high,AD-creative/image_jobs/IMGJOB-MON-001.md,"Blocked until official references are approved."

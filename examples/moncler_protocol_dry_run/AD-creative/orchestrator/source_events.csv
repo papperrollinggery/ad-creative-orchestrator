@@ -1,0 +1,2 @@
+source_event_id,received_at,source_owner,source_type,declared_semantics,file_paths,raw_summary,trust_level,affects_requirements,affects_artifacts,supersedes_event_ids,notes
+SE-MON-001,2026-05-13T10:00:00+08:00,user,project_context,initial,docs/context/moncler_mg_workflow.md,"Use Moncler workflow context to validate protocol, not to create final client deck.",medium,"R-MON-001;R-MON-002;R-MON-003","ART-MON-001",,"Dry run only."
