@@ -29,6 +29,7 @@ adco docs --json
 git status --short
 adco init /tmp/adco-release-init
 adco quickstart /tmp/adco-release-quickstart --no-open
+adco quickstart /tmp/adco-release-quickstart-json --no-open --json
 adco demo /tmp/adco-release-demo --no-open
 adco sample /tmp/adco-release-sample
 adco support-bundle /tmp/adco-release-sample
@@ -57,6 +58,7 @@ RELEASE_STATUS=READY_FOR_REMOTE_CHECKS
 DOCS_MODE=source
 DEMO=PASS
 QUICKSTART=PASS
+quickstart_json=PASS
 NEXT_STATUS=WAITING_FOR_CONFIRMATION
 SUPPORT_BUNDLE=PASS
 DASHBOARD_OPEN=SKIPPED

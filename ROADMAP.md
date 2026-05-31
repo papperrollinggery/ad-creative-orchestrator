@@ -17,6 +17,7 @@ Make Ad Creative Orchestrator a usable, credible, open-source project for Codex-
 - Public clone trial passes from fresh `git clone` to `adco demo` and validation
 - GitHub-first README onboarding, status badge, project URLs, and repository topics
 - One-command `adco quickstart` first run with validation and next-step output
+- Automation-friendly `adco quickstart --json`
 
 ## Next
 
@@ -42,6 +43,7 @@ Make Ad Creative Orchestrator a usable, credible, open-source project for Codex-
 - Verify a public clone trial from install to demo validation.
 - Improve GitHub discoverability with repo topics, homepage, badges, and project URLs.
 - Add one-command `adco quickstart` for first-run onboarding.
+- Add machine-readable `adco quickstart --json`.
 - Add documentation for real-world adoption patterns.
 - Expand Gate tests into fixture-level positive cases for PPTX and image PASS paths.
 - Add richer demo media for the first-run flow.

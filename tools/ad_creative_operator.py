@@ -4117,6 +4117,34 @@ def command_quickstart(args: argparse.Namespace) -> int:
     if not args.no_open:
         open_status = "PASS" if webbrowser.open(dashboard.as_uri()) else "CHECK"
     quickstart_status = "PASS" if not errors and open_status != "CHECK" else "CHECK"
+    payload = {
+        "quickstart": quickstart_status,
+        "project": str(project),
+        "created_files": created,
+        "skipped_existing_files": skipped,
+        "sample_material": str(material),
+        "sample_material_action": material_action,
+        "registered_sources": registered_sources,
+        "source_ids": source_ids,
+        "intake_materials": intake_stats["materials"],
+        "intake_requirements": intake_stats["requirements"],
+        "intake_gaps": intake_stats["gaps"],
+        "goal_plan": str(goal_plan),
+        "dashboard": str(dashboard),
+        "dashboard_open": open_status,
+        "council": overall,
+        "council_report": str(report),
+        "next_command": f"adco next {project}",
+        "status_command": f"adco status {project}",
+        "validate_command": f"adco validate {project}",
+        "real_project_command": "adco run <project_dir> --material <material_file_or_folder>",
+        "stats": stats,
+        "validation": "PASS" if not errors else "CHECK",
+        "errors": errors,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if quickstart_status == "PASS" else 1
     print(f"QUICKSTART={quickstart_status}")
     print(f"PROJECT={project}")
     print(f"CREATED_FILES={created}")
@@ -4783,6 +4811,7 @@ def build_parser() -> argparse.ArgumentParser:
     quickstart_parser.add_argument("--force-material", action="store_true", help="Overwrite the bundled sample brief.")
     quickstart_parser.add_argument("--force-goal", action="store_true", help="Overwrite an existing sample goal plan with the same id.")
     quickstart_parser.add_argument("--no-open", action="store_true", help="Render and validate without opening a browser.")
+    quickstart_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     quickstart_parser.set_defaults(func=command_quickstart)
 
     status_parser = subparsers.add_parser("status", help="Print current project status.")

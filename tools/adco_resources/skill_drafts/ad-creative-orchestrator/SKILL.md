@@ -42,6 +42,7 @@ Run:
 
 ```text
 adco quickstart [project_dir]
+adco quickstart [project_dir] --json
 adco sample <project_dir>
 adco demo [project_dir]
 adco --version
@@ -73,6 +74,7 @@ Installed CLI equivalent:
 python3 -m pip install .
 adco init <project_dir>
 adco quickstart [project_dir]
+adco quickstart [project_dir] --json
 adco demo [project_dir]
 adco sample <project_dir>
 adco --version

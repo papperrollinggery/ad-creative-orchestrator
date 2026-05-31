@@ -20,6 +20,7 @@ python -m pip install --upgrade pip
 python -m pip install .
 adco --version
 adco quickstart /tmp/adco-demo --no-open
+adco quickstart /tmp/adco-demo-json --no-open --json
 adco status /tmp/adco-demo
 adco next /tmp/adco-demo
 adco open-dashboard /tmp/adco-demo
@@ -118,6 +119,7 @@ adco docs --json
 adco init <项目目录>
 adco-init <项目目录>
 adco quickstart [项目目录]
+adco quickstart [项目目录] --json
 adco demo [项目目录]
 adco sample <项目目录>
 adco support-bundle <项目目录>
@@ -376,6 +378,7 @@ next diagnostics: adco next reports NEXT_STATUS and NEXT_ACTION
 support bundle: adco support-bundle PASS with sanitized project diagnostics
 dashboard open command: adco open-dashboard PASS
 quickstart command: adco quickstart PASS
+quickstart JSON: adco quickstart --json PASS
 local release check: make release-check PASS
 GitHub Actions: make release-check PASS on Python 3.10 / 3.12
 public clone trial: git clone + pip install . + adco quickstart/open-dashboard/validate PASS

@@ -48,3 +48,4 @@
 - Verified a public clone trial from install to demo validation.
 - Added GitHub-first onboarding, project URLs, repository topics, and status badges.
 - Added `adco quickstart` for one-command first run, validation, dashboard opening, and next-step output.
+- Added `adco quickstart --json` and covered it in source, editable install, and package install checks.
