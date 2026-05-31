@@ -8,3 +8,4 @@
 - Added `tools/test_goal_workflow.py` regression checks.
 - Added `tools/run_checks.py` unified verification entry point.
 - Added open-source readiness files: `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `ROADMAP.md`, `.gitignore`, `Makefile`, `requirements.txt`.
+- Added GitHub Actions check workflow plus issue and pull request templates.

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
+import shutil
 from pathlib import Path
 
 
@@ -33,8 +35,14 @@ def main() -> int:
     run([python, "tools/validate_project.py", "templates/project"])
     run([python, "tools/validate_project.py", "examples/moncler_protocol_dry_run"])
     run([python, "tools/validate_project.py", "examples/simulated_qingling_outdoor_launch"])
-    run([python, "tools/ad_creative_operator.py", "audit-dashboard", "examples/moncler_protocol_dry_run", "--render"])
-    run([python, "tools/ad_creative_operator.py", "audit-dashboard", "examples/simulated_qingling_outdoor_launch", "--render"])
+    with tempfile.TemporaryDirectory(prefix="adco-check-") as raw_tmp:
+        tmp = Path(raw_tmp)
+        moncler = tmp / "moncler_protocol_dry_run"
+        qingling = tmp / "simulated_qingling_outdoor_launch"
+        shutil.copytree(ROOT / "examples/moncler_protocol_dry_run", moncler)
+        shutil.copytree(ROOT / "examples/simulated_qingling_outdoor_launch", qingling)
+        run([python, "tools/ad_creative_operator.py", "audit-dashboard", str(moncler), "--render"])
+        run([python, "tools/ad_creative_operator.py", "audit-dashboard", str(qingling), "--render"])
     print("RUN_CHECKS=PASS")
     return 0
 

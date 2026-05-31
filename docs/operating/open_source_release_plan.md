@@ -29,7 +29,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 | Dashboard usability | non-developer can inspect state | dashboard audit PASS, Goal tab | PASS |
 | Packaging | installable CLI | not packaged yet | TODO |
 | GitHub readiness | license, contribution, security, roadmap | added core files | PASS |
-| CI | automated checks on push | no remote repo yet | TODO |
+| CI | automated checks on push | `.github/workflows/check.yml` | PASS once pushed |
 | Public appeal | screenshots, demo, concise pitch | not built yet | TODO |
 
 ## Execution Order
@@ -38,7 +38,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 2. Initialize repository and commit baseline.
 3. Package CLI.
 4. Add screenshots/demo media.
-5. Add GitHub Actions when remote exists.
+5. Push repository so GitHub Actions can run remotely.
 6. Publish public README with clear problem, demo, and safety story.
 7. Iterate on issues from real users.
 

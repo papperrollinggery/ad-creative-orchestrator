@@ -1,0 +1,40 @@
+name: Bug report
+description: Report broken workflow behavior, validation failures, or unsafe output.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: current_state
+    attributes:
+      label: Current state
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: expected_state
+    attributes:
+      label: Expected state
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Command output, gate report, validation output, or file path.
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk area
+      options:
+        - client-visible artifact
+        - visual/image asset
+        - reference evidence
+        - PPT/export
+        - dashboard/handoff
+        - goal/Gate workflow
+        - other
+    validations:
+      required: true

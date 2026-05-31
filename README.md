@@ -97,6 +97,14 @@ docs/reviews/operational_readiness_review.md
 docs/reviews/simulated_project_trial_review.md
 ```
 
+GitHub 协作：
+
+```text
+.github/workflows/check.yml
+.github/ISSUE_TEMPLATE/
+.github/pull_request_template.md
+```
+
 验证工具：
 
 ```text
