@@ -24,6 +24,7 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 |---|---|---|---|
 | Install/run clarity | user can start without reading code | `README.md`, quickstart, launcher, operator CLI | PARTIAL |
 | One-command verification | contributors can verify changes | `make check`, `tools/run_checks.py` | PASS |
+| Gate regression coverage | every Gate has a command-level regression path | `tools/test_gates.py` | PASS for no-deps paths |
 | Safety model | client-visible risk is blocked | Gate policy, adversarial council, security doc | PASS |
 | Example quality | examples prove workflow | Moncler and Qingling examples validate | PASS |
 | Dashboard usability | non-developer can inspect state | dashboard audit PASS, Goal tab | PASS |
@@ -40,9 +41,10 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 3. Harden source install and CLI smoke tests. Status: local smoke PASS.
 4. Add screenshots/demo media. Status: initial desktop/mobile dashboard screenshots PASS.
 5. Add minimal sample project generator. Status: `adco sample` local PASS.
-6. Push repository so GitHub Actions can run remotely.
-7. Publish public README with clear problem, demo, and safety story.
-8. Iterate on issues from real users.
+6. Add structured Gate regression coverage. Status: no-deps Gate paths PASS.
+7. Push repository so GitHub Actions can run remotely.
+8. Publish public README with clear problem, demo, and safety story.
+9. Iterate on issues from real users.
 
 ## Stop Conditions
 

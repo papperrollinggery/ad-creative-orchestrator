@@ -26,11 +26,13 @@ def main() -> int:
             "-m",
             "py_compile",
             "tools/ad_creative_operator.py",
+            "tools/test_gates.py",
             "tools/test_goal_workflow.py",
             "tools/validate_project.py",
             "tools/init_project.py",
         ]
     )
+    run([python, "tools/test_gates.py"])
     run([python, "tools/test_goal_workflow.py"])
     run([python, "tools/validate_project.py", "templates/project"])
     run([python, "tools/validate_project.py", "examples/moncler_protocol_dry_run"])

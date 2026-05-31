@@ -257,6 +257,7 @@ goal-plan 执行记录生成: examples/moncler_protocol_dry_run / examples/simul
 反驳性议会 Gate 策略: 无记录时 PASS→PARTIAL_PASS / 有记录时 PASS 回归测试 PASS
 操作台 Goal Tab: audit-dashboard PASS
 Goal/Gate 回归测试: tools/test_goal_workflow.py PASS
+Gate 结构化回归测试: tools/test_gates.py PASS
 editable CLI install: adco / adco-check smoke PASS
 ```
 

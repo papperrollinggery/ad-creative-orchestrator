@@ -17,17 +17,18 @@ Make Ad Creative Orchestrator a usable, credible, open-source project for Codex-
 
 ## Next
 
-1. Add structured test coverage for every Gate.
-2. Add GitHub Actions after the repository is pushed.
-3. Add issue templates and a release checklist.
-4. Add documentation for real-world adoption patterns.
-5. Add richer demo media for the first-run flow.
+1. Add GitHub Actions after the repository is pushed.
+2. Add issue templates and a release checklist.
+3. Add documentation for real-world adoption patterns.
+4. Add richer demo media for the first-run flow.
+5. Expand Gate tests into fixture-level positive cases for PPTX and image PASS paths.
 
 ## Done In Local Baseline
 
 - Package the operator as an editable install CLI.
 - Add desktop/mobile dashboard screenshots.
 - Add a minimal sample project generator.
+- Add structured regression coverage for every Gate command.
 
 ## Not Planned
 
