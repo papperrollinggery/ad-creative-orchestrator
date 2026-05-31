@@ -2861,11 +2861,60 @@ def status_payload(project: Path) -> dict[str, object]:
     errors, _ = validate(project)
     dashboard = project / DASHBOARD_REL
     report = project / COUNCIL_REPORT_REL
+    _, work_items = read_csv_rows(project / "AD-creative/orchestrator/work_items.csv")
+    _, gaps = read_csv_rows(project / "AD-creative/orchestrator/gaps.csv")
+    confirmations = parse_confirmation_rows(project / "AD-creative/handoff/待你确认.md")
+    active_work = [
+        row
+        for row in work_items
+        if row.get("status", "").strip().lower() not in {"done", "closed", "resolved"}
+    ]
+    open_gaps = [
+        row
+        for row in gaps
+        if row.get("status", "").strip().lower() not in {"resolved", "closed", "done"}
+    ]
+    blocking_gaps = [
+        row
+        for row in open_gaps
+        if row.get("impact", "").strip().lower() in {"blocking", "high_impact"}
+    ]
+    if errors:
+        next_action = "Fix validation errors before continuing."
+    elif confirmations:
+        next_action = first_nonempty(confirmations[0].get("question"), default="Resolve pending confirmation.")
+    elif active_work:
+        next_action = first_nonempty(active_work[0].get("title"), active_work[0].get("objective"), default="Continue active work item.")
+    elif blocking_gaps:
+        next_action = first_nonempty(
+            blocking_gaps[0].get("recommended_action"),
+            blocking_gaps[0].get("description"),
+            default="Resolve blocking gap.",
+        )
+    elif open_gaps:
+        next_action = first_nonempty(
+            open_gaps[0].get("recommended_action"),
+            open_gaps[0].get("description"),
+            default="Review open gap.",
+        )
+    elif counts["source_events"] == 0:
+        next_action = "Run adco run <project> --material <brief_file_or_folder>."
+    else:
+        next_action = "Run the next stage Gate or continue with ad-creative:next."
     return {
         "project": str(project),
         "stage": project_stage(project),
         "validation": "PASS" if not errors else "CHECK",
         "counts": counts,
+        "active_work_count": len(active_work),
+        "open_gap_count": len(open_gaps),
+        "blocking_gap_count": len(blocking_gaps),
+        "pending_confirmation_count": len(confirmations),
+        "next_action": next_action,
+        "active_work": active_work[:5],
+        "open_gaps": open_gaps[:5],
+        "blocking_gaps": blocking_gaps[:5],
+        "pending_confirmations": confirmations[:5],
         "dashboard": str(dashboard) if dashboard.exists() else None,
         "council_report": str(report) if report.exists() else None,
         "errors": errors,
@@ -2879,11 +2928,18 @@ def print_status(project: Path) -> None:
     print(f"STAGE={payload['stage']}")
     print(f"VALIDATION={payload['validation']}")
     print(f"SOURCE_EVENTS={counts['source_events']}")
+    print(f"REQUIREMENTS={counts['requirements']}")
+    print(f"GAPS={counts['gaps']}")
     print(f"WORK_ITEMS={counts['work_items']}")
+    print(f"ACTIVE_WORK={payload['active_work_count']}")
+    print(f"OPEN_GAPS={payload['open_gap_count']}")
+    print(f"BLOCKING_GAPS={payload['blocking_gap_count']}")
+    print(f"PENDING_CONFIRMATIONS={payload['pending_confirmation_count']}")
     print(f"REFERENCES={counts['references']}")
     print(f"ASSETS={counts['assets']}")
     print(f"ARTIFACTS={counts['artifacts']}")
     print(f"GATES={counts['gates']}")
+    print(f"NEXT_ACTION={payload['next_action']}")
     print(f"DASHBOARD={payload['dashboard'] or 'MISSING'}")
     print(f"COUNCIL_REPORT={payload['council_report'] or 'MISSING'}")
     errors = payload["errors"]

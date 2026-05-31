@@ -21,6 +21,7 @@ gaps.csv
 current_truth.md
 待你确认.md
 操作台.html
+NEXT_ACTION
 ```
 
 Gate:

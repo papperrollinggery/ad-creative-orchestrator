@@ -36,3 +36,4 @@
 - Updated public docs and templates to use `adco demo`, `adco validate`, and `adco check` as the primary paths.
 - Added JSON output for `adco doctor`, `adco status`, and `adco validate`.
 - Added `adco init` as the unified project initialization subcommand.
+- Improved `adco status` with next action, active work, open gaps, and pending confirmations.
