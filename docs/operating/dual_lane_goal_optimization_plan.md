@@ -92,20 +92,20 @@
 |---|---|---|
 | 新增文档存在 | `test -f ...` | 文件存在 |
 | README/runbook/WORKFLOW 入口 | `rg "双泳道|goal iteration|反驳性议会"` | 关键入口均可检索 |
-| 示例项目结构 | `python3 tools/validate_project.py examples/moncler_protocol_dry_run` | `VALIDATION=PASS` |
-| 示例项目结构 | `python3 tools/validate_project.py examples/simulated_qingling_outdoor_launch` | `VALIDATION=PASS` |
+| 示例项目结构 | `adco validate examples/moncler_protocol_dry_run` | `VALIDATION=PASS` |
+| 示例项目结构 | `adco validate examples/simulated_qingling_outdoor_launch` | `VALIDATION=PASS` |
 | 非 git 环境确认 | `git status --short` | 返回非 git 仓库 |
 
 ## 7. 下一轮队列
 
 | 优先级 | 任务 | 类型 | 退出条件 |
 |---|---|---|---|
-| DONE | 在 `ad_creative_operator.py` 增加 `goal-plan` 命令，自动生成 goal 执行记录 | 代码 | 新项目能一键生成 goal iteration plan |
+| DONE | 在 `adco` CLI 增加 `goal-plan` 命令，自动生成 goal 执行记录 | 代码 | 新项目能一键生成 goal iteration plan |
 | DONE | 在 Gate 命令中检测 adversarial council 记录 | 代码 | 缺记录时 Gate 最高为 PARTIAL_PASS |
 | DONE | 为两个示例项目补一份真实填好的 goal iteration plan | 示例 | 示例可直接作为学习样本 |
 | DONE | 在操作台展示当前 goal 批次、门禁、下一步 | UI/HTML | 非开发者能看到 goal 状态 |
-| DONE | 为 `goal-plan` 与 Gate 降级逻辑补脚本级回归测试 | 测试 | `python3 tools/test_goal_workflow.py` PASS |
-| DONE | 将 `tools/test_goal_workflow.py` 纳入统一验证命令清单 | 文档 | 操作手册列出该测试 |
+| DONE | 为 `goal-plan` 与 Gate 降级逻辑补脚本级回归测试 | 测试 | `adco check` PASS |
+| DONE | 将 Goal/Gate 回归纳入统一验证命令清单 | 文档 | 操作手册列出 `adco check` |
 | DONE | 把 goal 状态接入真实项目启动 runbook 的验收清单 | 文档 | runbook 验收含 goal iteration plan 和 dashboard Goal tab |
 | DONE | 补 README 当前验证状态，记录 goal-plan、Gate 降级、Goal Tab、回归测试 | 文档 | README 当前验证状态可见 |
 | P1 | 终态验证：语法、回归测试、模板、两个示例项目、dashboard audit | 验证 | 全部 PASS |

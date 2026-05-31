@@ -66,7 +66,8 @@ Ad Creative Orchestrator is a local-first, Codex-first workflow for advertising 
 27. Add `adco docs` local docs and quickstart locator. Status: source and package smoke PASS.
 28. Refresh contributor, release, roadmap, and non-developer quickstart docs around current `adco` commands. Status: source and package smoke PASS.
 29. Make wheel distribution inspection deterministic with no build isolation, a timeout, and a static manifest fallback. Status: source and package smoke PASS.
-30. Iterate on issues from real users.
+30. Add docs command regression check to keep onboarding docs on the installed `adco` path. Status: source and package smoke PASS.
+31. Iterate on issues from real users.
 
 ## Stop Conditions
 

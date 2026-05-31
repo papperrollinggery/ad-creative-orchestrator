@@ -199,7 +199,7 @@ AD-creative/skill_drafts/<skill-slug>/install_request.md
 
 ```text
 用户给一批真实资料
-非开发者能用 ad_creative_operator.py 启动
+非开发者能用 adco run 启动
 能从本地资料抽取首批 requirements / gaps / current_truth
 产出项目看板和待确认
 产出只读操作台.html

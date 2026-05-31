@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_PATHS = [
     "ad_creative_operator.py",
+    "check_docs_commands.py",
     "check_packaged_assets.py",
     "init_project.py",
     "render_demo_transcript.py",

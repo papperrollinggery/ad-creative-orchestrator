@@ -46,6 +46,7 @@ def main() -> int:
                 "tools/ad_creative_operator.py",
                 "tools/check_distribution.py",
                 "tools/check_packaged_assets.py",
+                "tools/check_docs_commands.py",
                 "tools/render_demo_transcript.py",
                 "tools/test_gates.py",
                 "tools/test_goal_workflow.py",
@@ -55,6 +56,7 @@ def main() -> int:
             ]
         )
         run([python, "tools/check_packaged_assets.py"])
+        run([python, "tools/check_docs_commands.py"])
         run([python, "tools/render_demo_transcript.py", "--check"])
         run([python, "tools/ad_creative_operator.py", "--version"])
         run([python, "tools/ad_creative_operator.py", "doctor"])
@@ -72,6 +74,7 @@ def main() -> int:
                 "-m",
                 "py_compile",
                 "ad_creative_operator.py",
+                "check_docs_commands.py",
                 "check_packaged_assets.py",
                 "render_demo_transcript.py",
                 "test_gates.py",
@@ -82,6 +85,7 @@ def main() -> int:
             ]
         )
         run([python, "-m", "ad_creative_operator", "--version"])
+        run([python, "-m", "check_docs_commands"])
         run([python, "-m", "ad_creative_operator", "doctor"])
         run_json([python, "-m", "ad_creative_operator", "doctor", "--json"])
         run([python, "-m", "ad_creative_operator", "release-status"])

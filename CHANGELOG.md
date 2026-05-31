@@ -43,3 +43,4 @@
 - Added `adco docs` for local documentation paths and quickstart commands.
 - Refreshed contributor, release, roadmap, and non-developer quickstart docs around the current `adco` CLI.
 - Made wheel distribution inspection deterministic with no build isolation, a timeout, and a static manifest fallback.
+- Added a docs command regression check to keep onboarding docs on the installed `adco` path.

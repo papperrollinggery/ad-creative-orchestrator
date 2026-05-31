@@ -41,29 +41,29 @@ Use when the user wants a non-developer handoff surface or one local command.
 Run:
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py sample <project_dir>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py demo [project_dir]
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py --version
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py doctor
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py support-bundle <project_dir>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py open-dashboard <project_dir>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py validate <project_dir>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py check
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py run <project_dir> --material <materials_path>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py intake <project_dir>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py add-reference <project_dir> --url <https_url> --title <title>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py search-quality-gate <project_dir>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py reference-pack-gate <project_dir>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py add-asset <project_dir> --file <image_file> --slot-id <slot_id> --requirement-id <requirement_id>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py import-imagegen <project_dir> --slot-id <slot_id> --selected
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py visual-quality-gate <project_dir>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py export-pptx <project_dir>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py check-pptx <project_dir> --file <pptx_file>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py client-pack-gate <project_dir>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py handoff-readiness-gate <project_dir>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py audit-dashboard <project_dir> --render
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py install-skill
+adco sample <project_dir>
+adco demo [project_dir]
+adco --version
+adco doctor
+adco support-bundle <project_dir>
+adco open-dashboard <project_dir>
+adco validate <project_dir>
+adco check
+adco run <project_dir> --material <materials_path>
+adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
+adco intake <project_dir>
+adco add-reference <project_dir> --url <https_url> --title <title>
+adco search-quality-gate <project_dir>
+adco reference-pack-gate <project_dir>
+adco add-asset <project_dir> --file <image_file> --slot-id <slot_id> --requirement-id <requirement_id>
+adco import-imagegen <project_dir> --slot-id <slot_id> --selected
+adco visual-quality-gate <project_dir>
+adco export-pptx <project_dir>
+adco check-pptx <project_dir> --file <pptx_file>
+adco client-pack-gate <project_dir>
+adco handoff-readiness-gate <project_dir>
+adco audit-dashboard <project_dir> --render
+adco install-skill
 ```
 
 Installed CLI equivalent:
@@ -131,7 +131,7 @@ Steps:
 5. Decide whether search is needed and write search_plan if needed.
 6. Continue through the next safe internal stage only if no human decision is blocking.
 7. Stop at any required user decision and update 待你确认.md.
-8. Run `adco validate` or `ad_creative_operator.py validate` before reporting status.
+8. Run `adco validate` before reporting status.
 ```
 
 User only needs to provide:
@@ -322,7 +322,7 @@ update next_version_plan
 After major stages, run:
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py validate <project_dir>
+adco validate <project_dir>
 ```
 
 Proceed only if:
@@ -351,8 +351,8 @@ expected output
 After search planning or reference registration, run:
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py search-quality-gate <project_dir>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py reference-pack-gate <project_dir>
+adco search-quality-gate <project_dir>
+adco reference-pack-gate <project_dir>
 ```
 
 ## Handoff Rules

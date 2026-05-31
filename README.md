@@ -121,10 +121,10 @@ adco check
 
 兼容入口仍保留：`adco-init`、`adco-check`、`adco-validate`。
 
-不安装也可以直接用：
+未安装时先执行：
 
 ```bash
-python3 tools/ad_creative_operator.py --help
+python3 -m pip install .
 ```
 
 当前目标：
@@ -154,7 +154,7 @@ Intake → 缺口判断 → 搜索建议 → 任务拆分 → agent handoff → 
 命令行入口：
 
 ```text
-python3 tools/ad_creative_operator.py run <项目目录> --material <资料文件或文件夹>
+adco run <项目目录> --material <资料文件或文件夹>
 ```
 
 它会自动：
@@ -232,7 +232,7 @@ GitHub 协作：
 .github/pull_request_template.md
 ```
 
-验证工具：
+验证与操作工具：
 
 ```text
 adco check
@@ -250,30 +250,26 @@ adco demo <项目目录> --no-open
 adco status <项目目录> --json
 adco validate <项目目录>
 adco validate <项目目录> --json
-python3 tools/run_checks.py
 adco sample <项目目录>
 adco status <项目目录>
 adco goal-plan <项目目录> --title <目标标题> --objective <目标内容>
-python3 tools/ad_creative_operator.py sample <项目目录>
-python3 tools/ad_creative_operator.py status <项目目录>
-python3 tools/ad_creative_operator.py goal-plan <项目目录> --title <目标标题> --objective <目标内容>
-python3 tools/ad_creative_operator.py intake <项目目录>
+adco intake <项目目录>
+adco add-reference <项目目录> --url <https链接> --title <标题>
+adco search-quality-gate <项目目录>
+adco reference-pack-gate <项目目录>
+adco add-asset <项目目录> --file <图片文件> --slot-id <槽位> --requirement-id <需求ID>
+adco import-imagegen <项目目录> --slot-id <槽位> --selected
+adco visual-quality-gate <项目目录>
+adco export-pptx <项目目录>
+adco check-pptx <项目目录> --file <PPTX文件>
+adco client-pack-gate <项目目录>
+adco handoff-readiness-gate <项目目录>
+adco install-skill
+adco audit-dashboard <项目目录> --render
+adco council <项目目录> --render-dashboard
 adco-check
-python3 tools/ad_creative_operator.py add-reference <项目目录> --url <https链接> --title <标题>
-python3 tools/ad_creative_operator.py search-quality-gate <项目目录>
-python3 tools/ad_creative_operator.py reference-pack-gate <项目目录>
-python3 tools/ad_creative_operator.py add-asset <项目目录> --file <图片文件> --slot-id <槽位> --requirement-id <需求ID>
-python3 tools/ad_creative_operator.py import-imagegen <项目目录> --slot-id <槽位> --selected
-python3 tools/ad_creative_operator.py visual-quality-gate <项目目录>
-python3 tools/ad_creative_operator.py export-pptx <项目目录>
-python3 tools/ad_creative_operator.py check-pptx <项目目录> --file <PPTX文件>
-python3 tools/ad_creative_operator.py client-pack-gate <项目目录>
-python3 tools/ad_creative_operator.py handoff-readiness-gate <项目目录>
-python3 tools/ad_creative_operator.py install-skill
-python3 tools/ad_creative_operator.py audit-dashboard <项目目录> --render
-python3 tools/ad_creative_operator.py council <项目目录> --render-dashboard
-python3 tools/init_project.py <项目目录>
-python3 tools/ad_creative_operator.py validate <项目目录>
+adco-init <项目目录>
+adco-validate <项目目录>
 ```
 
 ## 推荐使用方式
@@ -351,8 +347,8 @@ demo command: adco demo PASS
 goal-plan 执行记录生成: examples/moncler_protocol_dry_run / examples/simulated_qingling_outdoor_launch PASS
 反驳性议会 Gate 策略: 无记录时 PASS→PARTIAL_PASS / 有记录时 PASS 回归测试 PASS
 操作台 Goal Tab: audit-dashboard PASS
-Goal/Gate 回归测试: tools/test_goal_workflow.py PASS
-Gate 结构化回归测试: tools/test_gates.py PASS
+Goal/Gate 回归测试: adco check PASS
+Gate 结构化回归测试: adco check PASS
 Gate 正向 fixture: visual PNG PASS / editable PPTX client-pack PASS / no-deps optional skip PASS
 editable CLI install: adco / adco-check smoke PASS
 package install: pip install . / adco init / adco demo / adco validate / adco check smoke PASS

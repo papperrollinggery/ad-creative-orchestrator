@@ -7,7 +7,7 @@
 每次关键推进前可运行：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py council <项目目录> --render-dashboard
+adco council <项目目录> --render-dashboard
 ```
 
 三方：

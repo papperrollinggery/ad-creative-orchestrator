@@ -26,18 +26,18 @@ adco release-status --json
 adco docs
 adco docs --json
 git status --short
-python3 tools/ad_creative_operator.py init /tmp/adco-release-init
-python3 tools/ad_creative_operator.py demo /tmp/adco-release-demo --no-open
-python3 tools/ad_creative_operator.py sample /tmp/adco-release-sample
-python3 tools/ad_creative_operator.py support-bundle /tmp/adco-release-sample
-python3 tools/ad_creative_operator.py open-dashboard /tmp/adco-release-sample --no-open
-python3 tools/ad_creative_operator.py status /tmp/adco-release-sample --json
-python3 tools/ad_creative_operator.py next /tmp/adco-release-sample
-python3 tools/ad_creative_operator.py next /tmp/adco-release-sample --json
-python3 tools/ad_creative_operator.py validate /tmp/adco-release-sample
-python3 tools/ad_creative_operator.py validate /tmp/adco-release-sample --json
-python3 tools/ad_creative_operator.py audit-dashboard examples/moncler_protocol_dry_run --render
-python3 tools/ad_creative_operator.py audit-dashboard examples/simulated_qingling_outdoor_launch --render
+adco init /tmp/adco-release-init
+adco demo /tmp/adco-release-demo --no-open
+adco sample /tmp/adco-release-sample
+adco support-bundle /tmp/adco-release-sample
+adco open-dashboard /tmp/adco-release-sample --no-open
+adco status /tmp/adco-release-sample --json
+adco next /tmp/adco-release-sample
+adco next /tmp/adco-release-sample --json
+adco validate /tmp/adco-release-sample
+adco validate /tmp/adco-release-sample --json
+adco audit-dashboard examples/moncler_protocol_dry_run --render
+adco audit-dashboard examples/simulated_qingling_outdoor_launch --render
 ```
 
 Pass threshold:

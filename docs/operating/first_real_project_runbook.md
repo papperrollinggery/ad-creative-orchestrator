@@ -25,7 +25,7 @@ AD-creative/
 或运行：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/init_project.py <真实项目路径>
+adco init <真实项目路径>
 ```
 
 ## 1. 放入资料
@@ -46,7 +46,7 @@ python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/init_project.py <�
 非开发者最短方式：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py run <真实项目路径> --material <资料文件或文件夹>
+adco run <真实项目路径> --material <资料文件或文件夹>
 ```
 
 然后打开：
@@ -58,7 +58,7 @@ AD-creative/handoff/操作台.html
 最短方式：
 
 ```text
-使用 /Users/jinjungao/work/ad-creative-orchestrator/skill_drafts/ad-creative-orchestrator/SKILL.md
+先运行 `adco docs`，使用输出中的 `SKILL_DRAFT`。
 
 ad-creative:run
 
@@ -77,7 +77,7 @@ ad-creative:run
 给 Codex：
 
 ```text
-使用 /Users/jinjungao/work/ad-creative-orchestrator/skill_drafts/ad-creative-orchestrator/SKILL.md
+先运行 `adco docs`，使用输出中的 `SKILL_DRAFT`。
 
 ad-creative:start
 
@@ -128,7 +128,7 @@ ad-creative:next
 ## 4.1 Goal 模式 Prompt
 
 ```text
-使用 /Users/jinjungao/work/ad-creative-orchestrator/skill_drafts/ad-creative-orchestrator/SKILL.md
+先运行 `adco docs`，使用输出中的 `SKILL_DRAFT`。
 
 以 goal 模式推进。
 
@@ -140,7 +140,7 @@ ad-creative:next
 5. 每个 Gate 前运行反驳性议会。
 6. 没有反对意见、反驳路径、修订决议时，Gate 最高只能 PARTIAL_PASS。
 7. 阶段完成后更新 gate_log / decisions / resolutions / 项目看板 / 待你确认。
-8. 运行 `adco validate` 或 `ad_creative_operator.py validate` 后再报告结果。
+8. 运行 `adco validate` 后再报告结果。
 ```
 
 ## 5. 状态 Prompt
@@ -194,8 +194,8 @@ ad-creative:mine-skill
 每个关键阶段后运行：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py council <真实项目路径> --render-dashboard
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py validate <真实项目路径>
+adco council <真实项目路径> --render-dashboard
+adco validate <真实项目路径>
 ```
 
 通过标准：
@@ -234,6 +234,6 @@ AD-creative/orchestrator/artifact_index.csv 是否能追踪产物状态
 AD-creative/orchestrator/gate_log.csv 是否挡住客户稿风险
 AD-creative/orchestrator/goal_iterations/ 是否有本轮 goal 执行记录
 AD-creative/handoff/操作台.html 是否显示 Goal Tab
-adco validate / ad_creative_operator.py validate 是否 PASS
-tools/test_goal_workflow.py 是否 PASS
+adco validate 是否 PASS
+adco check 是否 PASS
 ```

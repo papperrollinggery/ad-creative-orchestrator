@@ -29,12 +29,12 @@ handoff 文件负责给用户看
 AD-creative/handoff/操作台.html
 ```
 
-### ad_creative_operator.py
+### adco CLI
 
 非开发者入口。
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py run <项目目录> --material <资料文件或文件夹>
+adco run <项目目录> --material <资料文件或文件夹>
 ```
 
 自动生成：
@@ -52,13 +52,13 @@ AD-creative/gates/THREE-COUNCIL-READINESS_report.md
 检查状态：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py status <项目目录>
+adco status <项目目录>
 ```
 
 创建 goal 执行记录：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py goal-plan <项目目录> --title <目标标题> --objective <目标内容>
+adco goal-plan <项目目录> --title <目标标题> --objective <目标内容>
 ```
 
 该命令会写入：
@@ -77,26 +77,26 @@ reference-pack-gate / search-quality-gate / visual-quality-gate / client-pack-ga
 重新抽取 intake：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py intake <项目目录>
+adco intake <项目目录>
 ```
 
 操作台审核：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py audit-dashboard <项目目录> --render
+adco audit-dashboard <项目目录> --render
 ```
 
 登记真实参考链接：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py add-reference <项目目录> --url <https链接> --title <标题>
+adco add-reference <项目目录> --url <https链接> --title <标题>
 ```
 
 参考包质量 Gate：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py search-quality-gate <项目目录>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py reference-pack-gate <项目目录>
+adco search-quality-gate <项目目录>
+adco reference-pack-gate <项目目录>
 ```
 
 判定：
@@ -111,13 +111,13 @@ BLOCKED：客户可见参考缺少 https、do_not_copy 或来源可信度。
 登记真实/生成图片文件：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py add-asset <项目目录> --file <图片文件> --slot-id <槽位> --requirement-id <需求ID> --selected
+adco add-asset <项目目录> --file <图片文件> --slot-id <槽位> --requirement-id <需求ID> --selected
 ```
 
 导入 Codex 生成图：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py import-imagegen <项目目录> --slot-id <槽位> --selected
+adco import-imagegen <项目目录> --slot-id <槽位> --selected
 ```
 
 约束：
@@ -132,7 +132,7 @@ python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operato
 视觉质量 Gate：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py visual-quality-gate <项目目录>
+adco visual-quality-gate <项目目录>
 ```
 
 会拦截：
@@ -149,14 +149,14 @@ selected/approved/done 但 QA 未 PASS
 生成并检查可编辑 PPTX：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py export-pptx <项目目录>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py check-pptx <项目目录> --file <PPTX文件>
+adco export-pptx <项目目录>
+adco check-pptx <项目目录> --file <PPTX文件>
 ```
 
 客户稿风险 Gate：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py client-pack-gate <项目目录>
+adco client-pack-gate <项目目录>
 ```
 
 通过含义：
@@ -180,7 +180,7 @@ PPTX 有可编辑文本层
 非开发者交接 Gate：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py handoff-readiness-gate <项目目录>
+adco handoff-readiness-gate <项目目录>
 ```
 
 通过含义：
@@ -199,13 +199,13 @@ PPTX 可编辑
 安装全局 Skill：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py install-skill
+adco install-skill
 ```
 
 三方议会审核：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py council <项目目录> --render-dashboard
+adco council <项目目录> --render-dashboard
 ```
 
 ### ad-creative:run
@@ -436,19 +436,19 @@ PPT/视觉：品牌官网、campaign archive、Behance、设计案例库
 初始化新项目：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/init_project.py <项目目录>
+adco init <项目目录>
 ```
 
 每个关键阶段后运行：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py validate <项目目录>
+adco validate <项目目录>
 ```
 
 Goal / Gate 回归测试：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/test_goal_workflow.py
+adco check
 ```
 
 必须通过：
