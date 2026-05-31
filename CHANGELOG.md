@@ -41,3 +41,5 @@
 - Kept JSON diagnostics verified while reducing `adco check` output noise.
 - Added `adco release-status` for local release readiness and remote blocker summaries.
 - Added `adco docs` for local documentation paths and quickstart commands.
+- Refreshed contributor, release, roadmap, and non-developer quickstart docs around the current `adco` CLI.
+- Made wheel distribution inspection deterministic with no build isolation, a timeout, and a static manifest fallback.

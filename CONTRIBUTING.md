@@ -14,16 +14,17 @@ Ad Creative Orchestrator is file-driven. Changes must preserve:
 Run:
 
 ```bash
+make release-check
+```
+
+Faster source-only loop:
+
+```bash
+adco check
 make check
 ```
 
-Equivalent:
-
-```bash
-python3 tools/run_checks.py
-```
-
-The check covers syntax, goal workflow regression, template validation, both example projects, and dashboard audit.
+The release gate covers syntax, goal workflow regression, template validation, both example projects, dashboard audit, wheel inspection, editable install smoke, and normal package install smoke.
 
 ## Change Rules
 
@@ -36,8 +37,13 @@ The check covers syntax, goal workflow regression, template validation, both exa
 ## Useful Entry Points
 
 ```bash
-python3 tools/ad_creative_operator.py run <project_dir> --material <material>
-python3 tools/ad_creative_operator.py goal-plan <project_dir> --title <title> --objective <objective>
-python3 tools/ad_creative_operator.py audit-dashboard <project_dir> --render
-python3 tools/validate_project.py <project_dir>
+adco docs
+adco doctor
+adco release-status
+adco demo
+adco run <project_dir> --material <material>
+adco next <project_dir>
+adco goal-plan <project_dir> --title <title> --objective <objective>
+adco audit-dashboard <project_dir> --render
+adco validate <project_dir>
 ```

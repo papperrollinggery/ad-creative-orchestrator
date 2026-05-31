@@ -37,9 +37,10 @@ AD-creative/handoff/操作台.html
 命令行方式：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py demo
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py run <项目目录> --material <资料文件或文件夹>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py open-dashboard <项目目录>
+adco demo
+adco run <项目目录> --material <资料文件或文件夹>
+adco open-dashboard <项目目录>
+adco docs
 ```
 
 产物：
@@ -78,7 +79,7 @@ AD-creative/ppt/ppt_editability_check.md
 生成图入库：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py import-imagegen <项目目录> --slot-id <槽位> --selected
+adco import-imagegen <项目目录> --slot-id <槽位> --selected
 ```
 
 用途：
@@ -91,7 +92,7 @@ python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operato
 Goal 模式执行：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py goal-plan <项目目录> --title <目标标题> --objective <目标内容>
+adco goal-plan <项目目录> --title <目标标题> --objective <目标内容>
 ```
 
 后续 Gate 如果没有有效反驳性议会记录，最高只会给 `PARTIAL_PASS`。
@@ -111,6 +112,13 @@ AD-creative/orchestrator/events.jsonl
 继续执行 ad-creative:next
 读取 AD-creative/handoff/项目看板.md 和 AD-creative/handoff/待你确认.md
 优先完成需求整理、缺口判断、客户追问、下一步建议
+```
+
+命令行状态检查：
+
+```text
+adco status <项目目录>
+adco next <项目目录>
 ```
 
 ## 5. 什么时候停
@@ -133,18 +141,18 @@ AD-creative/orchestrator/events.jsonl
 执行：
 
 ```text
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py council <项目目录> --render-dashboard
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py intake <项目目录>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py search-quality-gate <项目目录>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py reference-pack-gate <项目目录>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py import-imagegen <项目目录> --slot-id <槽位> --selected
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py visual-quality-gate <项目目录>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py export-pptx <项目目录>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py client-pack-gate <项目目录>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py handoff-readiness-gate <项目目录>
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py audit-dashboard <项目目录> --render
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py open-dashboard <项目目录> --no-open
-python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py validate <项目目录>
+adco council <项目目录> --render-dashboard
+adco intake <项目目录>
+adco search-quality-gate <项目目录>
+adco reference-pack-gate <项目目录>
+adco import-imagegen <项目目录> --slot-id <槽位> --selected
+adco visual-quality-gate <项目目录>
+adco export-pptx <项目目录>
+adco client-pack-gate <项目目录>
+adco handoff-readiness-gate <项目目录>
+adco audit-dashboard <项目目录> --render
+adco open-dashboard <项目目录> --no-open
+adco validate <项目目录>
 ```
 
 通过标准：

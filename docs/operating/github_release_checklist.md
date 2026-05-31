@@ -6,6 +6,7 @@ Status: local release gate ready
 
 ```text
 git remote -v: empty
+adco release-status: RELEASE_STATUS=BLOCKED_REMOTE_MISSING
 ```
 
 Remote push and GitHub Actions verification cannot run until a GitHub repository remote is configured.
@@ -20,6 +21,10 @@ make dist-check
 adco --version
 adco doctor
 adco doctor --json
+adco release-status
+adco release-status --json
+adco docs
+adco docs --json
 git status --short
 python3 tools/ad_creative_operator.py init /tmp/adco-release-init
 python3 tools/ad_creative_operator.py demo /tmp/adco-release-demo --no-open
@@ -27,6 +32,8 @@ python3 tools/ad_creative_operator.py sample /tmp/adco-release-sample
 python3 tools/ad_creative_operator.py support-bundle /tmp/adco-release-sample
 python3 tools/ad_creative_operator.py open-dashboard /tmp/adco-release-sample --no-open
 python3 tools/ad_creative_operator.py status /tmp/adco-release-sample --json
+python3 tools/ad_creative_operator.py next /tmp/adco-release-sample
+python3 tools/ad_creative_operator.py next /tmp/adco-release-sample --json
 python3 tools/ad_creative_operator.py validate /tmp/adco-release-sample
 python3 tools/ad_creative_operator.py validate /tmp/adco-release-sample --json
 python3 tools/ad_creative_operator.py audit-dashboard examples/moncler_protocol_dry_run --render
@@ -44,7 +51,10 @@ RELEASE_CHECK=PASS
 DIST_CHECK=PASS
 adco 0.1.0
 ADCO_DOCTOR=PASS
+RELEASE_STATUS=BLOCKED_REMOTE_MISSING
+DOCS_MODE=source
 DEMO=PASS
+NEXT_STATUS=WAITING_FOR_CONFIRMATION
 SUPPORT_BUNDLE=PASS
 DASHBOARD_OPEN=SKIPPED
 VALIDATION=PASS
@@ -86,7 +96,8 @@ Before public release, verify:
 ## Release Decision
 
 ```text
-release_status=LOCAL_READY
-remote_status=BLOCKED_UNTIL_REMOTE_ADDED
+release_status=BLOCKED_REMOTE_MISSING
+doctor=PASS
+remote_status=CHECK
 next_action=add GitHub remote, push main, wait for GitHub Actions check
 ```
