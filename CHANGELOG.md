@@ -25,3 +25,4 @@
 - Updated project-local skill draft with installed CLI and release-check entry points.
 - Added `adco doctor` install/resource/dependency/release diagnostic command.
 - Added `adco --version` for issue reports and install diagnostics.
+- Added `make dist-check` wheel content inspection for packaged templates, skill draft, metadata, and entry points.

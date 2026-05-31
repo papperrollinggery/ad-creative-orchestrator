@@ -1,4 +1,4 @@
-.PHONY: check demo-transcript install-dev install-smoke package-smoke release-check validate dashboards clean
+.PHONY: check demo-transcript dist-check install-dev install-smoke package-smoke release-check validate dashboards clean
 
 PYTHON ?= python3
 
@@ -7,6 +7,9 @@ check:
 
 demo-transcript:
 	$(PYTHON) tools/render_demo_transcript.py
+
+dist-check:
+	$(PYTHON) tools/check_distribution.py
 
 install-dev:
 	$(PYTHON) -m pip install -e .
@@ -38,7 +41,7 @@ package-smoke:
 	$$tmp_dir/venv/bin/adco-check; \
 	echo "PACKAGE_SMOKE=PASS $$tmp_dir"
 
-release-check: check install-smoke package-smoke
+release-check: check dist-check install-smoke package-smoke
 	$(PYTHON) tools/render_demo_transcript.py --check
 	echo "RELEASE_CHECK=PASS"
 

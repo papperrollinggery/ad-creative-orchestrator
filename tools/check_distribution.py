@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Build and inspect the wheel distribution contents."""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+import tempfile
+import zipfile
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+REQUIRED_PATHS = [
+    "ad_creative_operator.py",
+    "check_packaged_assets.py",
+    "init_project.py",
+    "render_demo_transcript.py",
+    "validate_project.py",
+    "run_checks.py",
+    "runtime_paths.py",
+    "test_gates.py",
+    "test_goal_workflow.py",
+    "adco_resources/templates/project/AD-creative/orchestrator/project.yml",
+    "adco_resources/templates/project/AD-creative/handoff/项目看板.md",
+    "adco_resources/templates/project/AD-creative/gates/adversarial_council_gate_template.md",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/SKILL.md",
+]
+REQUIRED_ENTRY_POINTS = [
+    "adco = ad_creative_operator:main",
+    "adco-check = run_checks:main",
+    "adco-init = init_project:main",
+    "adco-validate = validate_project:main",
+]
+
+
+def find_dist_file(names: set[str], suffix: str) -> str | None:
+    matches = sorted(name for name in names if name.endswith(suffix) and ".dist-info/" in name)
+    return matches[0] if matches else None
+
+
+def main() -> int:
+    issues: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="adco-dist-") as raw_tmp:
+        wheelhouse = Path(raw_tmp) / "wheelhouse"
+        wheelhouse.mkdir()
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "wheel",
+                ".",
+                "--no-deps",
+                "--wheel-dir",
+                str(wheelhouse),
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            print("DIST_CHECK=FAIL")
+            print(result.stdout.strip())
+            print(result.stderr.strip())
+            return result.returncode
+
+        wheels = sorted(wheelhouse.glob("ad_creative_orchestrator-*.whl"))
+        if len(wheels) != 1:
+            issues.append(f"expected one wheel, found {len(wheels)}")
+        wheel = wheels[0] if wheels else None
+        if wheel:
+            with zipfile.ZipFile(wheel) as archive:
+                names = set(archive.namelist())
+                for path in REQUIRED_PATHS:
+                    if path not in names:
+                        issues.append(f"wheel missing: {path}")
+
+                metadata_path = find_dist_file(names, "METADATA")
+                entry_points_path = find_dist_file(names, "entry_points.txt")
+                record_path = find_dist_file(names, "RECORD")
+                if not metadata_path:
+                    issues.append("wheel missing dist-info METADATA")
+                if not entry_points_path:
+                    issues.append("wheel missing dist-info entry_points.txt")
+                if not record_path:
+                    issues.append("wheel missing dist-info RECORD")
+
+                if metadata_path:
+                    metadata_text = archive.read(metadata_path).decode("utf-8")
+                    if "Name: ad-creative-orchestrator" not in metadata_text:
+                        issues.append("wheel metadata missing package name")
+                    if "Version: 0.1.0" not in metadata_text:
+                        issues.append("wheel metadata missing version")
+
+                if entry_points_path:
+                    entry_points_text = archive.read(entry_points_path).decode("utf-8")
+                    for entry_point in REQUIRED_ENTRY_POINTS:
+                        if entry_point not in entry_points_text:
+                            issues.append(f"wheel entry point missing: {entry_point}")
+
+    if issues:
+        print("DIST_CHECK=FAIL")
+        for issue in issues:
+            print(f"- {issue}")
+        return 1
+
+    print("DIST_CHECK=PASS")
+    if wheel:
+        print(f"WHEEL={wheel.name}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -41,6 +41,7 @@ adco --version
 adco doctor
 make install-smoke
 make package-smoke
+make dist-check
 ```
 
 Expected:
@@ -51,6 +52,7 @@ adco 0.1.0
 ADCO_DOCTOR=PASS
 INSTALL_SMOKE=PASS
 PACKAGE_SMOKE=PASS
+DIST_CHECK=PASS
 ```
 
 ## Uninstall

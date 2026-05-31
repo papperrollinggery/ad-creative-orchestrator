@@ -206,6 +206,7 @@ GitHub 协作：
 adco-check
 adco --version
 make check
+make dist-check
 make release-check
 make package-smoke
 adco doctor
@@ -313,6 +314,7 @@ Gate 结构化回归测试: tools/test_gates.py PASS
 Gate 正向 fixture: visual PNG PASS / editable PPTX client-pack PASS / no-deps optional skip PASS
 editable CLI install: adco / adco-check smoke PASS
 package install: pip install . / adco sample / adco-check smoke PASS
+wheel distribution check: make dist-check PASS
 version diagnostics: adco --version PASS
 doctor diagnostics: adco doctor PASS with remote warning when no git remote exists
 local release check: make release-check PASS

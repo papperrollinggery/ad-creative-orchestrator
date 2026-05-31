@@ -31,6 +31,7 @@ def main() -> int:
                 "-m",
                 "py_compile",
                 "tools/ad_creative_operator.py",
+                "tools/check_distribution.py",
                 "tools/check_packaged_assets.py",
                 "tools/render_demo_transcript.py",
                 "tools/test_gates.py",

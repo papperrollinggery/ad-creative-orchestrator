@@ -71,6 +71,7 @@ adco doctor
 adco run <project_dir> --material <materials_path>
 adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
 adco-check
+make dist-check
 make release-check
 ```
 
