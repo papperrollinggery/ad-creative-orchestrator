@@ -59,6 +59,17 @@ python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operato
 python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py install-skill
 ```
 
+Installed CLI equivalent:
+
+```text
+python3 -m pip install .
+adco sample <project_dir>
+adco run <project_dir> --material <materials_path>
+adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
+adco-check
+make release-check
+```
+
 Gate commands enforce adversarial council:
 
 ```text
