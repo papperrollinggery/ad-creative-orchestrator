@@ -18,6 +18,222 @@ AD-creative/handoff/
 
 Keep user-facing summaries clear and low-density.
 
+## Non-Negotiable Safety Rules
+
+### Completion Rule
+
+Do not mark a project goal complete only because a gate says PASS or a deck was exported.
+
+Completion requires all of the following:
+
+```text
+latest client-visible artifact has a stable version id
+version_map.csv and current_truth.md identify the same current version and supersession chain
+artifact_index.csv registers the current PPTX, PDF, preview, and text extract
+PPTX/PDF/preview/text extract were produced from and reviewed against the same current version
+PPT editability check passes on the exact current PPTX
+all received user/client/Pro-review diff comments are fixed, explicitly deferred with owner, or listed in 待你确认.md
+project validation passes with ERRORS=0 and VALIDATION=PASS
+thread cleanup / active-thread audit is done when Codex threads were used
+open client-send blockers are recorded in 待你确认.md
+```
+
+If new user feedback arrives after completion, reopen the stage as revision work. Do not keep claiming the previous goal is still complete.
+
+### Version Safety Rule
+
+Never overwrite a client-visible version file as the only copy of that version.
+
+Before changing any exported file whose name includes a version such as `v1`, `v2`, or `final`:
+
+```text
+1. Compute hash and stat for the existing PPTX/PDF.
+2. Copy the existing files to AD-creative/ppt/exports/version_archive/ using an immutable name.
+3. Register the archived files in artifact_index.csv and version_map.csv.
+4. Write the next material revision to a new version name, for example v2.
+5. Only after the new version is validated may legacy aliases be synchronized.
+```
+
+Do not rely on filenames such as `专业影视版` or `专业文案版` as the source of truth. Treat them as aliases. The source of truth is `version_map.csv` plus `current_truth.md`.
+
+If a client-visible file exists only as `v1` or `final`, stop and archive it before editing. Never use "final", "professional", "影视版", or "文案版" as a version decision.
+
+### Thread Budget Rule
+
+Codex threads are expensive. Use them deliberately.
+
+Default limits:
+
+```text
+max active worker/reviewer threads at one time: 3
+max broad council threads without explicit user approval: 5
+main thread is the only integration owner
+workers default to read-only unless their writable files are listed
+workers must not export final PPT/PDF
+```
+
+If the user reports thread confusion, high heat, wrong-thread behavior, or says to clean threads:
+
+```text
+freeze new worker creation
+list project-related threads
+archive all completed or mistaken workers
+record cleanup in thread_registry.csv and a thread_cleanup_*.md file
+verify only the main control thread remains active for the project query
+resume production only after cleanup verification
+```
+
+After a worker receipt is consumed, update the lane lifecycle, archive or close the worker thread, and keep the receipt as the durable evidence. Do not leave consumed workers active.
+
+### Fixed Role Roster
+
+For advertising creative work, prefer a stable role roster rather than one-off task threads.
+
+Default roster:
+
+```text
+CONTROL: main thread, integration and final validation
+BRAND_CLIENT: brand task, client demand, risk of client misunderstanding
+COPY_CREATIVE: concept, headlines, wording, campaign line, tone
+FILM_DIRECTOR: story logic, treatment, timing, dialogue, scene rhythm
+ART_DESIGN: visual system, layout, typography, image quality
+PRODUCER_RISK: feasibility, budget/scope, alcohol/artist/platform risk
+QA_REVIEW: final adversarial review and evidence check
+```
+
+Do not create a new role when an existing role can absorb the work. If a temporary role is necessary, write the reason in `thread_registry.csv` before using it.
+
+### Worktree / Role MD Mode
+
+Mature multi-thread work needs an explicit control plane. Do not spawn broad helper threads from chat alone.
+
+Before starting any worker, create or update:
+
+```text
+AD-creative/orchestrator/thread_lane_plan.md
+AD-creative/orchestrator/agency_staff_selection_*.md when Agency staff are used
+AD-creative/agents/role_briefs/<role>_<work_id>.md
+```
+
+Every worker prompt must include:
+
+```text
+task signature
+role markdown or project role brief path
+agency selection id
+agency source staff paths when available
+work_id
+read-first files
+environment mode and workspace/worktree path
+allowed actions
+forbidden actions
+write scope
+receipt path
+stop condition
+merge owner
+validation proof
+```
+
+Use these environment modes:
+
+```text
+read_only: default for research, copy review, strategy review, QA, and council lanes
+isolated_workspace: for PPT/image/story drafts in non-git material projects
+worktree: for git repositories or text/code projects where branches can be merged safely
+main_only: for integration, version_map, artifact_index, current_truth, gate_log, final export
+```
+
+In non-git PPT/material projects, do not pretend git worktree protection exists. Use `AD-creative/workspaces/<work_id>/` as an isolated drafting area, then let the main thread import accepted files.
+
+Workers may write only their receipt unless the lane plan grants exact writable paths. The main thread is the only default owner of:
+
+```text
+AD-creative/orchestrator/current_truth.md
+AD-creative/orchestrator/version_map.csv
+AD-creative/orchestrator/artifact_index.csv
+AD-creative/orchestrator/gate_log.csv
+AD-creative/ppt/exports/
+```
+
+### Agent Agency Integration
+
+If `/Users/jinjungao/.claude/agents` exists, treat it as a reusable staff library.
+
+Use it this way:
+
+```text
+1. Build a task signature from the current project: brand, product, talent, platform, deliverable, stage, risk, and required evidence.
+2. Search `/Users/jinjungao/.claude/agents/*.md` by filename and frontmatter description for matching staff.
+3. Select 2-4 source staff files per lane, not a fixed global list.
+4. Record selected and rejected candidates in `AD-creative/orchestrator/agency_staff_selection_*.md`.
+5. Generate a project-specific role brief in `AD-creative/agents/role_briefs/<role>_<work_id>.md`.
+6. Put the selection id, role brief path, and source staff paths in `thread_lane_plan.md`.
+7. Extract only role quality standards, critical rules, workflow, and deliverable templates.
+8. Keep AD-creative rules higher priority than upstream staff behavior.
+```
+
+Do not use it this way:
+
+```text
+do not paste hundreds of staff files into context
+do not auto-spawn staff just because a file exists
+do not let staff-specific model/tool/frontmatter override Codex thread budget or version safety
+do not copy upstream staff descriptions into client-facing decks
+```
+
+Only use staff files as source material for a concise project role brief. Do not paste long upstream prompts into worker instructions, receipts, or customer-facing pages.
+
+Staff selection scoring:
+
+```text
+domain_fit: does the staff match the brand/product/talent/platform?
+deliverable_fit: can the staff improve PPT, copy, film treatment, visual asset, QA, or production gate?
+risk_fit: does the staff cover alcohol, artist image, client misunderstanding, legal/reputation, or version risk?
+evidence_fit: can the staff produce verifiable receipt output, not just opinion?
+non_overlap: does the staff add a distinct lens instead of duplicating another selected staff?
+context_cost: can the useful part fit into a concise project role brief?
+```
+
+Selection limits:
+
+```text
+default source staff per lane: 2-4
+default total source staff for one wave: <= 12
+do not select broad councils unless there is a written question for each staff
+do not spawn workers merely because staff were selected
+```
+
+Project-specific role brief requirements:
+
+```text
+source_staff_paths
+project facts to honor
+role objective for this work_id
+what to extract from each source staff
+what to ignore from each source staff
+output contract
+forbidden actions
+acceptance evidence
+```
+
+If a task is materially different from the previous task, redo staff selection. Treat `agent_agency_mapping_*.md` as fallback memory, not as a mandatory fixed roster.
+
+### Recurrence Prevention Checklist
+
+Before declaring an advertising creative task complete, explicitly check these known failure modes:
+
+```text
+premature_completion: gate/export alone is not completion
+version_overwrite: never overwrite a client-visible version as the only copy
+thread_sprawl: no worker without lane plan, role brief, write scope, receipt, and cleanup
+static_staff_mapping: redo Agency staff selection for the actual task instead of reusing stale roles blindly
+copied_staff_prompt: synthesize a project role brief; do not paste upstream staff text wholesale
+internal_language_leak: client-visible pages must not mention prompts, execution steps, threads, lane plans, or worker roles
+story_thinning: proposal pages must retain story, segment summary, brand mapping, timing, and key dialogue where relevant
+layout_regression: PDF/PPT visual QA must check overflow, cropping, busy image text, repeated stills, font legibility, timing labels, key dialogue labels, and story-beat differentiation
+external_review_reopen: if new Pro/client/reviewer feedback changes blockers, mark stage reopened/revision instead of saying the old completion still stands
+```
+
 ## User Entrypoints
 
 ### double-click launcher
@@ -139,7 +355,8 @@ Steps:
 5. Decide whether search is needed and write search_plan if needed.
 6. Continue through the next safe internal stage only if no human decision is blocking.
 7. Stop at any required user decision and update 待你确认.md.
-8. Run `adco validate` before reporting status.
+8. Before any client-visible version change, archive the previous version and update version_map.csv.
+9. Run `adco validate` before reporting status.
 ```
 
 User only needs to provide:
@@ -202,7 +419,8 @@ Steps:
 4. If work can continue, create or advance work item.
 5. If specialist work is needed, generate handoff packet.
 6. Run required gate before moving stage.
-7. Update project board.
+7. If threads were used, run a thread cleanup / active-thread audit before final status.
+8. Update project board.
 ```
 
 ### ad-creative:status
@@ -262,6 +480,7 @@ AD-creative/orchestrator/agent_runs.csv
 AD-creative/orchestrator/artifact_index.csv
 AD-creative/orchestrator/gate_log.csv
 AD-creative/orchestrator/version_map.csv
+AD-creative/orchestrator/thread_registry.csv
 AD-creative/handoff/项目看板.md
 AD-creative/handoff/待你确认.md
 ```
@@ -272,6 +491,9 @@ Hard block if client-facing material contains:
 
 ```text
 internal notes
+prompts
+execution steps
+thread/lane/worker language
 fake logo
 fake packaging text
 fake case study
@@ -281,6 +503,8 @@ low-quality collage
 unregistered image asset
 uneditable PPT content presented as editable
 ```
+
+Client-visible copy must read like an advertising proposal, not an execution plan. Keep story, segment summary, brand mapping, timing, and key dialogue/key phrase where those are part of the concept. Do not compress story pages into generic slogans just to make layout easier.
 
 ## Visual Rules
 
@@ -307,9 +531,23 @@ Before a client-review deck:
 create client_review_outline
 create slide_spec
 define PPT visual system
-run PPT Gate
+run PPT Gate on the actual exported PPTX/PDF package
 keep unapproved images as placeholders
 do not claim PPT editability before checking actual PPTX
+do not call a deck final/current until PDF, preview, text extract, current_truth, artifact_index, and version_map agree
+```
+
+PPT Gate must explicitly check:
+
+```text
+text overflow or cropping
+busy-image text contrast
+repeated stills / repeated backgrounds
+font legibility and font count
+key dialogue / key phrase labels
+timing labels such as second marks or segment durations
+story-beat image differentiation
+PPT editability on the exact current PPTX
 ```
 
 ## Feedback Rules
@@ -322,7 +560,19 @@ classify supplement / change / rejection / approval
 update feedback_map
 mark affected requirements and artifacts
 supersede old versions instead of overwriting
+if the feedback changes a client-visible artifact, increment the version instead of reusing the old version filename
 update next_version_plan
+```
+
+## Postmortem / Learning Rule
+
+When a project has version overwrite, thread confusion, premature completion, or user-corrected delivery quality problems:
+
+```text
+1. Create AD-creative/gates/POSTMORTEM-*.md with evidence, root causes, and rule changes.
+2. Update this skill or a project-local rule only after verifying the issue from project files.
+3. Add a memory note only when the user explicitly asks to remember or prevent recurrence.
+4. Re-run `adco validate <project_dir>` after updating project records.
 ```
 
 ## Validation Rule

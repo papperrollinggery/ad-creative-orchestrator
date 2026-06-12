@@ -10,5 +10,6 @@ project:
 rules:
   source_of_truth: AD-creative/orchestrator
   user_handoff: AD-creative/handoff
+  thread_registry: AD-creative/orchestrator/thread_registry.csv
   client_visible_requires_gate: true
   global_skill_install_requires_user_approval: true

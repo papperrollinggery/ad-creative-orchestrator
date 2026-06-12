@@ -6,7 +6,26 @@
   "execution_policy": {
     "generate_before_user_confirmation": false,
     "project_bound_outputs_must_be_saved_in_workspace": true,
-    "frame_generation_requires_asset_lock": true
+    "frame_generation_requires_asset_lock": true,
+    "storyboard_required_before_final_asset": true,
+    "completion_requires_artifact_proof": true,
+    "retry_requires_reason": true
+  },
+  "harness_contract": {
+    "harness_id": "",
+    "tool_surface": [],
+    "write_scope": [],
+    "iteration_budget": {
+      "max_variants_per_slot": 4,
+      "max_regeneration_rounds": 2
+    },
+    "completion_proof": [
+      "output_files",
+      "asset_manifest_rows",
+      "visual_review_record",
+      "gate_report"
+    ],
+    "recovery_rule": "record issue, applied fix, and future guard before handoff"
   },
   "asset_design_lock": {
     "character_design": "pending",
@@ -14,6 +33,7 @@
     "environment_design": "pending",
     "visual_style": "pending"
   },
+  "storyboard": [],
   "global_avoid": [
     "fake logo",
     "fake packaging text",

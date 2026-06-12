@@ -6,8 +6,35 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 from pathlib import Path
 from typing import Iterable
+
+
+CLIENT_DELIVERY_VISIBILITIES = {"client_visible", "client_visible_ready", "sent"}
+PASS_GATE_VALUES = {"pass", "passed"}
+CLIENT_DELIVERY_REQUIRED_TYPES = {
+    "current_pptx_artifact_id": {"pptx"},
+    "current_pdf_artifact_id": {"pdf"},
+    "current_preview_artifact_id": {"preview", "deck_preview", "png_preview", "jpg_preview"},
+    "current_text_extract_artifact_id": {"text_extract", "ppt_text_extract"},
+    "current_ppt_editability_artifact_id": {"ppt_editability_check"},
+}
+FEEDBACK_CLOSED_STATUSES = {"applied", "resolved", "closed", "deferred", "not_applicable"}
+THREAD_REGISTRY_REQUIRED_FIELDS = [
+    "thread_id",
+    "title",
+    "role",
+    "lane_id",
+    "work_id",
+    "lifecycle_state",
+    "pinned",
+    "archived",
+    "created_at",
+    "updated_at",
+    "cleanup_action",
+    "notes",
+]
 
 
 REQUIRED_FILES = [
@@ -20,6 +47,10 @@ REQUIRED_FILES = [
     "AD-creative/orchestrator/artifact_index.csv",
     "AD-creative/orchestrator/gate_log.csv",
     "AD-creative/orchestrator/version_map.csv",
+    "AD-creative/orchestrator/thread_registry.csv",
+    "AD-creative/feedback/feedback_map.csv",
+    "AD-creative/feedback/affected_artifacts.md",
+    "AD-creative/feedback/next_version_plan.md",
     "AD-creative/handoff/项目看板.md",
     "AD-creative/handoff/待你确认.md",
 ]
@@ -96,6 +127,162 @@ def check_refs(
             errors.append(f"{owner} unknown {target_name} {item_id}")
 
 
+def artifact_rows_by_type(
+    artifacts: list[dict[str, str]], type_names: set[str]
+) -> list[dict[str, str]]:
+    return [
+        row
+        for row in artifacts
+        if row.get("artifact_type", "").strip().lower() in type_names
+    ]
+
+
+def row_has_pass_gate(row: dict[str, str]) -> bool:
+    return row.get("gate_status", "").strip().lower() in PASS_GATE_VALUES
+
+
+def current_truth_value(text: str, key: str) -> str:
+    pattern = re.compile(rf"^[ \t]*{re.escape(key)}[ \t]*:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+    match = pattern.search(text)
+    if not match:
+        return ""
+    value = match.group(1).strip()
+    return "" if value in {"TBD", "todo", "pending"} else value
+
+
+def has_client_delivery_artifact(artifacts: list[dict[str, str]]) -> bool:
+    return any(
+        row.get("visibility", "").strip().lower() in CLIENT_DELIVERY_VISIBILITIES
+        for row in artifacts
+    )
+
+
+def row_by_id(rows: list[dict[str, str]], key: str, value: str) -> dict[str, str] | None:
+    for row in rows:
+        if row.get(key, "").strip() == value:
+            return row
+    return None
+
+
+def validate_client_delivery_readiness(
+    project: Path,
+    artifacts: list[dict[str, str]],
+    version_map: list[dict[str, str]],
+    feedback_rows: list[dict[str, str]],
+) -> list[str]:
+    """Validate facts required before a package can be called client-deliverable."""
+    errors: list[str] = []
+
+    current_truth = project / "AD-creative/orchestrator/current_truth.md"
+    try:
+        current_truth_text = current_truth.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        current_truth_text = ""
+
+    for key in [
+        "current_version_id",
+        "current_pptx_artifact_id",
+        "current_pdf_artifact_id",
+        "current_preview_artifact_id",
+        "current_text_extract_artifact_id",
+        "current_ppt_editability_artifact_id",
+        "version_map_status",
+    ]:
+        if not current_truth_value(current_truth_text, key):
+            errors.append(f"client delivery missing current_truth field {key}")
+
+    current_version_id = current_truth_value(current_truth_text, "current_version_id")
+    active_versions = [
+        row
+        for row in version_map
+        if row.get("status", "").strip().lower() in {"active", "current"}
+    ]
+    if not active_versions:
+        errors.append("client delivery has no active/current version_map row")
+    current_version = row_by_id(active_versions, "version_id", current_version_id)
+    if current_version_id and not current_version:
+        errors.append(
+            f"client delivery current_version_id {current_version_id} does not match an active/current version_map row"
+        )
+    if len(active_versions) > 1:
+        errors.append("client delivery has multiple active/current version_map rows")
+
+    current_artifact_ids: set[str] = set()
+    current_version_label = (current_version or {}).get("version", "").strip()
+    for current_key, type_names in CLIENT_DELIVERY_REQUIRED_TYPES.items():
+        artifact_id = current_truth_value(current_truth_text, current_key)
+        if not artifact_id:
+            continue
+        current_artifact_ids.add(artifact_id)
+        artifact = row_by_id(artifacts, "artifact_id", artifact_id)
+        if not artifact:
+            errors.append(f"client delivery {current_key} unknown artifact {artifact_id}")
+            continue
+        artifact_type = artifact.get("artifact_type", "").strip().lower()
+        if artifact_type not in type_names:
+            errors.append(
+                f"client delivery {current_key} {artifact_id} has wrong type {artifact_type}"
+            )
+        if not row_has_pass_gate(artifact):
+            errors.append(f"client delivery {current_key} {artifact_id} gate is not PASS")
+        rel_path = artifact.get("path", "").strip()
+        if not rel_path:
+            errors.append(f"client delivery artifact {artifact_id} missing path")
+        elif not (project / rel_path).exists():
+            errors.append(f"client delivery artifact {artifact_id} missing path {rel_path}")
+        if not artifact.get("version", "").strip():
+            errors.append(f"client delivery artifact {artifact_id} missing version")
+        elif current_version_label and artifact.get("version", "").strip() != current_version_label:
+            errors.append(
+                f"client delivery artifact {artifact_id} version {artifact.get('version')} does not match current version {current_version_label}"
+            )
+
+    if current_version:
+        version_artifact_id = current_version.get("artifact_id", "").strip()
+        if not current_version.get("version", "").strip():
+            errors.append("client delivery current version_map row missing version")
+        if not version_artifact_id:
+            errors.append("client delivery current version_map row missing artifact_id")
+        elif version_artifact_id not in current_artifact_ids:
+            errors.append(
+                f"client delivery version_map artifact {version_artifact_id} is not one of the current package artifacts"
+            )
+        if current_version.get("status", "").strip().lower() != current_truth_value(current_truth_text, "version_map_status").lower():
+            errors.append("client delivery current_truth version_map_status does not match version_map status")
+
+    open_feedback = [
+        row.get("feedback_id", "")
+        for row in feedback_rows
+        if row.get("status", "").strip().lower() not in FEEDBACK_CLOSED_STATUSES
+    ]
+    if open_feedback:
+        errors.append(
+            "client delivery has unresolved feedback rows: "
+            + ";".join(item for item in open_feedback if item)
+        )
+    deferred_without_owner = [
+        row.get("feedback_id", "")
+        for row in feedback_rows
+        if row.get("status", "").strip().lower() == "deferred"
+        and not (row.get("deferred_owner", "").strip() and row.get("deferred_tracking_path", "").strip())
+    ]
+    if deferred_without_owner:
+        errors.append(
+            "client delivery has deferred feedback without owner/tracking path: "
+            + ";".join(item for item in deferred_without_owner if item)
+        )
+
+    for rel_path in [
+        "AD-creative/feedback/feedback_map.csv",
+        "AD-creative/feedback/affected_artifacts.md",
+        "AD-creative/feedback/next_version_plan.md",
+    ]:
+        if not (project / rel_path).exists():
+            errors.append(f"client delivery missing feedback closure file: {rel_path}")
+
+    return errors
+
+
 def validate(project: Path) -> tuple[list[str], dict[str, int]]:
     errors: list[str] = []
     project = project.resolve()
@@ -114,8 +301,12 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
     artifact_index = load_csv(ad_root / "orchestrator/artifact_index.csv", errors)
     gate_log = load_csv(ad_root / "orchestrator/gate_log.csv", errors)
     version_map = load_csv(ad_root / "orchestrator/version_map.csv", errors)
+    thread_registry_fields = load_csv(
+        ad_root / "orchestrator/thread_registry.csv", errors
+    )
     reference_cards = load_csv(ad_root / "references/reference_cards.csv", errors)
     asset_manifest = load_csv(ad_root / "visual_assets/asset_manifest.csv", errors)
+    feedback_rows = load_csv(ad_root / "feedback/feedback_map.csv", errors)
 
     source_ids = id_set(source_events, "source_event_id")
     req_ids = id_set(requirements, "requirement_id")
@@ -124,6 +315,21 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
     gate_ids = id_set(gate_log, "gate_id")
     reference_ids = id_set(reference_cards, "reference_id")
     asset_ids = id_set(asset_manifest, "asset_id")
+
+    registry_path = ad_root / "orchestrator/thread_registry.csv"
+    try:
+        with registry_path.open(newline="", encoding="utf-8") as handle:
+            registry_reader = csv.DictReader(handle)
+            registry_fields = list(registry_reader.fieldnames or [])
+    except FileNotFoundError:
+        registry_fields = []
+    missing_registry_fields = [
+        field for field in THREAD_REGISTRY_REQUIRED_FIELDS if field not in registry_fields
+    ]
+    if missing_registry_fields:
+        errors.append(
+            "thread_registry missing columns: " + ", ".join(missing_registry_fields)
+        )
 
     for req in requirements:
         req_id = req.get("requirement_id", "")
@@ -153,6 +359,7 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
         check_refs(errors, f"artifact {artifact_id}", artifact.get("source_event_ids"), source_ids, "source_event")
         check_refs(errors, f"artifact {artifact_id}", artifact.get("linked_references"), reference_ids, "reference")
         check_refs(errors, f"artifact {artifact_id}", artifact.get("linked_assets"), asset_ids, "asset")
+        check_refs(errors, f"artifact {artifact_id}", artifact.get("supersedes_artifact_id"), artifact_ids, "artifact")
 
     for run in agent_runs:
         run_id = run.get("run_id", "")
@@ -196,6 +403,13 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
         if rel_path and must_exist and not (project / rel_path).exists():
             errors.append(f"asset {asset_id} missing path {rel_path}")
 
+    if has_client_delivery_artifact(artifact_index):
+        errors.extend(
+            validate_client_delivery_readiness(
+                project, artifact_index, version_map, feedback_rows
+            )
+        )
+
     stats = {
         "source_events": len(source_events),
         "requirements": len(requirements),
@@ -204,8 +418,10 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
         "artifacts": len(artifact_index),
         "gates": len(gate_log),
         "versions": len(version_map),
+        "threads": len(thread_registry_fields),
         "references": len(reference_cards),
         "assets": len(asset_manifest),
+        "feedback": len(feedback_rows),
         "errors": len(errors),
     }
     return errors, stats

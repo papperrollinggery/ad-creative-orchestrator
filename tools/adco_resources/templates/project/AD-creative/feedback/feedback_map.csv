@@ -1,1 +1,1 @@
-feedback_id,source_event_id,feedback_type,statement,affects_requirement_ids,affects_artifact_ids,resolution,status,created_at
+feedback_id,source_event_id,feedback_type,statement,affects_requirement_ids,affects_artifact_ids,resolution,status,deferred_owner,deferred_tracking_path,created_at

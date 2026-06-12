@@ -28,7 +28,7 @@ import xml.etree.ElementTree as ET
 
 from init_project import copy_template
 from runtime_paths import repo_or_module_root, skill_draft_dir, source_root, template_root
-from validate_project import validate
+from validate_project import current_truth_value, validate, validate_client_delivery_readiness
 
 
 REPO_ROOT = repo_or_module_root()
@@ -175,6 +175,10 @@ def doctor_report() -> tuple[str, list[str], list[str], list[str]]:
     required_template_files = [
         "AD-creative/orchestrator/project.yml",
         "AD-creative/orchestrator/requirements.csv",
+        "AD-creative/orchestrator/thread_registry.csv",
+        "AD-creative/orchestrator/thread_lane_plan_template.md",
+        "AD-creative/orchestrator/agency_staff_selection_template.md",
+        "AD-creative/agents/role_briefs/README.md",
         "AD-creative/handoff/项目看板.md",
         "AD-creative/gates/adversarial_council_gate_template.md",
     ]
@@ -3186,8 +3190,30 @@ def candidate_client_files(project: Path, artifacts: list[dict[str, str]]) -> li
     return sorted(files)
 
 
+def artifact_path_by_id(project: Path, artifacts: list[dict[str, str]], artifact_id: str) -> Path | None:
+    for artifact in artifacts:
+        if artifact.get("artifact_id", "").strip() == artifact_id:
+            rel_path = artifact.get("path", "").strip()
+            return project / rel_path if rel_path else None
+    return None
+
+
+def current_pptx_path(project: Path, artifacts: list[dict[str, str]]) -> tuple[Path | None, bool]:
+    current_truth = project / "AD-creative/orchestrator/current_truth.md"
+    if not current_truth.exists():
+        return None, False
+    artifact_id = current_truth_value(
+        current_truth.read_text(encoding="utf-8"), "current_pptx_artifact_id"
+    )
+    if not artifact_id:
+        return None, False
+    return artifact_path_by_id(project, artifacts, artifact_id), True
+
+
 def review_client_pack(project: Path, pptx_path: Path | None = None) -> tuple[str, list[str], Path]:
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    _, version_map = read_csv_rows(project / "AD-creative/orchestrator/version_map.csv")
+    _, feedback_rows = read_csv_rows(project / "AD-creative/feedback/feedback_map.csv")
     _, assets = read_csv_rows(project / "AD-creative/visual_assets/asset_manifest.csv")
     _, references = read_csv_rows(project / "AD-creative/references/reference_cards.csv")
     issues: list[str] = []
@@ -3199,6 +3225,12 @@ def review_client_pack(project: Path, pptx_path: Path | None = None) -> tuple[st
         gate_status = artifact.get("gate_status", "").lower()
         if visibility in CLIENT_VISIBLE_VALUES and gate_status not in PASS_GATE_VALUES:
             issues.append(f"客户可见产物未通过 Gate: {artifact.get('artifact_id')}")
+
+    issues.extend(
+        validate_client_delivery_readiness(
+            project, artifacts, version_map, feedback_rows
+        )
+    )
 
     for asset in assets:
         visibility = asset.get("visibility", "").lower()
@@ -3225,16 +3257,33 @@ def review_client_pack(project: Path, pptx_path: Path | None = None) -> tuple[st
             if reference.get("do_not_copy", "").strip() == "":
                 issues.append(f"客户可见参考缺少 do_not_copy: {reference.get('reference_id')}")
 
+    exact_current_pptx, current_pptx_declared = current_pptx_path(project, artifacts)
+    if current_pptx_declared and not exact_current_pptx:
+        issues.append("current_pptx_artifact_id 未解析到带 path 的 PPTX artifact。")
+    if pptx_path and exact_current_pptx and pptx_path.resolve() != exact_current_pptx.resolve():
+        issues.append(
+            f"PPTX 检查目标不是 current_pptx_artifact_id 指向的当前文件: {safe_rel(project, pptx_path)}"
+        )
     default_pptx = project / "AD-creative/ppt/client_review_draft.pptx"
-    check_target = pptx_path or (default_pptx if default_pptx.exists() else None)
+    check_target = (
+        exact_current_pptx
+        if current_pptx_declared
+        else pptx_path or (default_pptx if default_pptx.exists() else None)
+    )
     pptx_stats: dict[str, int | bool | str] | None = None
     if check_target:
-        pptx_stats = inspect_pptx(check_target)
-        if not pptx_stats["editable"]:
-            issues.append("PPTX 缺少可编辑文本层。")
-        evidence.append(
-            f"pptx={safe_rel(project, check_target)} slides={pptx_stats['slides']} editable_text_runs={pptx_stats['editable_text_runs']}"
-        )
+        if not check_target.exists():
+            issues.append(f"PPTX 文件不存在: {safe_rel(project, check_target)}")
+            evidence.append(
+                f"pptx={safe_rel(project, check_target)} missing=true exact_current={current_pptx_declared}"
+            )
+        else:
+            pptx_stats = inspect_pptx(check_target)
+            if not pptx_stats["editable"]:
+                issues.append("PPTX 缺少可编辑文本层。")
+            evidence.append(
+                f"pptx={safe_rel(project, check_target)} slides={pptx_stats['slides']} editable_text_runs={pptx_stats['editable_text_runs']} exact_current={current_pptx_declared}"
+            )
     else:
         issues.append("未找到可审稿 PPTX。")
 
@@ -3294,6 +3343,7 @@ visibility: internal_only
 - 客户可见参考必须是 https，并保留 do_not_copy。
 - PPTX 必须存在可编辑文本层。
 - 客户稿候选不能含内部注释、模拟标记、TODO/TBD、假 logo、placeholder-only。
+- 当前交付包必须具备 current version、PPTX、PDF、preview、text extract、PPT editability 和 feedback closure 证据。
 """,
     )
     update_artifact(
@@ -3645,6 +3695,16 @@ def review_handoff_readiness(project: Path) -> tuple[str, list[str], list[str], 
     if errors:
         blockers.extend(errors[:12])
 
+    _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    _, version_map = read_csv_rows(project / "AD-creative/orchestrator/version_map.csv")
+    _, feedback_rows = read_csv_rows(project / "AD-creative/feedback/feedback_map.csv")
+    delivery_errors = validate_client_delivery_readiness(
+        project, artifacts, version_map, feedback_rows
+    )
+    evidence.append(f"client_delivery_readiness_errors={len(delivery_errors)}")
+    if delivery_errors:
+        blockers.extend(delivery_errors[:12])
+
     dashboard = render_dashboard(project)
     dashboard_issues = audit_dashboard(project)
     evidence.append(f"dashboard={safe_rel(project, dashboard)}")
@@ -3669,7 +3729,8 @@ def review_handoff_readiness(project: Path) -> tuple[str, list[str], list[str], 
         elif status not in allowed:
             blockers.append(f"{gate_id} status={status}")
 
-    pptx = project / "AD-creative/ppt/client_review_draft.pptx"
+    pptx, _ = current_pptx_path(project, artifacts)
+    pptx = pptx or project / "AD-creative/ppt/client_review_draft.pptx"
     if pptx.exists():
         pptx_stats = inspect_pptx(pptx)
         evidence.append(
