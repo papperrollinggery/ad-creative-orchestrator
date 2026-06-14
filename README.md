@@ -128,6 +128,10 @@ adco open-dashboard <项目目录>
 adco audit-dashboard <项目目录> --render --json
 adco run <项目目录> --material <资料文件或文件夹>
 adco goal-plan <项目目录> --title "<目标标题>" --objective "<目标内容>"
+adco goal-run <项目目录> --goal-id latest --max-steps 3
+adco creative-doctor
+adco creative-run <项目目录> --kind ads --work-id <工作ID> --brief-file <brief.md>
+adco import-creative-production <项目目录> --run-dir <run目录> --kind ads --slot-prefix CP
 adco status <项目目录>
 adco status <项目目录> --json
 adco next <项目目录>
@@ -278,7 +282,11 @@ adco search-quality-gate <项目目录>
 adco reference-pack-gate <项目目录>
 adco add-asset <项目目录> --file <图片文件> --slot-id <槽位> --requirement-id <需求ID>
 adco import-imagegen <项目目录> --slot-id <槽位> --selected
+adco creative-doctor
+adco creative-run <项目目录> --kind moodboard|ads|shots --work-id <工作ID> --brief-file <brief.md>
+adco import-creative-production <项目目录> --run-dir <run目录> --kind moodboard|ads|shots --slot-prefix CP
 adco visual-quality-gate <项目目录>
+adco film-quality-gate <项目目录>
 adco export-pptx <项目目录>
 adco check-pptx <项目目录> --file <PPTX文件>
 adco client-pack-gate <项目目录>
@@ -356,6 +364,9 @@ examples/simulated_qingling_outdoor_launch: VALIDATION=PASS
 真实图片文件登记: add-asset copy + manifest + visual gate PASS
 image_gen 输出入库链路: import-imagegen + manifest + import log + visual gate PASS
 视觉质量 Gate: visual-quality-gate blocks low-res / unapproved client-visible AI assets
+Creative Production bridge: creative-doctor / creative-run review-only / import-creative-production fixture PASS
+影视商业质量 Gate: film-quality-gate report + Gate log PASS
+Goal Runner: goal-run deterministic safe-stop PASS
 可编辑 PPTX 草稿: export-pptx / check-pptx PASS
 客户稿风险 Gate: client-pack-gate PASS
 非开发者交接 Gate: handoff-readiness-gate PASS

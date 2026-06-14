@@ -67,6 +67,28 @@ CLIENT_REVIEW_ASSET_STATUSES = {"selected", "approved", "done"}
 GENERATED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 ACTIVE_ASSET_STATUSES = {"registered", "selected", "approved", "done"}
 SELECTED_ASSET_STATUSES = {"selected", "approved", "done"}
+CREATIVE_PRODUCTION_KINDS = {"moodboard", "ads", "shots"}
+GOAL_PHASES = ("P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7")
+GOAL_PHASE_NAMES = {
+    "P0": "Intake 与事实基线",
+    "P1": "研究计划与图片策略",
+    "P2": "证据包与资产槽位",
+    "P3": "策略方向与图片任务 PRD",
+    "P4": "内部原型与图片探索",
+    "P5": "视觉审核与客户审阅包",
+    "P6": "PPT / 最终交付 Gate",
+    "P7": "反馈合并与复用沉淀",
+}
+GOAL_PHASE_GATE_HINTS = {
+    "P0": ("intake", "brief", "project_readiness"),
+    "P1": ("research_plan", "reference_research"),
+    "P2": ("reference_research", "visual_plan"),
+    "P3": ("creative", "image_job", "proposal_architecture"),
+    "P4": ("visual_review", "internal_prototype"),
+    "P5": ("client_review", "visual_review"),
+    "P6": ("ppt_gate", "final_delivery"),
+    "P7": ("feedback", "skill_mining"),
+}
 VISUAL_RISK_PATTERNS = {
     "contact sheet",
     "low-quality collage",
@@ -1621,6 +1643,157 @@ checked_at: {now_iso()}
     return status, issues + warnings, report_path
 
 
+def review_film_quality(project: Path) -> tuple[str, list[str], Path]:
+    counts = read_counts(project)
+    _, requirements = read_csv_rows(project / "AD-creative/orchestrator/requirements.csv")
+    _, references = read_csv_rows(project / "AD-creative/references/reference_cards.csv")
+    _, assets = read_csv_rows(project / "AD-creative/visual_assets/asset_manifest.csv")
+    _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    issues: list[str] = []
+    warnings: list[str] = []
+    evidence: list[str] = [
+        f"requirements={counts['requirements']}",
+        f"references={counts['references']}",
+        f"assets={counts['assets']}",
+        f"artifacts={counts['artifacts']}",
+    ]
+
+    creative_path = project / "AD-creative/creative/creative_directions.md"
+    proposal_path = project / "AD-creative/proposal_architecture/proposal_structure.md"
+    treatment_path = project / "AD-creative/film/treatment_packet.md"
+    shot_plan_path = project / "AD-creative/film/shot_list_storyboard_plan.md"
+    constraints_path = project / "AD-creative/film/production_constraints.md"
+
+    if not requirements:
+        issues.append("缺少 requirements，影视/商业判断没有客户事实基线。")
+    if not references:
+        warnings.append("缺少 reference pack，影视调性和拍法证据不足。")
+    if not assets:
+        warnings.append("缺少 visual asset，关键画面和资产锁未验证。")
+    for label, path in [
+        ("creative_directions", creative_path),
+        ("proposal_structure", proposal_path),
+        ("treatment_packet", treatment_path),
+        ("shot_list_storyboard_plan", shot_plan_path),
+        ("production_constraints", constraints_path),
+    ]:
+        if path.exists():
+            evidence.append(f"{label}={safe_rel(project, path)}")
+        else:
+            warnings.append(f"缺少 {safe_rel(project, path)}。")
+
+    visual_gate = latest_gate(project, gate_id="GATE-AUTO-VISUAL-QUALITY-001")
+    if not visual_gate:
+        warnings.append("尚未运行 Visual Quality Gate。")
+    elif visual_gate.get("status") == "BLOCKED":
+        issues.append("Visual Quality Gate 为 BLOCKED，不能进入影视级客户审阅。")
+    else:
+        evidence.append(f"visual_quality_gate={visual_gate.get('status')}")
+
+    client_visible_generated = [
+        asset.get("asset_id", "")
+        for asset in assets
+        if asset.get("visibility", "").strip().lower() in CLIENT_VISIBLE_VALUES
+        and asset.get("asset_type", "").strip().lower() == "generated_image"
+        and "client_visibility_approved" not in asset.get("notes", "").lower()
+    ]
+    if client_visible_generated:
+        issues.append("客户可见生成图缺少批准记录: " + ";".join(client_visible_generated))
+
+    client_visible_artifacts = [
+        artifact.get("artifact_id", "")
+        for artifact in artifacts
+        if artifact.get("visibility", "").strip().lower() in CLIENT_VISIBLE_VALUES
+        and artifact.get("gate_status", "").strip().lower() not in PASS_GATE_VALUES
+    ]
+    if client_visible_artifacts:
+        issues.append("客户可见产物 Gate 未 PASS: " + ";".join(client_visible_artifacts))
+
+    commercial_requirements = [
+        row for row in requirements
+        if row.get("category", "").strip().lower() in {"delivery", "creative", "visual", "research"}
+    ]
+    if commercial_requirements:
+        evidence.append(f"commercial_requirement_rows={len(commercial_requirements)}")
+    else:
+        warnings.append("未识别到 delivery/creative/visual/research 类商业需求。")
+
+    status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
+    status = enforce_adversarial_gate_policy(
+        project, "film_quality", status, warnings, evidence
+    )
+    report_path = project / "AD-creative/gates/GATE-AUTO-FILM-QUALITY-001_report.md"
+    issue_text = "\n".join(f"- {issue}" for issue in issues) or "- 无"
+    warning_text = "\n".join(f"- {warning}" for warning in warnings) or "- 无"
+    evidence_text = "\n".join(f"- {item}" for item in evidence)
+    write_text(
+        report_path,
+        f"""# Film / Commercial Quality Gate
+
+status: {status}
+visibility: internal_only
+checked_at: {now_iso()}
+
+## Evidence
+
+{evidence_text}
+
+## Blocking Issues
+
+{issue_text}
+
+## Warnings
+
+{warning_text}
+
+## Review Dimensions
+
+- cinematic_clarity: treatment / shot list / key-frame logic can explain the film idea.
+- commercial_message: client value, product role, and campaign output are traceable to requirements.
+- brand_fit: visual direction and references do not invent unsupported brand facts.
+- product_truth: product, packaging, logo, and claims are not faked.
+- production_feasibility: production constraints and known blockers are visible.
+- client_risk: client-visible generated assets and artifacts remain gated.
+""",
+    )
+    update_artifact(
+        project,
+        "ART-AUTO-FILM-QUALITY-GATE",
+        "film_quality_gate_report",
+        safe_rel(project, report_path),
+        "film_quality",
+        status="done" if status != "BLOCKED" else "blocked",
+        visibility="internal_only",
+        linked_assets=";".join(asset.get("asset_id", "") for asset in assets if asset.get("asset_id")),
+        gate_status=status,
+    )
+    append_gate(
+        project,
+        "GATE-AUTO-FILM-QUALITY-001",
+        "film_quality",
+        status,
+        "90" if status == "PASS" else "68" if status == "PARTIAL_PASS" else "35",
+        "ART-AUTO-FILM-QUALITY-GATE",
+        ";".join(issues[:8]),
+        ";".join(warnings[:8]) or "补齐 treatment / shot list / production constraints 后复核。",
+        "",
+        "ready_for_client_pack_gate" if status != "BLOCKED" else "fix_film_quality",
+        "ad_creative_operator",
+    )
+    append_event(
+        project,
+        {
+            "event_id": "EVT-AUTO-FILM-QUALITY-GATE",
+            "event_type": "film_quality_gate_run",
+            "created_at": now_iso(),
+            "status": status,
+            "issues": issues[:12],
+            "warnings": warnings[:12],
+        },
+    )
+    return status, issues + warnings, report_path
+
+
 def latest_generated_image(root: Path) -> Path:
     if not root.exists():
         raise FileNotFoundError(f"generated_images root not found: {root}")
@@ -2200,6 +2373,595 @@ def goal_iteration_rows(project: Path) -> list[dict[str, str]]:
     return rows
 
 
+def latest_goal_row(project: Path) -> dict[str, str] | None:
+    rows = goal_iteration_rows(project)
+    return rows[0] if rows else None
+
+
+def resolve_goal_row(project: Path, goal_id: str) -> dict[str, str] | None:
+    rows = goal_iteration_rows(project)
+    if not rows:
+        return None
+    if goal_id in {"", "latest"}:
+        return rows[0]
+    for row in rows:
+        if row.get("goal_id") == goal_id:
+            return row
+    return None
+
+
+def slug_text(value: str, default: str = "run") -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
+    return slug or default
+
+
+def creative_production_root_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    env_root = os.environ.get("ADCO_CREATIVE_PRODUCTION_ROOT", "").strip()
+    if env_root:
+        candidates.append(Path(env_root).expanduser())
+
+    cache_root = Path.home() / ".codex/plugins/cache"
+    for pattern in [
+        "openai-curated-remote/creative-production/*",
+        "openai-curated/creative-production/*",
+        "creative-production/*",
+    ]:
+        if cache_root.exists():
+            candidates.extend(sorted(cache_root.glob(pattern), reverse=True))
+
+    source = source_root()
+    if source:
+        candidates.extend(
+            [
+                source / "plugins/creative-production",
+                source / "creative-production",
+            ]
+        )
+    return candidates
+
+
+def is_creative_production_root(path: Path) -> bool:
+    return all(
+        (path / rel).exists()
+        for rel in [
+            "skills/ads-explorer/scripts/build_ads_explorer.py",
+            "skills/shot-explorer/scripts/create_shot_explorer.py",
+            "skills/moodboard-explorer/scripts/create_mood_board.py",
+            "scripts/review_renderer.py",
+        ]
+    )
+
+
+def resolve_creative_production_root() -> Path | None:
+    for candidate in creative_production_root_candidates():
+        root = candidate.expanduser().resolve()
+        if is_creative_production_root(root):
+            return root
+    return None
+
+
+def creative_production_script(root: Path, kind: str) -> Path:
+    scripts = {
+        "ads": root / "skills/ads-explorer/scripts/build_ads_explorer.py",
+        "shots": root / "skills/shot-explorer/scripts/create_shot_explorer.py",
+        "moodboard": root / "skills/moodboard-explorer/scripts/create_mood_board.py",
+    }
+    return scripts[kind]
+
+
+def creative_doctor_report() -> tuple[str, list[str], list[str], list[str]]:
+    issues: list[str] = []
+    warnings: list[str] = []
+    evidence: list[str] = []
+    root = resolve_creative_production_root()
+    if not root:
+        issues.append("Creative Production plugin root not found.")
+        evidence.append("ADCO_CREATIVE_PRODUCTION_ROOT=" + os.environ.get("ADCO_CREATIVE_PRODUCTION_ROOT", ""))
+        evidence.append("searched_candidates=" + str(len(creative_production_root_candidates())))
+        return "BLOCKED", issues, warnings, evidence
+
+    evidence.append(f"creative_production_root={root}")
+    for kind in sorted(CREATIVE_PRODUCTION_KINDS):
+        script = creative_production_script(root, kind)
+        evidence.append(f"{kind}_script={script}")
+        if not script.exists():
+            issues.append(f"missing {kind} script: {script}")
+    try:
+        import PIL  # noqa: F401
+    except Exception as exc:  # noqa: BLE001 - optional bridge should report exact reason
+        warnings.append(f"Pillow import check failed: {exc}")
+    return ("PASS" if not issues else "BLOCKED"), issues, warnings, evidence
+
+
+def creative_output_dir(project: Path, kind: str, work_id: str) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return project / "AD-creative/creative_production/runs" / f"{kind}-{slug_text(work_id)}-{stamp}"
+
+
+def brief_title(brief_file: Path, work_id: str) -> str:
+    try:
+        for line in brief_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+            stripped = line.strip("# ").strip()
+            if stripped:
+                return stripped[:80]
+    except FileNotFoundError:
+        pass
+    return work_id
+
+
+def moodboard_spec_from_brief(brief_file: Path, work_id: str, output: Path) -> Path:
+    text = brief_file.read_text(encoding="utf-8", errors="ignore")[:2400]
+    title = brief_title(brief_file, work_id)
+    cues = [
+        ("audience-feel", "Audience feel", "single editorial photograph showing the target audience mood and occasion"),
+        ("brand-world", "Brand world", "single cinematic brand-world reference image with setting, light, and material cues"),
+        ("product-moment", "Product moment", "single commercial product-in-use visual reference image"),
+        ("texture-light", "Texture and light", "single material and lighting study with premium production value"),
+        ("story-beat", "Story beat", "single film-still style moment that can become a key frame"),
+        ("campaign-kv", "Campaign key visual", "single clean advertising key visual reference without readable text"),
+    ]
+    items = []
+    for index, (item_id, item_title, prompt_seed) in enumerate(cues, start=1):
+        items.append(
+            {
+                "id": f"{item_id}-{index}",
+                "title": item_title,
+                "caption": f"{item_title} for {title}",
+                "source": "ADCO brief",
+                "tone": "commercial cinematic",
+                "motif": item_title,
+                "palette": "derived from brief",
+                "prompt": (
+                    f"{prompt_seed}. Preserve this business brief: {text}. "
+                    "No logos, no readable copy, no collage, no contact sheet, no internal notes."
+                ),
+            }
+        )
+    spec = {
+        "meta": {
+            "title": f"{title} mood board",
+            "summary": "ADCO review-only mood board generated from project brief.",
+            "source": str(brief_file),
+        },
+        "signals": {
+            "work_id": work_id,
+            "brief_excerpt": text[:800],
+            "visibility": "internal_only",
+        },
+        "items": items,
+    }
+    spec_path = output.parent / f"{output.name}-spec.json"
+    write_text(spec_path, json.dumps(spec, ensure_ascii=False, indent=2))
+    return spec_path
+
+
+def register_agent_run(
+    project: Path,
+    *,
+    work_id: str,
+    role: str,
+    status: str,
+    input_files: str,
+    output_files: str,
+    gate_id: str = "",
+    summary: str = "",
+    next_action: str = "",
+) -> str:
+    path = project / "AD-creative/orchestrator/agent_runs.csv"
+    fields, rows = read_csv_rows(path)
+    if not fields:
+        return ""
+    run_id = next_id(rows, "run_id", "RUN")
+    rows.append(
+        {
+            "run_id": run_id,
+            "work_id": work_id,
+            "agent_role": role,
+            "status": status,
+            "started_at": now_iso(),
+            "completed_at": now_iso(),
+            "input_files": input_files,
+            "output_files": output_files,
+            "gate_id": gate_id,
+            "summary": summary,
+            "next_action": next_action,
+        }
+    )
+    write_csv_rows(path, fields, rows)
+    return run_id
+
+
+def work_id_exists(project: Path, work_id: str) -> bool:
+    _, rows = read_csv_rows(project / "AD-creative/orchestrator/work_items.csv")
+    return any(row.get("work_id") == work_id for row in rows)
+
+
+def run_creative_production(
+    project: Path,
+    *,
+    kind: str,
+    work_id: str,
+    brief_file: Path,
+    base_asset: Path | None = None,
+    generate: bool = False,
+    force: bool = False,
+) -> tuple[Path, list[str]]:
+    root = resolve_creative_production_root()
+    if not root:
+        raise FileNotFoundError("Creative Production plugin root not found.")
+    if kind not in CREATIVE_PRODUCTION_KINDS:
+        raise ValueError(f"unknown creative production kind: {kind}")
+    if not brief_file.exists():
+        raise FileNotFoundError(f"brief file not found: {brief_file}")
+    if not work_id_exists(project, work_id):
+        raise ValueError(f"unknown work_id: {work_id}")
+
+    out_dir = creative_output_dir(project, kind, work_id)
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    script = creative_production_script(root, kind)
+    cmd: list[str]
+    if kind == "ads":
+        cmd = [
+            sys.executable,
+            str(script),
+            "--ad-name",
+            brief_title(brief_file, work_id),
+            "--ad-brief-file",
+            str(brief_file),
+            "--out-dir",
+            str(out_dir),
+            "--force",
+        ]
+        if base_asset:
+            cmd.extend(["--reference-image", str(base_asset)])
+        cmd.append("--generate" if generate else "--review-only")
+    elif kind == "shots":
+        cmd = [
+            sys.executable,
+            str(script),
+            "--output",
+            str(out_dir),
+            "--force",
+            "--generate" if generate else "--review-only",
+        ]
+        if base_asset:
+            cmd.extend(["--base-asset", str(base_asset)])
+    else:
+        spec_path = moodboard_spec_from_brief(brief_file, work_id, out_dir)
+        cmd = [
+            sys.executable,
+            str(script),
+            "--spec",
+            str(spec_path),
+            "--output",
+            str(out_dir),
+            "--force",
+        ]
+
+    if out_dir.exists() and force:
+        shutil.rmtree(out_dir)
+    completed = subprocess.run(cmd, check=False, text=True, capture_output=True)
+    log_path = out_dir.parent / f"{out_dir.name}-command.json"
+    write_text(
+        log_path,
+        json.dumps(
+            {
+                "command": cmd,
+                "returncode": completed.returncode,
+                "stdout": completed.stdout[-4000:],
+                "stderr": completed.stderr[-4000:],
+                "generate": generate,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"Creative Production {kind} failed; see {log_path}")
+
+    review = out_dir / ("mood-board.html" if kind == "moodboard" else "review-board.html")
+    if not review.exists() and kind != "moodboard":
+        review = out_dir
+    update_artifact(
+        project,
+        f"ART-CP-{safe_artifact_suffix(out_dir.name)}",
+        "creative_production_run",
+        safe_rel(project, review),
+        "visual_plan",
+        status="done",
+        visibility="internal_only",
+        linked_work_items=work_id,
+        gate_status="PARTIAL_PASS",
+    )
+    register_agent_run(
+        project,
+        work_id=work_id,
+        role=f"creative_production_{kind}",
+        status="done",
+        input_files=safe_rel(project, brief_file),
+        output_files=safe_rel(project, out_dir),
+        summary=f"Creative Production {kind} {'generated' if generate else 'review-only'} run.",
+        next_action="Import with adco import-creative-production before visual gate.",
+    )
+    append_event(
+        project,
+        {
+            "event_id": f"EVT-CP-{safe_artifact_suffix(out_dir.name)}",
+            "event_type": "creative_production_run",
+            "created_at": now_iso(),
+            "kind": kind,
+            "work_id": work_id,
+            "run_dir": safe_rel(project, out_dir),
+            "generate": generate,
+        },
+    )
+    render_dashboard(project)
+    return out_dir, [safe_rel(project, log_path)]
+
+
+def load_json_file(path: Path) -> object:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def creative_manifest_paths(run_dir: Path, kind: str) -> dict[str, Path]:
+    if kind == "shots":
+        return {
+            "manifest": run_dir / "data/prompts-manifest.json",
+            "jobs": run_dir / "data/jobs.jsonl",
+            "review": run_dir / "review-board.html",
+            "widget": run_dir / "moodboard-widget-payload.json",
+        }
+    if kind == "moodboard":
+        return {
+            "manifest": run_dir / "data/stream.json",
+            "jobs": run_dir / "data/stream-static.json",
+            "review": run_dir / "mood-board.html",
+            "widget": run_dir / "data/stream.json",
+        }
+    return {
+        "manifest": run_dir / "prompts-manifest.json",
+        "jobs": run_dir / "jobs.jsonl",
+        "review": run_dir / "review-board.html",
+        "widget": run_dir / "moodboard-widget-payload.json",
+    }
+
+
+def prompt_items_from_manifest(path: Path, kind: str) -> list[dict[str, object]]:
+    if not path.exists():
+        return []
+    raw = load_json_file(path)
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    if isinstance(raw, dict):
+        if isinstance(raw.get("items"), list):
+            return [item for item in raw["items"] if isinstance(item, dict)]
+        if isinstance(raw.get("routes"), list):
+            return [item for item in raw["routes"] if isinstance(item, dict)]
+    return []
+
+
+def item_image_path(run_dir: Path, item: dict[str, object]) -> Path | None:
+    for key in ("output", "src", "image", "imageUrl", "previewImageUrl", "sourceImageUrl", "path", "url"):
+        value = str(item.get(key) or "").strip()
+        if not value or value.startswith("data:") or value.startswith("http"):
+            continue
+        value = value.lstrip("/")
+        path = run_dir / value
+        if path.exists() and path.suffix.lower() in GENERATED_IMAGE_SUFFIXES:
+            return path
+    return None
+
+
+def copy_creative_metadata(project: Path, run_dir: Path, kind: str, manifest_paths: dict[str, Path]) -> tuple[Path, list[str]]:
+    target_dir = project / "AD-creative/image_jobs/creative_production" / slug_text(run_dir.name)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    for label, source in manifest_paths.items():
+        if source.exists() and source.is_file():
+            target = target_dir / f"{label}{source.suffix or '.txt'}"
+            shutil.copy2(source, target)
+            copied.append(safe_rel(project, target))
+    summary = {
+        "kind": kind,
+        "source_run_dir": str(run_dir.resolve()),
+        "copied_files": copied,
+        "imported_at": now_iso(),
+        "visibility": "internal_only",
+    }
+    write_text(target_dir / "adco_import_summary.json", json.dumps(summary, ensure_ascii=False, indent=2))
+    return target_dir, copied
+
+
+def import_creative_production_run(
+    project: Path,
+    *,
+    run_dir: Path,
+    kind: str,
+    slot_prefix: str,
+    requirement_id: str = "",
+    reference_id: str = "pending",
+) -> tuple[list[str], Path]:
+    if kind not in CREATIVE_PRODUCTION_KINDS:
+        raise ValueError(f"unknown creative production kind: {kind}")
+    if not run_dir.exists():
+        raise FileNotFoundError(f"run dir not found: {run_dir}")
+
+    manifest_paths = creative_manifest_paths(run_dir, kind)
+    metadata_dir, copied = copy_creative_metadata(project, run_dir, kind, manifest_paths)
+    manifest_rel = safe_rel(project, metadata_dir / "manifest.json") if (metadata_dir / "manifest.json").exists() else ""
+    manifest = prompt_items_from_manifest(manifest_paths["manifest"], kind)
+    imported_asset_ids: list[str] = []
+
+    for index, item in enumerate(manifest, start=1):
+        image_path = item_image_path(run_dir, item)
+        if not image_path:
+            continue
+        slot_id = f"{slot_prefix}-{index:02d}"
+        prompt_ref = manifest_rel or safe_rel(project, metadata_dir)
+        label = str(item.get("title") or item.get("label") or item.get("id") or slot_id)
+        asset_id, _ = add_visual_asset(
+            project,
+            image_path,
+            slot_id,
+            requirement_id,
+            reference_id,
+            "generated_image",
+            "internal_only",
+            "PARTIAL_PASS",
+            "medium",
+            prompt_ref,
+            f"Imported from Creative Production {kind} run {run_dir.name}; route={label}; internal_only.",
+            False,
+        )
+        imported_asset_ids.append(asset_id)
+
+    checked_artifacts = []
+    run_artifact_id = f"ART-CP-IMPORT-{safe_artifact_suffix(run_dir.name)}"
+    review_path = manifest_paths.get("review")
+    if review_path and review_path.exists():
+        rel_review = safe_rel(project, review_path)
+    else:
+        rel_review = safe_rel(project, metadata_dir)
+    update_artifact(
+        project,
+        run_artifact_id,
+        "creative_production_import",
+        rel_review,
+        "visual_plan",
+        status="done",
+        visibility="internal_only",
+        linked_assets=";".join(imported_asset_ids),
+        gate_status="PARTIAL_PASS",
+    )
+    checked_artifacts.append(run_artifact_id)
+    append_gate(
+        project,
+        f"GATE-CP-IMPORT-{safe_artifact_suffix(run_dir.name)}",
+        "visual_plan",
+        "PARTIAL_PASS",
+        "70",
+        ";".join(checked_artifacts),
+        "",
+        "Creative Production outputs are internal_only until visual-quality-gate and human review pass.",
+        "",
+        "run_visual_quality_gate",
+        "ad_creative_operator",
+    )
+    append_event(
+        project,
+        {
+            "event_id": f"EVT-CP-IMPORT-{safe_artifact_suffix(run_dir.name)}",
+            "event_type": "creative_production_imported",
+            "created_at": now_iso(),
+            "kind": kind,
+            "run_dir": str(run_dir.resolve()),
+            "metadata_dir": safe_rel(project, metadata_dir),
+            "imported_assets": imported_asset_ids,
+        },
+    )
+    render_dashboard(project)
+    return imported_asset_ids, metadata_dir
+
+
+def latest_gate(project: Path, stage: str | None = None, gate_id: str | None = None) -> dict[str, str] | None:
+    _, gates = read_csv_rows(project / "AD-creative/orchestrator/gate_log.csv")
+    candidates = []
+    for gate in gates:
+        if gate_id and gate.get("gate_id") != gate_id:
+            continue
+        if stage and gate.get("stage") != stage:
+            continue
+        candidates.append(gate)
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda row: row.get("created_at", ""), reverse=True)[0]
+
+
+def has_gate(project: Path, gate_id: str) -> bool:
+    return latest_gate(project, gate_id=gate_id) is not None
+
+
+def derive_goal_phase(project: Path) -> str:
+    counts = read_counts(project)
+    if counts["source_events"] == 0 or counts["requirements"] == 0:
+        return "P0"
+    if counts["references"] == 0:
+        return "P1"
+    if counts["assets"] == 0 and not has_gate(project, "GATE-AUTO-VISUAL-QUALITY-001"):
+        return "P2"
+    if not has_gate(project, "GATE-AUTO-FILM-QUALITY-001"):
+        return "P3" if counts["assets"] == 0 else "P4"
+    if not has_gate(project, "GATE-AUTO-CLIENT-PACK-001"):
+        return "P5"
+    if not has_gate(project, "GATE-AUTO-HANDOFF-READINESS-001"):
+        return "P6"
+    return "P7"
+
+
+def gate_status_for_stages(project: Path, stages: tuple[str, ...]) -> str:
+    _, gates = read_csv_rows(project / "AD-creative/orchestrator/gate_log.csv")
+    statuses = [
+        gate.get("status", "")
+        for gate in gates
+        if gate.get("stage", "").strip() in stages and gate.get("status", "").strip()
+    ]
+    if not statuses:
+        return "missing"
+    if any(status == "BLOCKED" for status in statuses):
+        return "blocked"
+    if any(status == "PARTIAL_PASS" for status in statuses):
+        return "partial"
+    if any(status == "PASS" for status in statuses):
+        return "pass"
+    return statuses[-1].lower()
+
+
+def goal_lane_states(project: Path) -> dict[str, str]:
+    counts = read_counts(project)
+    return {
+        "brand_research": "active" if counts["requirements"] else "needs_material",
+        "image_function": "active" if counts["assets"] else "planned",
+        "gates": gate_status_for_stages(project, ("visual_review", "film_quality", "client_review", "final_delivery")),
+        "delivery": "ready" if has_gate(project, "GATE-AUTO-HANDOFF-READINESS-001") else "internal_only",
+    }
+
+
+def goal_completion_readiness(project: Path, errors: list[str], confirmations: list[dict[str, str]]) -> dict[str, object]:
+    _, gates = read_csv_rows(project / "AD-creative/orchestrator/gate_log.csv")
+    blocking_gates = [gate.get("gate_id", "") for gate in gates if gate.get("status") == "BLOCKED"]
+    required = [
+        "GATE-AUTO-VISUAL-QUALITY-001",
+        "GATE-AUTO-FILM-QUALITY-001",
+        "GATE-AUTO-CLIENT-PACK-001",
+        "GATE-AUTO-HANDOFF-READINESS-001",
+    ]
+    missing = [gate_id for gate_id in required if not has_gate(project, gate_id)]
+    ready = not errors and not confirmations and not blocking_gates and not missing
+    return {
+        "status": "READY_INTERNAL_REVIEW" if ready else "NOT_READY",
+        "missing_gates": missing,
+        "blocking_gates": blocking_gates,
+        "validation_errors": len(errors),
+        "pending_confirmations": len(confirmations),
+    }
+
+
+def goal_stop_reason(payload: dict[str, object]) -> str:
+    if payload["validation"] != "PASS":
+        return "VALIDATION_CHECK"
+    if payload["pending_confirmation_count"]:
+        return "WAITING_FOR_CONFIRMATION"
+    if payload["blocking_gap_count"]:
+        return "BLOCKING_GAP"
+    readiness = payload.get("completion_readiness", {})
+    if isinstance(readiness, dict) and readiness.get("blocking_gates"):
+        return "BLOCKED_GATE"
+    if payload["counts"]["source_events"] == 0:
+        return "NEEDS_MATERIAL"
+    return ""
+
+
 def item_title(row: dict[str, str], *keys: str, default: str = "-") -> str:
     for key in keys:
         value = row.get(key, "").strip()
@@ -2219,8 +2981,15 @@ def render_dashboard(project: Path) -> Path:
     _, visual_assets = read_csv_rows(project / "AD-creative/visual_assets/asset_manifest.csv")
     confirmations = parse_confirmation_rows(project / "AD-creative/handoff/待你确认.md")
     goals = goal_iteration_rows(project)
+    creative_runs = [
+        row
+        for row in artifacts
+        if row.get("artifact_type", "").strip() in {"creative_production_run", "creative_production_import"}
+    ]
 
     stage = project_stage(project)
+    phase = derive_goal_phase(project)
+    lane_states = goal_lane_states(project)
     validation_errors, _ = validate(project)
     validation_status = "PASS" if not validation_errors else "CHECK"
     active_work = [row for row in work_items if row.get("status", "").lower() not in {"done", "closed"}]
@@ -2239,6 +3008,10 @@ def render_dashboard(project: Path) -> Path:
         "references": references,
         "visualAssets": visual_assets,
         "goals": goals,
+        "creativeRuns": creative_runs,
+        "goalPhase": {"id": phase, "name": GOAL_PHASE_NAMES.get(phase, phase)},
+        "laneStates": lane_states,
+        "completionReadiness": goal_completion_readiness(project, validation_errors, confirmations),
         "confirmations": confirmations,
         "validationErrors": validation_errors,
         "nextAction": next_action,
@@ -2409,6 +3182,7 @@ tbody tr:hover, tbody tr.selected { background: #f3f7f8; }
 	      <button data-nav="sources"><span class="dot"></span>资料</button>
 	      <button data-nav="references"><span class="dot"></span>参考</button>
 	      <button data-nav="visualAssets"><span class="dot"></span>图片</button>
+	      <button data-nav="creativeRuns"><span class="dot"></span>创意运行</button>
 	      <button data-nav="goals"><span class="dot"></span>Goal</button>
 	      <button data-nav="artifacts"><span class="dot"></span>产物</button>
 	      <button data-nav="gates"><span class="dot"></span>关卡</button>
@@ -2423,6 +3197,7 @@ tbody tr:hover, tbody tr.selected { background: #f3f7f8; }
 	        <button data-view="sources">资料</button>
 	        <button data-view="references">参考</button>
 	        <button data-view="visualAssets">图片</button>
+	        <button data-view="creativeRuns">创意运行</button>
 	        <button data-view="goals">Goal</button>
 	        <button data-view="artifacts">产物</button>
 	        <button data-view="gates">关卡</button>
@@ -2435,6 +3210,7 @@ tbody tr:hover, tbody tr.selected { background: #f3f7f8; }
 	      <div class="metric"><small>工作项</small><strong>__WORK_COUNT__</strong></div>
 	      <div class="metric"><small>参考</small><strong>__REFERENCE_COUNT__</strong></div>
 	      <div class="metric"><small>图片</small><strong>__ASSET_COUNT__</strong></div>
+	      <div class="metric"><small>Goal阶段</small><strong>__GOAL_PHASE__</strong></div>
 	      <div class="metric"><small>Goal</small><strong>__GOAL_COUNT__</strong></div>
 	      <div class="metric"><small>产物</small><strong>__ARTIFACT_COUNT__</strong></div>
     </div>
@@ -2522,11 +3298,21 @@ const VIEWS = {
 	    title: "图片",
 	    rows: DATA.visualAssets,
 	    columns: [
-	      ["asset_id", "图片"], ["slot_id", "槽位"], ["status", "状态"], ["visibility", "可见性"], ["qa_status", "QA"]
+	      ["asset_id", "图片"], ["slot_id", "槽位"], ["status", "状态"], ["visibility", "可见性"], ["qa_status", "QA"], ["risk_level", "风险"], ["prompt_or_edit_ref", "Trace"]
 	    ],
 	    id: "asset_id",
 	    titleKey: "path",
 	    objectiveKey: "notes"
+	  },
+	  creativeRuns: {
+	    title: "创意运行",
+	    rows: DATA.creativeRuns,
+	    columns: [
+	      ["artifact_id", "运行"], ["artifact_type", "类型"], ["status", "状态"], ["path", "路径"], ["gate_status", "关卡"]
+	    ],
+	    id: "artifact_id",
+	    titleKey: "path",
+	    objectiveKey: "stage"
 	  },
 	  goals: {
 	    title: "Goal",
@@ -2711,6 +3497,7 @@ setView("work");
 	        "__WORK_COUNT__": str(counts["work_items"]),
 	        "__REFERENCE_COUNT__": str(counts["references"]),
 	        "__ASSET_COUNT__": str(counts["assets"]),
+	        "__GOAL_PHASE__": cell(phase),
 	        "__GOAL_COUNT__": str(len(goals)),
 	        "__ARTIFACT_COUNT__": str(counts["artifacts"]),
         "__VALIDATION_CLASS__": "pass" if validation_status == "PASS" else "check",
@@ -2743,6 +3530,7 @@ def audit_dashboard(project: Path) -> list[str]:
         "data-view=\"sources\"": "缺少资料 Tab。",
         "data-view=\"references\"": "缺少参考 Tab。",
         "data-view=\"visualAssets\"": "缺少图片 Tab。",
+        "data-view=\"creativeRuns\"": "缺少创意运行 Tab。",
         "data-view=\"goals\"": "缺少 Goal Tab。",
         "data-view=\"artifacts\"": "缺少产物 Tab。",
         "data-view=\"gates\"": "缺少关卡 Tab。",
@@ -2993,9 +3781,24 @@ def status_payload(project: Path) -> dict[str, object]:
     else:
         next_status = "READY_FOR_NEXT_GATE"
         next_action = "Run the next stage Gate or continue with ad-creative:next."
-    return {
+    goal = latest_goal_row(project)
+    phase = derive_goal_phase(project)
+    next_command = ""
+    if next_status == "NEEDS_MATERIAL":
+        next_command = f"adco run {project} --material <brief_file_or_folder>"
+    elif next_status == "READY_FOR_NEXT_GATE":
+        next_command = f"adco goal-run {project} --goal-id latest --max-steps 1"
+    elif next_status == "ACTIVE_WORK":
+        next_command = f"adco goal-run {project} --goal-id latest --max-steps 1"
+
+    payload: dict[str, object] = {
         "project": str(project),
         "stage": project_stage(project),
+        "phase": phase,
+        "phase_name": GOAL_PHASE_NAMES.get(phase, phase),
+        "goal_id": goal.get("goal_id") if goal else "",
+        "goal": goal or {},
+        "lane_states": goal_lane_states(project),
         "validation": "PASS" if not errors else "CHECK",
         "counts": counts,
         "active_work_count": len(active_work),
@@ -3011,7 +3814,11 @@ def status_payload(project: Path) -> dict[str, object]:
         "dashboard": str(dashboard) if dashboard.exists() else None,
         "council_report": str(report) if report.exists() else None,
         "errors": errors,
+        "next_command": next_command,
     }
+    payload["completion_readiness"] = goal_completion_readiness(project, errors, confirmations)
+    payload["stop_reason"] = goal_stop_reason(payload)
+    return payload
 
 
 def print_status(project: Path) -> None:
@@ -3019,6 +3826,8 @@ def print_status(project: Path) -> None:
     counts = payload["counts"]
     print(f"PROJECT={payload['project']}")
     print(f"STAGE={payload['stage']}")
+    print(f"PHASE={payload['phase']}")
+    print(f"GOAL_ID={payload['goal_id']}")
     print(f"VALIDATION={payload['validation']}")
     print(f"SOURCE_EVENTS={counts['source_events']}")
     print(f"REQUIREMENTS={counts['requirements']}")
@@ -3034,6 +3843,8 @@ def print_status(project: Path) -> None:
     print(f"GATES={counts['gates']}")
     print(f"NEXT_STATUS={payload['next_status']}")
     print(f"NEXT_ACTION={payload['next_action']}")
+    print(f"NEXT_COMMAND={payload['next_command']}")
+    print(f"STOP_REASON={payload['stop_reason'] or 'NONE'}")
     print(f"DASHBOARD={payload['dashboard'] or 'MISSING'}")
     print(f"COUNCIL_REPORT={payload['council_report'] or 'MISSING'}")
     errors = payload["errors"]
@@ -3041,6 +3852,137 @@ def print_status(project: Path) -> None:
         print("ERRORS:")
         for error in errors:
             print(f"- {error}")
+
+
+def all_source_event_ids(project: Path) -> list[str]:
+    _, rows = read_csv_rows(project / "AD-creative/orchestrator/source_events.csv")
+    return [row.get("source_event_id", "") for row in rows if row.get("source_event_id", "")]
+
+
+def goal_run_step(project: Path, *, allow_generate: bool) -> tuple[str, str, str]:
+    payload = status_payload(project)
+    stop = goal_stop_reason(payload)
+    if stop:
+        return "stop", stop, str(payload.get("next_action", ""))
+
+    counts = payload["counts"]
+    if isinstance(counts, dict) and counts.get("source_events", 0) and counts.get("requirements", 0) == 0:
+        source_ids = all_source_event_ids(project)
+        perform_intake(project, source_ids, "goal-run 自动执行本地 intake。")
+        render_handoff(project, "goal-run 自动执行本地 intake。", source_ids)
+        render_dashboard(project)
+        return "intake", "PASS", "Extracted requirements and gaps from registered materials."
+
+    if not (project / DASHBOARD_REL).exists():
+        dashboard = render_dashboard(project)
+        return "dashboard", "PASS", safe_rel(project, dashboard)
+
+    if not has_gate(project, "GATE-AUTO-VISUAL-QUALITY-001"):
+        status, findings, report = review_visual_quality(project)
+        render_dashboard(project)
+        return "visual_quality_gate", status, f"{safe_rel(project, report)} findings={len(findings)}"
+
+    if not has_gate(project, "GATE-AUTO-FILM-QUALITY-001"):
+        status, findings, report = review_film_quality(project)
+        render_dashboard(project)
+        return "film_quality_gate", status, f"{safe_rel(project, report)} findings={len(findings)}"
+
+    if not has_gate(project, "GATE-THREE-COUNCIL-READINESS"):
+        status, _, report = run_council(project)
+        render_dashboard(project)
+        return "council", status, safe_rel(project, report)
+
+    if not allow_generate:
+        return "stop", "GENERATION_NOT_ALLOWED", "goal-run will not trigger Creative Production generation without --allow-generate."
+
+    return "stop", "READY_FOR_HUMAN_REVIEW", "Deterministic internal actions are complete; choose search/generation/client-review next."
+
+
+def run_goal(
+    project: Path,
+    *,
+    goal_id: str,
+    max_steps: int,
+    allow_generate: bool,
+) -> dict[str, object]:
+    ensure_project(project)
+    goal = resolve_goal_row(project, goal_id)
+    if not goal:
+        created_goal_id = default_goal_id()
+        plan = render_goal_iteration_plan(
+            project,
+            goal_id=created_goal_id,
+            title="Auto-created goal-run",
+            objective="Run local deterministic ADCO goal steps until a safe stop condition.",
+            owner="Main Controller",
+        )
+        goal = resolve_goal_row(project, created_goal_id) or {"goal_id": created_goal_id, "path": safe_rel(project, plan)}
+
+    append_event(
+        project,
+        {
+            "event_id": f"EVT-GOAL-RUN-{safe_artifact_suffix(goal.get('goal_id', 'GOAL'))}-{datetime.now().strftime('%H%M%S')}",
+            "event_type": "goal_run_started",
+            "created_at": now_iso(),
+            "goal_id": goal.get("goal_id", ""),
+            "max_steps": max_steps,
+            "allow_generate": allow_generate,
+        },
+    )
+    steps: list[dict[str, str]] = []
+    stop_reason = ""
+    for index in range(1, max(1, max_steps) + 1):
+        action, status, detail = goal_run_step(project, allow_generate=allow_generate)
+        steps.append(
+            {
+                "step": str(index),
+                "action": action,
+                "status": status,
+                "detail": detail,
+            }
+        )
+        append_event(
+            project,
+            {
+                "event_id": f"EVT-GOAL-RUN-STEP-{index}-{datetime.now().strftime('%H%M%S')}",
+                "event_type": "goal_run_step",
+                "created_at": now_iso(),
+                "goal_id": goal.get("goal_id", ""),
+                "action": action,
+                "status": status,
+                "detail": detail,
+            },
+        )
+        if action == "stop" or status == "BLOCKED":
+            stop_reason = status
+            break
+    else:
+        stop_reason = "MAX_STEPS_REACHED"
+
+    dashboard = render_dashboard(project)
+    payload = status_payload(project)
+    if not stop_reason:
+        stop_reason = str(payload.get("stop_reason") or "READY_FOR_NEXT_STEP")
+    append_event(
+        project,
+        {
+            "event_id": f"EVT-GOAL-RUN-STOP-{datetime.now().strftime('%H%M%S')}",
+            "event_type": "goal_run_stopped",
+            "created_at": now_iso(),
+            "goal_id": goal.get("goal_id", ""),
+            "stop_reason": stop_reason,
+            "steps": steps,
+            "dashboard": safe_rel(project, dashboard),
+        },
+    )
+    return {
+        "project": str(project),
+        "goal_id": goal.get("goal_id", ""),
+        "stop_reason": stop_reason,
+        "steps": steps,
+        "dashboard": str(dashboard),
+        "status": payload,
+    }
 
 
 def inspect_pptx(path: Path) -> dict[str, int | bool | str]:
@@ -3977,6 +4919,130 @@ def command_goal_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_goal_run(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    result = run_goal(
+        project,
+        goal_id=args.goal_id,
+        max_steps=args.max_steps,
+        allow_generate=args.allow_generate,
+    )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"PROJECT={result['project']}")
+        print(f"GOAL_ID={result['goal_id']}")
+        print(f"STOP_REASON={result['stop_reason']}")
+        print(f"DASHBOARD={result['dashboard']}")
+        for step in result["steps"]:
+            print(f"STEP={step['step']} ACTION={step['action']} STATUS={step['status']} DETAIL={step['detail']}")
+    return 1 if result["stop_reason"] in {"VALIDATION_CHECK", "BLOCKED_GATE"} else 0
+
+
+def command_creative_doctor(args: argparse.Namespace) -> int:
+    status, issues, warnings, evidence = creative_doctor_report()
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "status": status,
+                    "issues": issues,
+                    "warnings": warnings,
+                    "evidence": evidence,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        print(f"CREATIVE_PRODUCTION={status}")
+        for item in evidence:
+            print(f"EVIDENCE={item}")
+        if warnings:
+            print("WARNINGS:")
+            for warning in warnings:
+                print(f"- {warning}")
+        if issues:
+            print("ISSUES:")
+            for issue in issues:
+                print(f"- {issue}")
+    return 0 if status == "PASS" else 1
+
+
+def command_creative_run(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    if args.generate and args.review_only:
+        print("CREATIVE_RUN=CHECK")
+        print("ERROR=Choose either --review-only or --generate, not both.")
+        return 1
+    base_asset = Path(args.base_asset).expanduser().resolve() if args.base_asset else None
+    try:
+        run_dir, logs = run_creative_production(
+            project,
+            kind=args.kind,
+            work_id=args.work_id,
+            brief_file=Path(args.brief_file).expanduser().resolve(),
+            base_asset=base_asset,
+            generate=args.generate,
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should surface bridge failure
+        print("CREATIVE_RUN=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    errors, stats = validate(project)
+    print("CREATIVE_RUN=PASS")
+    print(f"KIND={args.kind}")
+    print(f"RUN_DIR={run_dir}")
+    for log in logs:
+        print(f"LOG={log}")
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    if errors:
+        print("ERRORS:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    return 0
+
+
+def command_import_creative_production(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    try:
+        asset_ids, metadata_dir = import_creative_production_run(
+            project,
+            run_dir=Path(args.run_dir).expanduser().resolve(),
+            kind=args.kind,
+            slot_prefix=args.slot_prefix,
+            requirement_id=args.requirement_id,
+            reference_id=args.reference_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should surface import failure
+        print("CREATIVE_PRODUCTION_IMPORT=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    errors, stats = validate(project)
+    print("CREATIVE_PRODUCTION_IMPORT=PASS")
+    print(f"KIND={args.kind}")
+    print(f"METADATA_DIR={metadata_dir}")
+    print(f"IMPORTED_ASSETS={len(asset_ids)}")
+    if asset_ids:
+        print("ASSET_IDS=" + ";".join(asset_ids))
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    if errors:
+        print("ERRORS:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    return 0
+
+
 def command_init(args: argparse.Namespace) -> int:
     project = Path(args.project).expanduser().resolve()
     template = Path(args.template).expanduser().resolve() if args.template else TEMPLATE_ROOT
@@ -4729,6 +5795,32 @@ def command_visual_quality_gate(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_film_quality_gate(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    status, items, report = review_film_quality(project)
+    dashboard = render_dashboard(project)
+    errors, stats = validate(project)
+    print(f"FILM_QUALITY_GATE={status}")
+    print(f"REPORT={report}")
+    print(f"FINDINGS={len(items)}")
+    print(f"DASHBOARD={dashboard}")
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    if errors or status == "BLOCKED":
+        if items:
+            print("GATE_ISSUES:")
+            for item in items:
+                print(f"- {item}")
+        if errors:
+            print("ERRORS:")
+            for error in errors:
+                print(f"- {error}")
+        return 1
+    return 0
+
+
 def command_export_pptx(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     ensure_project(project)
@@ -4869,6 +5961,38 @@ def build_parser() -> argparse.ArgumentParser:
     goal_parser.add_argument("--owner", default="Main Controller", help="Goal owner.")
     goal_parser.add_argument("--force", action="store_true", help="Overwrite an existing goal plan with the same id.")
     goal_parser.set_defaults(func=command_goal_plan)
+
+    goal_run_parser = subparsers.add_parser("goal-run", help="Run deterministic local goal steps until a safe stop condition.")
+    goal_run_parser.add_argument("project", help="Project directory.")
+    goal_run_parser.add_argument("--goal-id", default="latest", help="Goal id or latest.")
+    goal_run_parser.add_argument("--max-steps", type=int, default=3, help="Maximum deterministic steps to execute.")
+    goal_run_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    goal_run_parser.add_argument("--allow-generate", action="store_true", help="Allow generation-capable goal steps. Defaults to off.")
+    goal_run_parser.set_defaults(func=command_goal_run)
+
+    creative_doctor_parser = subparsers.add_parser("creative-doctor", help="Diagnose optional Creative Production bridge availability.")
+    creative_doctor_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    creative_doctor_parser.set_defaults(func=command_creative_doctor)
+
+    creative_run_parser = subparsers.add_parser("creative-run", help="Create a Creative Production review-only or generation run.")
+    creative_run_parser.add_argument("project", help="Project directory.")
+    creative_run_parser.add_argument("--kind", choices=sorted(CREATIVE_PRODUCTION_KINDS), required=True)
+    creative_run_parser.add_argument("--work-id", required=True)
+    creative_run_parser.add_argument("--brief-file", required=True)
+    creative_run_parser.add_argument("--base-asset", default="", help="Optional source image for shots or ads.")
+    creative_run_parser.add_argument("--review-only", action="store_true", help="Write manifests/review surface without generation. This is the default.")
+    creative_run_parser.add_argument("--generate", action="store_true", help="Run Creative Production generation. Outputs remain internal_only.")
+    creative_run_parser.add_argument("--force", action="store_true", help="Replace output directory if needed.")
+    creative_run_parser.set_defaults(func=command_creative_run)
+
+    creative_import_parser = subparsers.add_parser("import-creative-production", help="Import Creative Production run metadata and images into ADCO manifests.")
+    creative_import_parser.add_argument("project", help="Project directory.")
+    creative_import_parser.add_argument("--run-dir", required=True)
+    creative_import_parser.add_argument("--kind", choices=sorted(CREATIVE_PRODUCTION_KINDS), required=True)
+    creative_import_parser.add_argument("--slot-prefix", default="CP")
+    creative_import_parser.add_argument("--requirement-id", default="")
+    creative_import_parser.add_argument("--reference-id", default="pending")
+    creative_import_parser.set_defaults(func=command_import_creative_production)
 
     run_parser = subparsers.add_parser("run", help="Initialize, register materials, render dashboard, run council.")
     run_parser.add_argument("project", help="Project directory.")
@@ -5039,6 +6163,13 @@ def build_parser() -> argparse.ArgumentParser:
     visual_quality_parser.add_argument("--min-long-edge", type=int, default=720)
     visual_quality_parser.add_argument("--min-short-edge", type=int, default=480)
     visual_quality_parser.set_defaults(func=command_visual_quality_gate)
+
+    film_quality_parser = subparsers.add_parser(
+        "film-quality-gate",
+        help="Audit cinematic/commercial quality before client-review packaging.",
+    )
+    film_quality_parser.add_argument("project", help="Project directory.")
+    film_quality_parser.set_defaults(func=command_film_quality_gate)
 
     export_pptx_parser = subparsers.add_parser("export-pptx", help="Create an editable internal PPTX draft and check it.")
     export_pptx_parser.add_argument("project", help="Project directory.")
