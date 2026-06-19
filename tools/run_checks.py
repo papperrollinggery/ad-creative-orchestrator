@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+sys.dont_write_bytecode = True
 
 from runtime_paths import source_root, template_root
 
@@ -20,12 +23,16 @@ SOURCE_MODE = SOURCE_ROOT is not None
 
 def run(args: list[str]) -> None:
     print("+ " + " ".join(args))
-    subprocess.run(args, cwd=ROOT, check=True)
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    subprocess.run(args, cwd=ROOT, check=True, env=env)
 
 
 def run_json(args: list[str]) -> None:
     print("+ " + " ".join(args) + " >/dev/null")
-    completed = subprocess.run(args, cwd=ROOT, check=True, text=True, capture_output=True)
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    completed = subprocess.run(args, cwd=ROOT, check=True, text=True, capture_output=True, env=env)
     if completed.stderr:
         print(completed.stderr, end="", file=sys.stderr)
     try:
@@ -33,6 +40,17 @@ def run_json(args: list[str]) -> None:
     except json.JSONDecodeError as exc:
         snippet = completed.stdout[:1000]
         raise AssertionError(f"Expected JSON output from {' '.join(args)}: {exc}\n{snippet}") from exc
+
+
+def cleanup_python_caches(root: Path) -> None:
+    pollution_dirs = ("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache")
+    for path in [found for name in pollution_dirs for found in root.rglob(name)]:
+        if ".git" not in path.parts and path.exists():
+            shutil.rmtree(path)
+    for pattern in ("*.pyc", "*.pyo", ".DS_Store"):
+        for path in root.rglob(pattern):
+            if ".git" not in path.parts and path.exists():
+                path.unlink()
 
 
 def main() -> int:
@@ -117,6 +135,10 @@ def main() -> int:
         run([python, *operator, "init", str(initialized)])
         run_json([python, *operator, "validate", str(initialized), "--json"])
         run([python, *operator, "sample", str(sample)])
+        run([python, *operator, "profile-analyze", str(sample), "--brand", "NOVA Trail", "--company", "NOVA Client"])
+        run_json([python, *operator, "profile-analyze", str(sample), "--brand", "NOVA Trail", "--company", "NOVA Client", "--json"])
+        run([python, *operator, "hygiene", str(sample), "--strict"])
+        run_json([python, *operator, "hygiene", str(sample), "--json"])
         run([python, *operator, "goal-run", str(sample), "--goal-id", "latest", "--max-steps", "1"])
         run_json([python, *operator, "goal-run", str(sample), "--goal-id", "latest", "--max-steps", "1", "--json"])
         run([python, *operator, "film-quality-gate", str(sample)])
@@ -136,9 +158,13 @@ def main() -> int:
             run([python, *operator, "audit-dashboard", str(qingling), "--render"])
         run([python, *operator, "audit-dashboard", str(sample), "--render"])
         run_json([python, *operator, "audit-dashboard", str(sample), "--render", "--json"])
+    cleanup_python_caches(ROOT)
     print("RUN_CHECKS=PASS")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    finally:
+        cleanup_python_caches(ROOT)

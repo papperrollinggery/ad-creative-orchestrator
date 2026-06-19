@@ -68,7 +68,8 @@ Default limits:
 max active worker/reviewer threads at one time: 3
 max broad council threads without explicit user approval: 5
 main thread is the only integration owner
-workers default to read-only unless their writable files are listed
+execution workers own exact write_scope
+read-only lanes are only research/review/cold-review
 workers must not export final PPT/PDF
 ```
 
@@ -271,6 +272,9 @@ adco validate <project_dir>
 adco check
 adco run <project_dir> --material <materials_path>
 adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
+adco thread-plan <project_dir> --title <goal_title> --objective <goal_objective> --roles brand_client,copy_creative,qa_review
+adco profile-analyze <project_dir> --source-id <SRC-ID> --brand <brand> --company <company>
+adco hygiene <project_dir>
 adco intake <project_dir>
 adco add-reference <project_dir> --url <https_url> --title <title>
 adco search-quality-gate <project_dir>
@@ -313,6 +317,9 @@ adco validate <project_dir> --json
 adco check
 adco run <project_dir> --material <materials_path>
 adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
+adco thread-plan <project_dir> --title <goal_title> --objective <goal_objective> --roles brand_client,copy_creative,qa_review
+adco profile-analyze <project_dir> --source-id <SRC-ID> --brand <brand> --company <company>
+adco hygiene <project_dir>
 adco-check
 adco-validate <project_dir>
 make dist-check
@@ -376,6 +383,90 @@ external upload of client materials
 destructive overwrite or delete
 AI image client visibility
 global skill install
+```
+
+### ad-creative:thread-plan
+
+Use when a project needs Codex Threads as controlled execution lanes.
+
+Run:
+
+```text
+adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
+adco thread-plan <project_dir> --title <goal_title> --objective <goal_objective> --roles brand_client,copy_creative,qa_review
+```
+
+This creates:
+
+```text
+AD-creative/orchestrator/thread_lane_plan.md
+AD-creative/orchestrator/thread_cleanup_<work_id>.md
+AD-creative/agents/role_briefs/
+AD-creative/agents/thread_prompts/<work_id>/
+AD-creative/agents/receipts/<work_id>/
+thread_registry.csv planned rows
+agent_runs.csv planned rows
+```
+
+Rules:
+
+```text
+Use the generated prompts to create or reuse Codex Threads.
+Keep at most 3 active worker/reviewer threads by default.
+Workers return receipts; the main/control thread merges only accepted results.
+After receipt reconciliation, archive the worker and update thread_registry.csv.
+Client-visible material must not mention prompts, threads, workers, lane plans, or execution steps.
+```
+
+### ad-creative:profile-analyze
+
+Use when meeting notes, transcripts, client discussions, or brand/company background should guide research or strategy.
+
+Run:
+
+```text
+adco profile-analyze <project_dir> --source-id <SRC-ID> --brand <brand> --company <company>
+```
+
+This creates or updates:
+
+```text
+AD-creative/orchestrator/profile_knowledge/profile_subjects.csv
+AD-creative/orchestrator/profile_knowledge/meeting_voice_map.csv
+AD-creative/orchestrator/profile_knowledge/profile_insights.csv
+AD-creative/orchestrator/profile_knowledge/profile_conflicts.csv
+AD-creative/orchestrator/profile_knowledge/profile_current_truth.md
+AD-creative/handoff/画像分析简报.md
+```
+
+Rules:
+
+```text
+Every profile claim should tie back to source_event evidence where possible.
+Decision power, influence, personality, preference, and concern labels are candidate judgments until confirmed.
+Do not turn internal profile analysis into client-visible claims unless separately approved.
+If stakeholders disagree, record the disagreement in profile_conflicts.csv and propose a reconciliation path.
+Research, strategy, copy, and visual lanes should read profile_current_truth.md before making assumptions about the client or brand.
+```
+
+### ad-creative:hygiene
+
+Use before final status, after Codex Threads were used, or whenever the user reports dirty workspace / stale execution environment.
+
+Run:
+
+```text
+adco hygiene <project_dir>
+```
+
+Rules:
+
+```text
+This command is read-only; do not delete user materials automatically.
+Treat git tracked changes as intentional work until reviewed, not something to reset.
+Treat __pycache__, .pytest_cache, *.pyc, unexpected untracked files, and unarchived thread rows as cleanup issues.
+Use /tmp or AD-creative/workspaces/<work_id>/ for validation and scratch output.
+After validation, clean Python caches and archive consumed Codex Threads before final status.
 ```
 
 ### ad-creative:start
@@ -481,6 +572,11 @@ AD-creative/orchestrator/artifact_index.csv
 AD-creative/orchestrator/gate_log.csv
 AD-creative/orchestrator/version_map.csv
 AD-creative/orchestrator/thread_registry.csv
+AD-creative/orchestrator/profile_knowledge/profile_subjects.csv
+AD-creative/orchestrator/profile_knowledge/meeting_voice_map.csv
+AD-creative/orchestrator/profile_knowledge/profile_insights.csv
+AD-creative/orchestrator/profile_knowledge/profile_conflicts.csv
+AD-creative/orchestrator/profile_knowledge/profile_current_truth.md
 AD-creative/handoff/项目看板.md
 AD-creative/handoff/待你确认.md
 ```

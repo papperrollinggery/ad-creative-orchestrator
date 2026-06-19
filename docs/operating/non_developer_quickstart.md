@@ -43,6 +43,7 @@ adco support-bundle <项目目录> --json
 adco audit-dashboard <项目目录> --render --json
 adco demo
 adco run <项目目录> --material <资料文件或文件夹>
+adco profile-analyze <项目目录> --source-id <SRC-ID> --brand <品牌> --company <公司>
 adco open-dashboard <项目目录>
 adco docs
 ```
@@ -60,6 +61,8 @@ AD-creative/gates/GATE-AUTO-CLIENT-PACK-001_report.md
 AD-creative/orchestrator/requirements.csv
 AD-creative/orchestrator/gaps.csv
 AD-creative/orchestrator/current_truth.md
+AD-creative/orchestrator/profile_knowledge/profile_current_truth.md
+AD-creative/handoff/画像分析简报.md
 AD-creative/gates/THREE-COUNCIL-READINESS_report.md
 ```
 
@@ -97,9 +100,37 @@ Goal 模式执行：
 
 ```text
 adco goal-plan <项目目录> --title <目标标题> --objective <目标内容>
+adco thread-plan <项目目录> --title <目标标题> --objective <目标内容> --roles brand_client,copy_creative,qa_review
 ```
 
-后续 Gate 如果没有有效反驳性议会记录，最高只会给 `PARTIAL_PASS`。
+`thread-plan` 只给 Codex 主控生成内部线程分工包，不会自动发送客户稿。后续 Gate 如果没有有效反驳性议会记录，最高只会给 `PARTIAL_PASS`。
+
+Thread 执行规则：
+
+```text
+主控线程只负责拆分、分派、集成、验证、清理、汇报。
+execution_worker 负责明确范围内的实现、文档修改、素材和产物制作。
+read_only 只用于 explorer / reviewer / research / cold-review。
+execution_worker 必须先写清 exact write_scope。
+每个 execution_worker 返回 files_changed、validation、dirty-state impact、cleanup actions。
+主控消费 receipt 并合并后，归档对应 worker thread。
+```
+
+会议画像分析：
+
+```text
+adco profile-analyze <项目目录> --source-id <SRC-ID> --brand <品牌> --company <公司>
+```
+
+它会回答：谁说了什么、谁更可能拍板、谁影响大、他们想要什么、担心什么、品牌/公司有什么特点、分歧该怎么合。结论默认只是候选判断，需要你确认后才当最终事实。
+
+工作区整洁检查：
+
+```text
+adco hygiene <项目目录>
+```
+
+它只检查不删除，主要看有没有临时缓存、未跟踪文件、没收尾的 Thread 记录。
 
 不要手动改：
 
@@ -147,6 +178,7 @@ adco next <项目目录>
 ```text
 adco council <项目目录> --render-dashboard
 adco intake <项目目录>
+adco profile-analyze <项目目录> --source-id <SRC-ID> --brand <品牌> --company <公司>
 adco search-quality-gate <项目目录>
 adco reference-pack-gate <项目目录>
 adco import-imagegen <项目目录> --slot-id <槽位> --selected
@@ -158,6 +190,7 @@ adco audit-dashboard <项目目录> --render
 adco audit-dashboard <项目目录> --render --json
 adco open-dashboard <项目目录> --no-open
 adco validate <项目目录>
+adco hygiene <项目目录>
 ```
 
 通过标准：

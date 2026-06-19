@@ -128,6 +128,9 @@ adco open-dashboard <项目目录>
 adco audit-dashboard <项目目录> --render --json
 adco run <项目目录> --material <资料文件或文件夹>
 adco goal-plan <项目目录> --title "<目标标题>" --objective "<目标内容>"
+adco thread-plan <项目目录> --title "<目标标题>" --objective "<目标内容>" --roles brand_client,copy_creative,qa_review
+adco profile-analyze <项目目录> --source-id <SRC-ID> --brand "<品牌>" --company "<公司>"
+adco hygiene <项目目录>
 adco goal-run <项目目录> --goal-id latest --max-steps 3
 adco creative-doctor
 adco creative-run <项目目录> --kind ads --work-id <工作ID> --brief-file <brief.md>
@@ -276,6 +279,9 @@ adco validate <项目目录> --json
 adco sample <项目目录>
 adco status <项目目录>
 adco goal-plan <项目目录> --title <目标标题> --objective <目标内容>
+adco thread-plan <项目目录> --title <目标标题> --objective <目标内容> --roles brand_client,copy_creative,qa_review
+adco profile-analyze <项目目录> --source-id <SRC-ID> --brand <品牌> --company <公司>
+adco hygiene <项目目录>
 adco intake <项目目录>
 adco add-reference <项目目录> --url <https链接> --title <标题>
 adco search-quality-gate <项目目录>
@@ -329,6 +335,42 @@ Goal 模式推进：
 没有反对意见、反驳路径、修订决议时，Gate 最高只能 PARTIAL_PASS
 ```
 
+Codex Thread 执行层：
+
+```text
+adco goal-plan <项目目录> --title <目标标题> --objective <目标内容>
+adco thread-plan <项目目录> --title <目标标题> --objective <目标内容> --roles brand_client,copy_creative,qa_review
+```
+
+`thread-plan` 只生成内部控制面：`thread_lane_plan.md`、role briefs、worker prompts、receipt 占位、`thread_registry.csv` 计划行和 cleanup 计划。主控线程先用这些 prompt 创建/复用 Codex Threads，收到 receipt 后再合并、验证、归档；客户可见 PPT/PDF/HTML 不得出现 prompt、thread、worker、lane plan 或执行步骤语言。
+
+ThreadOps 分工规则：
+
+```text
+主控线程只负责拆分、分派、集成、验证、清理、汇报。
+execution_worker 负责明确范围内的实现、文档修改、素材和产物制作。
+read_only 只用于 explorer / reviewer / research / cold-review。
+execution_worker 必须先写清 exact write_scope。
+每个 execution_worker 返回 files_changed、validation、dirty-state impact、cleanup actions。
+主控消费 receipt 并合并后，归档对应 worker thread。
+```
+
+会议 / 客户画像分析：
+
+```text
+adco profile-analyze <项目目录> --source-id <SRC-ID> --brand <品牌> --company <公司>
+```
+
+`profile-analyze` 用会议记录和客户资料整理人物画像、品牌画像、公司特点、需求权重、决策权、影响力、分歧和融合建议。它会写入 `AD-creative/orchestrator/profile_knowledge/`，并生成 `AD-creative/handoff/画像分析简报.md`。所有结论默认是 `candidate`，需要用户或客户确认后才能升级为稳定事实。
+
+工作区整洁检查：
+
+```text
+adco hygiene <项目目录>
+```
+
+`hygiene` 只检查不删除。它会指出 git 改动、未跟踪文件、`__pycache__` / `.pytest_cache` / `*.pyc` 污染、未归档 Thread 记录，并给出清理计划。任务验证和临时项目应放在 `/tmp` 或 `AD-creative/workspaces/<work_id>/`，不要污染仓库根目录。
+
 如果是新广告项目：
 
 ```text
@@ -376,6 +418,9 @@ Goal Runner: goal-run deterministic safe-stop PASS
 sample project generator: adco sample / run_checks temp sample PASS
 demo command: adco demo PASS
 goal-plan 执行记录生成: examples/moncler_protocol_dry_run / examples/simulated_qingling_outdoor_launch PASS
+thread-plan 执行层生成: lane plan / role briefs / prompts / receipts / registry rows / temp project VALIDATION=PASS
+profile-analyze 画像知识库: participant / brand / company / decision / conflict profile PASS
+workspace hygiene: cache pollution detection PASS / run_checks cache cleanup PASS
 反驳性议会 Gate 策略: 无记录时 PASS→PARTIAL_PASS / 有记录时 PASS 回归测试 PASS
 操作台 Goal Tab: audit-dashboard PASS
 Goal/Gate 回归测试: adco check PASS

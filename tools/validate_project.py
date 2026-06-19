@@ -35,6 +35,113 @@ THREAD_REGISTRY_REQUIRED_FIELDS = [
     "cleanup_action",
     "notes",
 ]
+THREADOPS_REGISTRY_FIELDS = [
+    *THREAD_REGISTRY_REQUIRED_FIELDS,
+    "goal_id",
+    "mode",
+    "environment",
+    "workspace_path",
+    "write_scope",
+    "professional_identity",
+    "receipt_path",
+    "receipt_status",
+    "reconciliation_status",
+    "assigned_at",
+    "returned_at",
+    "reconciled_at",
+    "archived_at",
+    "cleanup_reason",
+    "last_seen_at",
+    "duplicate_of",
+]
+THREADOPS_EXECUTION_MODE = "execution_worker"
+THREADOPS_READ_ONLY_MODES = {"research", "read_only_review", "cold_review"}
+THREADOPS_RECEIPT_ONLY_SCOPES = {"", "receipt only", "receipt_only", "none", "not_applicable"}
+THREADOPS_AGENT_RUN_FIELDS = [
+    "run_id",
+    "work_id",
+    "agent_role",
+    "status",
+    "started_at",
+    "completed_at",
+    "input_files",
+    "output_files",
+    "gate_id",
+    "summary",
+    "next_action",
+    "thread_id",
+    "lane_id",
+    "receipt_path",
+    "proof_status",
+    "reconciliation_status",
+]
+PROFILE_SUBJECT_FIELDS = [
+    "subject_id",
+    "subject_type",
+    "name",
+    "role_or_title",
+    "organization",
+    "source_event_ids",
+    "first_seen_at",
+    "last_seen_at",
+    "profile_status",
+    "influence_level",
+    "decision_power",
+    "traits",
+    "needs",
+    "preferences",
+    "concerns",
+    "notes",
+]
+PROFILE_VOICE_FIELDS = [
+    "voice_id",
+    "source_event_id",
+    "file_path",
+    "speaker",
+    "utterance",
+    "need_signal",
+    "preference_signal",
+    "concern_signal",
+    "decision_signal",
+    "influence_level",
+    "decision_power",
+    "evidence_quote",
+    "confidence",
+    "status",
+]
+PROFILE_INSIGHT_FIELDS = [
+    "insight_id",
+    "subject_id",
+    "subject_type",
+    "source_event_id",
+    "file_path",
+    "insight_type",
+    "statement",
+    "evidence_quote",
+    "confidence",
+    "status",
+    "priority",
+    "linked_requirement_ids",
+    "supersedes_insight_id",
+    "created_at",
+    "updated_at",
+]
+PROFILE_CONFLICT_FIELDS = [
+    "conflict_id",
+    "topic",
+    "source_event_ids",
+    "subject_ids",
+    "conflict_summary",
+    "recommended_resolution",
+    "status",
+    "confidence",
+    "evidence_quotes",
+    "created_at",
+    "updated_at",
+]
+PROFILE_STATUS_VALUES = {"candidate", "confirmed", "conflicted", "deprecated"}
+PROFILE_SUBJECT_TYPES = {"participant", "brand", "company", "client_group"}
+PROFILE_DECISION_LEVELS = {"high", "medium", "low", "unknown", ""}
 
 
 REQUIRED_FILES = [
@@ -92,6 +199,28 @@ def load_csv(path: Path, errors: list[str]) -> list[dict[str, str]]:
     return rows
 
 
+def csv_fieldnames(path: Path) -> list[str]:
+    try:
+        with path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            return list(reader.fieldnames or [])
+    except FileNotFoundError:
+        return []
+
+
+def load_optional_csv(path: Path, errors: list[str]) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    return load_csv(path, errors)
+
+
+def check_required_columns(errors: list[str], label: str, path: Path, required: list[str]) -> None:
+    fields = csv_fieldnames(path)
+    missing = [field for field in required if field not in fields]
+    if missing:
+        errors.append(f"{label} missing columns: " + ", ".join(missing))
+
+
 def check_structured_files(project: Path, errors: list[str]) -> None:
     for path in project.rglob("*"):
         if path.suffix == ".jsonl":
@@ -109,6 +238,51 @@ def check_structured_files(project: Path, errors: list[str]) -> None:
                     json.load(handle)
             except json.JSONDecodeError as exc:
                 errors.append(f"json parse error: {path}: {exc}")
+
+
+def parse_markdown_table_after_heading(text: str, heading: str) -> list[dict[str, str]]:
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() != heading:
+            continue
+        table_lines: list[str] = []
+        for candidate in lines[index + 1 :]:
+            stripped = candidate.strip()
+            if not stripped:
+                if table_lines:
+                    break
+                continue
+            if stripped.startswith("|"):
+                table_lines.append(stripped)
+            elif table_lines:
+                break
+        if len(table_lines) < 2:
+            return []
+        headers = [cell.strip() for cell in table_lines[0].strip("|").split("|")]
+        rows: list[dict[str, str]] = []
+        for raw_row in table_lines[2:]:
+            values = [cell.strip() for cell in raw_row.strip("|").split("|")]
+            values.extend([""] * max(0, len(headers) - len(values)))
+            rows.append(dict(zip(headers, values)))
+        return rows
+    return []
+
+
+def check_threadops_lane_contract(errors: list[str], owner: str, row: dict[str, str]) -> None:
+    mode = row.get("mode", "").strip()
+    environment = row.get("environment", "").strip()
+    write_scope = row.get("write_scope", "").strip()
+    normalized_scope = write_scope.lower().replace("-", "_")
+    if mode == THREADOPS_EXECUTION_MODE:
+        if environment == "read_only":
+            errors.append(f"{owner} execution worker uses read_only environment")
+        if normalized_scope in THREADOPS_RECEIPT_ONLY_SCOPES:
+            errors.append(f"{owner} execution worker missing exact write_scope")
+    elif mode in THREADOPS_READ_ONLY_MODES:
+        if environment != "read_only":
+            errors.append(f"{owner} read-only lane uses non-read_only environment {environment}")
+        if normalized_scope not in THREADOPS_RECEIPT_ONLY_SCOPES:
+            errors.append(f"{owner} read-only lane has writable write_scope {write_scope}")
 
 
 def id_set(rows: Iterable[dict[str, str]], key: str) -> set[str]:
@@ -307,6 +481,12 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
     reference_cards = load_csv(ad_root / "references/reference_cards.csv", errors)
     asset_manifest = load_csv(ad_root / "visual_assets/asset_manifest.csv", errors)
     feedback_rows = load_csv(ad_root / "feedback/feedback_map.csv", errors)
+    profile_root = ad_root / "orchestrator/profile_knowledge"
+    profile_enabled = profile_root.exists()
+    profile_subjects = load_optional_csv(profile_root / "profile_subjects.csv", errors)
+    profile_voices = load_optional_csv(profile_root / "meeting_voice_map.csv", errors)
+    profile_insights = load_optional_csv(profile_root / "profile_insights.csv", errors)
+    profile_conflicts = load_optional_csv(profile_root / "profile_conflicts.csv", errors)
 
     source_ids = id_set(source_events, "source_event_id")
     req_ids = id_set(requirements, "requirement_id")
@@ -315,6 +495,7 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
     gate_ids = id_set(gate_log, "gate_id")
     reference_ids = id_set(reference_cards, "reference_id")
     asset_ids = id_set(asset_manifest, "asset_id")
+    profile_subject_ids = id_set(profile_subjects, "subject_id")
 
     registry_path = ad_root / "orchestrator/thread_registry.csv"
     try:
@@ -330,6 +511,61 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
         errors.append(
             "thread_registry missing columns: " + ", ".join(missing_registry_fields)
         )
+    agent_runs_path = ad_root / "orchestrator/agent_runs.csv"
+    try:
+        with agent_runs_path.open(newline="", encoding="utf-8") as handle:
+            agent_runs_reader = csv.DictReader(handle)
+            agent_runs_fields = list(agent_runs_reader.fieldnames or [])
+    except FileNotFoundError:
+        agent_runs_fields = []
+
+    threadops_enabled = bool(thread_registry_fields) or (
+        ad_root / "orchestrator/thread_lane_plan.md"
+    ).exists()
+    if threadops_enabled:
+        missing_threadops_registry_fields = [
+            field for field in THREADOPS_REGISTRY_FIELDS if field not in registry_fields
+        ]
+        if missing_threadops_registry_fields:
+            errors.append(
+                "thread_registry missing ThreadOps columns: "
+                + ", ".join(missing_threadops_registry_fields)
+            )
+        missing_threadops_agent_fields = [
+            field for field in THREADOPS_AGENT_RUN_FIELDS if field not in agent_runs_fields
+        ]
+        if missing_threadops_agent_fields:
+            errors.append(
+                "agent_runs missing ThreadOps columns: "
+                + ", ".join(missing_threadops_agent_fields)
+            )
+        for row in thread_registry_fields:
+            owner = f"thread_registry {row.get('thread_id', '').strip() or '<missing thread_id>'}"
+            check_threadops_lane_contract(errors, owner, row)
+        lane_plan_path = ad_root / "orchestrator/thread_lane_plan.md"
+        if lane_plan_path.exists():
+            lane_rows = parse_markdown_table_after_heading(
+                lane_plan_path.read_text(encoding="utf-8"),
+                "## Lane Map",
+            )
+            for row in lane_rows:
+                owner = f"thread_lane_plan {row.get('lane_id', '').strip() or '<missing lane_id>'}"
+                check_threadops_lane_contract(errors, owner, row)
+
+    if profile_enabled:
+        profile_files = {
+            "profile_subjects": (profile_root / "profile_subjects.csv", PROFILE_SUBJECT_FIELDS),
+            "meeting_voice_map": (profile_root / "meeting_voice_map.csv", PROFILE_VOICE_FIELDS),
+            "profile_insights": (profile_root / "profile_insights.csv", PROFILE_INSIGHT_FIELDS),
+            "profile_conflicts": (profile_root / "profile_conflicts.csv", PROFILE_CONFLICT_FIELDS),
+        }
+        for label, (path, required_fields) in profile_files.items():
+            if not path.exists():
+                errors.append(f"missing profile knowledge file: {path.relative_to(project)}")
+            else:
+                check_required_columns(errors, label, path, required_fields)
+        if not (profile_root / "profile_current_truth.md").exists():
+            errors.append("missing profile knowledge file: AD-creative/orchestrator/profile_knowledge/profile_current_truth.md")
 
     for req in requirements:
         req_id = req.get("requirement_id", "")
@@ -369,6 +605,53 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
         gate_id = run.get("gate_id", "").strip()
         if gate_id and gate_id not in gate_ids:
             errors.append(f"agent_run {run_id} unknown gate {gate_id}")
+
+    for subject in profile_subjects:
+        subject_id = subject.get("subject_id", "")
+        subject_type = subject.get("subject_type", "").strip()
+        if subject_type and subject_type not in PROFILE_SUBJECT_TYPES:
+            errors.append(f"profile_subject {subject_id} invalid subject_type {subject_type}")
+        status = subject.get("profile_status", "").strip()
+        if status and status not in PROFILE_STATUS_VALUES:
+            errors.append(f"profile_subject {subject_id} invalid profile_status {status}")
+        for level_key in ["influence_level", "decision_power"]:
+            level = subject.get(level_key, "").strip()
+            if level not in PROFILE_DECISION_LEVELS:
+                errors.append(f"profile_subject {subject_id} invalid {level_key} {level}")
+        check_refs(errors, f"profile_subject {subject_id}", subject.get("source_event_ids"), source_ids, "source_event")
+
+    for voice in profile_voices:
+        voice_id = voice.get("voice_id", "")
+        source_id = voice.get("source_event_id", "").strip()
+        if source_id and source_id not in source_ids:
+            errors.append(f"profile_voice {voice_id} unknown source_event {source_id}")
+        rel_path = voice.get("file_path", "").strip()
+        if rel_path and not Path(rel_path).is_absolute() and not (project / rel_path).exists():
+            errors.append(f"profile_voice {voice_id} missing file_path {rel_path}")
+        status = voice.get("status", "").strip()
+        if status and status not in PROFILE_STATUS_VALUES:
+            errors.append(f"profile_voice {voice_id} invalid status {status}")
+
+    for insight in profile_insights:
+        insight_id = insight.get("insight_id", "")
+        subject_id = insight.get("subject_id", "").strip()
+        if subject_id and subject_id not in profile_subject_ids:
+            errors.append(f"profile_insight {insight_id} unknown subject {subject_id}")
+        source_id = insight.get("source_event_id", "").strip()
+        if source_id and source_id not in source_ids:
+            errors.append(f"profile_insight {insight_id} unknown source_event {source_id}")
+        status = insight.get("status", "").strip()
+        if status and status not in PROFILE_STATUS_VALUES:
+            errors.append(f"profile_insight {insight_id} invalid status {status}")
+        check_refs(errors, f"profile_insight {insight_id}", insight.get("linked_requirement_ids"), req_ids, "requirement")
+
+    for conflict in profile_conflicts:
+        conflict_id = conflict.get("conflict_id", "")
+        status = conflict.get("status", "").strip()
+        if status and status not in PROFILE_STATUS_VALUES:
+            errors.append(f"profile_conflict {conflict_id} invalid status {status}")
+        check_refs(errors, f"profile_conflict {conflict_id}", conflict.get("source_event_ids"), source_ids, "source_event")
+        check_refs(errors, f"profile_conflict {conflict_id}", conflict.get("subject_ids"), profile_subject_ids, "profile_subject")
 
     for gate in gate_log:
         gate_id = gate.get("gate_id", "")
@@ -422,6 +705,9 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
         "references": len(reference_cards),
         "assets": len(asset_manifest),
         "feedback": len(feedback_rows),
+        "profile_subjects": len(profile_subjects),
+        "profile_insights": len(profile_insights),
+        "profile_conflicts": len(profile_conflicts),
         "errors": len(errors),
     }
     return errors, stats

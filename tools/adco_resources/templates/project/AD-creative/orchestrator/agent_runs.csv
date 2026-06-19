@@ -1,1 +1,1 @@
-run_id,work_id,agent_role,status,started_at,completed_at,input_files,output_files,gate_id,summary,next_action
+run_id,work_id,agent_role,status,started_at,completed_at,input_files,output_files,gate_id,summary,next_action,thread_id,lane_id,receipt_path,proof_status,reconciliation_status

@@ -1,1 +1,1 @@
-thread_id,title,role,lane_id,work_id,lifecycle_state,pinned,archived,created_at,updated_at,cleanup_action,notes
+thread_id,title,role,lane_id,work_id,lifecycle_state,pinned,archived,created_at,updated_at,cleanup_action,notes,goal_id,professional_identity,receipt_path,receipt_status,reconciliation_status,assigned_at,returned_at,reconciled_at,archived_at,cleanup_reason,last_seen_at,duplicate_of

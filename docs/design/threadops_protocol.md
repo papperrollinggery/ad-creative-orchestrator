@@ -36,7 +36,16 @@ Thread = temporary execution lane for one or more isolated work items
 Gate = acceptance decision before state advances
 ```
 
-The master thread owns the Goal. Worker threads receive scoped subgoals only.
+The master/control thread owns orchestration only: decompose, assign, integrate, validate, clean up, and report. Execution workers own scoped implementation or artifact production inside their declared write scope. Read-only lanes are limited to explorer, reviewer, research, and cold-review work.
+
+Prepare the local control plane with:
+
+```text
+adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
+adco thread-plan <project_dir> --title <goal_title> --objective <goal_objective> --roles brand_client,copy_creative,qa_review
+```
+
+`thread-plan` creates internal-only lane plans, role briefs, worker prompts, receipt placeholders, registry rows, and cleanup proof scaffolding. It does not create live Codex Threads by itself; the master thread uses the generated prompts to create or reuse threads.
 
 ## Thread Roles
 
@@ -44,7 +53,7 @@ The master thread owns the Goal. Worker threads receive scoped subgoals only.
 |---|---|---|---|---|
 | master | Goal owner, decomposition, reconciliation, final answer | All project files, but only minimal necessary edits | Goal complete or blocked by explicit gate | Updated truth, gates, handoff, validation status |
 | explorer | Read-only research or repo inspection | None | Findings are enough to choose next move | Evidence, candidate changes, risks |
-| worker | Produce one artifact or file-scoped change | Exact declared files or directories only | Required output contract satisfied or blocked | Files, summary, evidence, manifest/index updates |
+| worker | Produce one artifact or file-scoped change | Exact declared files or directories only | Required output contract satisfied or blocked | Files changed, validation, dirty-state impact, cleanup actions, evidence, manifest/index updates |
 | reviewer | Independent review of changed artifacts | None by default | Findings complete | Issues by severity, missing checks, approval/block |
 | recovery | Investigate repeated workflow failure | Usually read-only; patch only if declared | Recurrence guard proposed | Root cause, fix, future guard |
 
@@ -93,6 +102,19 @@ reconciled: master accepted/rejected the result and updated project truth.
 archived: thread is no longer needed in the active lane map.
 ```
 
+Use explicit terminal/error states when needed:
+
+```text
+reconciled_accepted: master accepted the receipt and merged only approved changes.
+reconciled_rejected: master rejected the receipt and recorded the reason.
+blocked: worker cannot continue without user/project input.
+failed: worker failed to produce usable output.
+superseded: another lane or newer run replaced this lane.
+stale: thread no longer matches the current goal or work item.
+invalid: thread lacks a registry row, receipt path, write scope, or stop condition.
+canceled: master or user intentionally stopped the lane.
+```
+
 The master should pin only active control/review threads. Worker threads should be unpinned or archived after reconciliation unless they are intentionally reused.
 
 ## Dead Thread Cleanup
@@ -131,15 +153,16 @@ Spawn a worker thread only when all are true:
 
 Before spawning, the master must search/list existing ADCO threads and reuse, rename, or archive stale ones instead of creating duplicates.
 
-Prefer read-only explorer threads when:
+Prefer read-only explorer/research/reviewer/cold-review threads when:
 
 ```text
-repo is dirty
 scope is uncertain
 task is mostly research
 multiple options need comparison
 the master thread should avoid context overload
 ```
+
+Use execution workers when a scoped implementation, document edit, artifact, or material production task can be isolated. A dirty repo is not by itself a reason to make the lane read-only; it means the handoff must name exact write_scope, expected dirty-state impact, and cleanup receipt requirements.
 
 Prefer a worktree thread only when:
 
@@ -171,7 +194,7 @@ or the master explicitly owns reconciliation immediately after
 
 ```text
 Repo: /Users/jinjungao/work/ad-creative-orchestrator
-Mode: <read-only | exact-write-scope>
+Mode: <execution_worker | read_only_review | research | cold_review>
 Goal: <subgoal>
 Work item: <work_id>
 
@@ -189,7 +212,10 @@ Forbidden:
 
 Return:
 - summary
-- files produced or proposed
+- files_changed
+- validation
+- dirty_state_impact
+- cleanup_actions
 - evidence refs
 - manifest/index rows affected
 - QA/gate status
@@ -206,11 +232,11 @@ Return:
 4. Master writes handoff packet for the worker.
 5. Master creates/sends worker thread prompt.
 6. Worker runs inside declared boundary.
-7. Worker returns handoff output.
+7. Worker returns receipt with files_changed, validation, dirty-state impact, and cleanup actions.
 8. Master reads the worker thread result.
 9. Master reconciles accepted output into project files.
 10. Master runs the relevant gate/checks.
-11. Master archives or unpins completed employee threads and updates thread_registry.
+11. Master archives completed employee threads after consuming the receipt and updates thread_registry.
 12. Master either advances, retries, asks user, or records blocked state.
 ```
 

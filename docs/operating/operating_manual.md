@@ -67,6 +67,37 @@ adco goal-plan <项目目录> --title <目标标题> --objective <目标内容>
 AD-creative/orchestrator/goal_iterations/<goal_id>.md
 ```
 
+创建 Codex Thread 执行层：
+
+```text
+adco thread-plan <项目目录> --title <目标标题> --objective <目标内容> --roles brand_client,copy_creative,qa_review
+```
+
+该命令会写入：
+
+```text
+AD-creative/orchestrator/thread_lane_plan.md
+AD-creative/orchestrator/thread_registry.csv
+AD-creative/orchestrator/thread_cleanup_<work_id>.md
+AD-creative/agents/role_briefs/
+AD-creative/agents/thread_prompts/<work_id>/
+AD-creative/agents/receipts/<work_id>/
+```
+
+执行规则：
+
+```text
+主控线程只负责拆分、分派、集成、验证、清理、汇报。
+execution_worker 负责明确范围内的实现、文档修改、素材和产物制作。
+read_only 只用于 explorer / reviewer / research / cold-review。
+execution_worker 必须先写清 exact write_scope。
+默认最多 3 个 active worker/reviewer。
+每个 execution_worker 返回 files_changed、validation、dirty-state impact、cleanup actions。
+主控读取 receipt 后再合并。
+合并后归档已消费 worker，并把真实 thread_id / cleanup_action 写回 thread_registry.csv。
+客户可见稿不得出现 prompt、thread、worker、lane plan、执行步骤等内部语言。
+```
+
 Gate 规则：
 
 ```text
@@ -79,6 +110,40 @@ reference-pack-gate / search-quality-gate / visual-quality-gate / client-pack-ga
 ```text
 adco intake <项目目录>
 ```
+
+会议 / 客户画像分析：
+
+```text
+adco profile-analyze <项目目录> --source-id <SRC-ID> --brand <品牌> --company <公司>
+```
+
+该命令读取已登记的会议记录或客户资料，生成：
+
+```text
+AD-creative/orchestrator/profile_knowledge/profile_subjects.csv
+AD-creative/orchestrator/profile_knowledge/meeting_voice_map.csv
+AD-creative/orchestrator/profile_knowledge/profile_insights.csv
+AD-creative/orchestrator/profile_knowledge/profile_conflicts.csv
+AD-creative/orchestrator/profile_knowledge/profile_current_truth.md
+AD-creative/handoff/画像分析简报.md
+```
+
+使用规则：
+
+```text
+人物画像、品牌画像、公司画像都必须带 source_event 证据。
+决策权和影响力只是 candidate 判断，必须等用户或客户确认后再当稳定事实。
+出现分歧时先写入 profile_conflicts.csv，不要硬合并成单一结论。
+研究和创意阶段优先读取 profile_current_truth.md，再读取 requirements.csv。
+```
+
+工作区整洁检查：
+
+```text
+adco hygiene <项目目录>
+```
+
+该命令只检查不删除。它会报告 git tracked/untracked 改动、Python 缓存污染、未归档 Thread 记录，并输出清理计划。验证和草稿生成优先用 `/tmp` 或 `AD-creative/workspaces/<work_id>/`，不要把临时产物写到仓库根目录。
 
 操作台审核：
 

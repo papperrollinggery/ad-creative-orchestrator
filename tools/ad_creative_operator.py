@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Callable, Iterable
 import xml.etree.ElementTree as ET
 
+sys.dont_write_bytecode = True
+
 from init_project import copy_template
 from runtime_paths import repo_or_module_root, skill_draft_dir, source_root, template_root
 from validate_project import current_truth_value, validate, validate_client_delivery_readiness
@@ -101,6 +103,95 @@ VISUAL_RISK_PATTERNS = {
 VISUAL_RISK_PATTERN = re.compile(
     "|".join(re.escape(pattern) for pattern in sorted(VISUAL_RISK_PATTERNS, key=len, reverse=True))
 )
+PROFILE_SUBJECT_FIELDS = [
+    "subject_id",
+    "subject_type",
+    "name",
+    "role_or_title",
+    "organization",
+    "source_event_ids",
+    "first_seen_at",
+    "last_seen_at",
+    "profile_status",
+    "influence_level",
+    "decision_power",
+    "traits",
+    "needs",
+    "preferences",
+    "concerns",
+    "notes",
+]
+PROFILE_VOICE_FIELDS = [
+    "voice_id",
+    "source_event_id",
+    "file_path",
+    "speaker",
+    "utterance",
+    "need_signal",
+    "preference_signal",
+    "concern_signal",
+    "decision_signal",
+    "influence_level",
+    "decision_power",
+    "evidence_quote",
+    "confidence",
+    "status",
+]
+PROFILE_INSIGHT_FIELDS = [
+    "insight_id",
+    "subject_id",
+    "subject_type",
+    "source_event_id",
+    "file_path",
+    "insight_type",
+    "statement",
+    "evidence_quote",
+    "confidence",
+    "status",
+    "priority",
+    "linked_requirement_ids",
+    "supersedes_insight_id",
+    "created_at",
+    "updated_at",
+]
+PROFILE_CONFLICT_FIELDS = [
+    "conflict_id",
+    "topic",
+    "source_event_ids",
+    "subject_ids",
+    "conflict_summary",
+    "recommended_resolution",
+    "status",
+    "confidence",
+    "evidence_quotes",
+    "created_at",
+    "updated_at",
+]
+PROFILE_STATUS_VALUES = {"candidate", "confirmed", "conflicted", "deprecated"}
+PROFILE_SUBJECT_TYPES = {"participant", "brand", "company", "client_group"}
+PROFILE_DECISION_LEVELS = {"high", "medium", "low", "unknown"}
+PROFILE_SOURCE_LABELS = {
+    "项目",
+    "品牌",
+    "产品",
+    "参考方向",
+    "本轮交付",
+    "客户希望",
+    "客户明确",
+    "背景",
+    "目标",
+    "交付",
+}
+SPEAKER_LINE_PATTERN = re.compile(
+    r"^(?:\[(?P<bracket>[^\]]{1,28})\]|(?P<label>[\w\u4e00-\u9fff·（）() /-]{1,28}))\s*[：:]\s*(?P<body>.+)$"
+)
+NEED_SIGNAL_PATTERN = re.compile(r"希望|想要|需要|目标|必须|本轮|交付|要做|要体现|诉求")
+PREFERENCE_SIGNAL_PATTERN = re.compile(r"喜欢|偏好|更想|风格|调性|参考方向|年轻|高端|真实|清爽|专业")
+CONCERN_SIGNAL_PATTERN = re.compile(r"担心|不要|不能|风险|怕|预算|时间|禁区|不希望|避免|限制")
+DECISION_SIGNAL_PATTERN = re.compile(r"拍板|决定|确认|最终|老板|领导|负责人|决策|定下来|可以定|我来定")
+BRAND_SIGNAL_PATTERN = re.compile(r"品牌|调性|主张|定位|人群|logo|Logo|包装|视觉规范|产品")
+COMPANY_SIGNAL_PATTERN = re.compile(r"公司|团队|集团|部门|内部|统一意见|甲方|客户内部|汇报链路")
+CONFLICT_SIGNAL_PATTERN = re.compile(r"分歧|不同意|冲突|但是|不过|有人认为|另一个方向|还没统一|需要统一")
 
 
 def now_iso() -> str:
@@ -308,6 +399,9 @@ def docs_payload() -> dict[str, object]:
             "adco release-status",
             "adco quickstart",
             "adco next /tmp/adco-demo",
+            "adco profile-analyze /tmp/adco-demo --brand <brand> --company <company>",
+            "adco thread-plan /tmp/adco-demo --title ThreadOps --objective 'Coordinate Codex worker threads'",
+            "adco hygiene /tmp/adco-demo",
             "adco open-dashboard /tmp/adco-demo --no-open",
             "adco check",
         ],
@@ -459,6 +553,17 @@ def append_csv_row(path: Path, row: dict[str, str]) -> None:
         raise FileNotFoundError(f"CSV header not found: {path}")
     rows.append(row)
     write_csv_rows(path, fieldnames, rows)
+
+
+def ensure_csv_fields(path: Path, required_fields: list[str]) -> list[str]:
+    fieldnames, rows = read_csv_rows(path)
+    if not fieldnames:
+        raise FileNotFoundError(f"CSV header not found: {path}")
+    missing = [field for field in required_fields if field not in fieldnames]
+    if missing:
+        fieldnames = [*fieldnames, *missing]
+        write_csv_rows(path, fieldnames, rows)
+    return fieldnames
 
 
 def update_or_append_csv_row(
@@ -647,6 +752,45 @@ def ensure_intake_work(project: Path, source_ids: list[str], goal: str) -> str:
     return work_id
 
 
+def ensure_profile_work(project: Path, source_ids: list[str], goal: str) -> str:
+    work_path = project / "AD-creative/orchestrator/work_items.csv"
+    fieldnames, rows = read_csv_rows(work_path)
+    for row in rows:
+        if row.get("stage") == "intake" and row.get("title") == "会议画像与品牌画像分析":
+            row["linked_source_events"] = join_unique_values(row.get("linked_source_events", ""), ";".join(source_ids))
+            row["updated_at"] = now_iso()
+            write_csv_rows(work_path, fieldnames, rows)
+            return row.get("work_id", "")
+
+    work_id = next_id(rows, "work_id", "WORK")
+    rows.append(
+        {
+            "work_id": work_id,
+            "stage": "intake",
+            "title": "会议画像与品牌画像分析",
+            "objective": goal or "分析会议资料中的人物画像、品牌画像、需求权重、决策权和分歧融合路径。",
+            "owner_agent": "Codex",
+            "status": "ready",
+            "priority": "high",
+            "input_refs": ";".join(source_ids),
+            "output_artifacts": "",
+            "linked_requirements": "",
+            "linked_source_events": ";".join(source_ids),
+            "linked_references": "",
+            "linked_assets": "",
+            "linked_slides": "",
+            "blocked_by": "",
+            "gate_required": "Profile Gate",
+            "client_visibility": "internal_only",
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+            "supersedes_work_id": "",
+        }
+    )
+    write_csv_rows(work_path, fieldnames, rows)
+    return work_id
+
+
 def read_counts(project: Path) -> dict[str, int]:
     tables = {
         "source_events": "AD-creative/orchestrator/source_events.csv",
@@ -658,6 +802,9 @@ def read_counts(project: Path) -> dict[str, int]:
         "gates": "AD-creative/orchestrator/gate_log.csv",
         "references": "AD-creative/references/reference_cards.csv",
         "assets": "AD-creative/visual_assets/asset_manifest.csv",
+        "profile_subjects": "AD-creative/orchestrator/profile_knowledge/profile_subjects.csv",
+        "profile_insights": "AD-creative/orchestrator/profile_knowledge/profile_insights.csv",
+        "profile_conflicts": "AD-creative/orchestrator/profile_knowledge/profile_conflicts.csv",
     }
     counts: dict[str, int] = {}
     for key, rel_path in tables.items():
@@ -817,6 +964,658 @@ def gap_templates(requirements: list[dict[str, str]], all_text: str) -> list[dic
     return gaps
 
 
+def normalize_profile_key(value: str) -> str:
+    normalized = re.sub(r"\s+", "", value.strip().lower())
+    return re.sub(r"[^\w\u4e00-\u9fff]+", "", normalized)
+
+
+def stable_profile_id(prefix: str, *parts: str) -> str:
+    raw = "|".join(normalize_profile_key(part) for part in parts if part)
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10].upper()
+    return f"{prefix}-{digest}"
+
+
+def join_unique_values(*values: str) -> str:
+    seen: set[str] = set()
+    merged: list[str] = []
+    for value in values:
+        for item in value.split(";"):
+            cleaned = item.strip()
+            if cleaned and cleaned not in seen:
+                seen.add(cleaned)
+                merged.append(cleaned)
+    return ";".join(merged)
+
+
+def quote_excerpt(value: str, limit: int = 96) -> str:
+    cleaned = re.sub(r"\s+", " ", value.strip())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1].rstrip() + "…"
+
+
+def split_speaker_line(line: str) -> tuple[str, str] | None:
+    cleaned = clean_material_line(line)
+    match = SPEAKER_LINE_PATTERN.match(cleaned)
+    if not match:
+        return None
+    speaker = (match.group("bracket") or match.group("label") or "").strip()
+    utterance = (match.group("body") or "").strip()
+    if not speaker or not utterance or speaker in PROFILE_SOURCE_LABELS:
+        return None
+    if len(utterance) < 4:
+        return None
+    return speaker, utterance
+
+
+def collect_source_materials(project: Path, source_ids: list[str]) -> tuple[list[tuple[dict[str, str], Path, str]], list[str]]:
+    _, source_rows = read_csv_rows(project / "AD-creative/orchestrator/source_events.csv")
+    source_id_set = set(source_ids)
+    target_sources = [
+        row for row in source_rows if not source_id_set or row.get("source_event_id") in source_id_set
+    ]
+    materials: list[tuple[dict[str, str], Path, str]] = []
+    resolved_source_ids: list[str] = []
+    for source in target_sources:
+        source_id = source.get("source_event_id", "")
+        if source_id:
+            resolved_source_ids.append(source_id)
+        raw_path = source.get("file_paths", "")
+        path = Path(raw_path)
+        if raw_path and not path.is_absolute():
+            path = project / raw_path
+        for file_path in material_files(path):
+            materials.append((source, file_path, read_material_text(file_path, max_chars=24000)))
+    return materials, resolved_source_ids
+
+
+def ensure_profile_knowledge_base(project: Path) -> None:
+    profile_dir = project / "AD-creative/orchestrator/profile_knowledge"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    csv_specs = {
+        "profile_subjects.csv": PROFILE_SUBJECT_FIELDS,
+        "meeting_voice_map.csv": PROFILE_VOICE_FIELDS,
+        "profile_insights.csv": PROFILE_INSIGHT_FIELDS,
+        "profile_conflicts.csv": PROFILE_CONFLICT_FIELDS,
+    }
+    for filename, fields in csv_specs.items():
+        path = profile_dir / filename
+        if path.exists():
+            ensure_csv_fields(path, fields)
+        else:
+            write_csv_rows(path, fields, [])
+    current_truth = profile_dir / "profile_current_truth.md"
+    if not current_truth.exists():
+        write_text(
+            current_truth,
+            """# Profile Current Truth
+
+## Participant Profiles
+- 暂无会议画像。
+
+## Brand / Company Profiles
+- 暂无品牌或公司画像。
+
+## Demand And Decision Map
+- 暂无。
+
+## Conflicts
+- 暂无。
+
+## Next Confirmation
+- 等待会议资料或客户资料输入。
+""",
+        )
+
+
+def profile_signal(value: str, pattern: re.Pattern[str]) -> str:
+    return "yes" if pattern.search(value) else ""
+
+
+def profile_insight_types(text: str, *, subject_type: str) -> list[str]:
+    insight_types: list[str] = []
+    if NEED_SIGNAL_PATTERN.search(text):
+        insight_types.append("need")
+    if PREFERENCE_SIGNAL_PATTERN.search(text):
+        insight_types.append("preference")
+    if CONCERN_SIGNAL_PATTERN.search(text):
+        insight_types.append("concern")
+    if DECISION_SIGNAL_PATTERN.search(text):
+        insight_types.append("decision_signal")
+    if subject_type == "brand" or BRAND_SIGNAL_PATTERN.search(text):
+        insight_types.append("brand_trait")
+    if subject_type == "company" or COMPANY_SIGNAL_PATTERN.search(text):
+        insight_types.append("company_context")
+    return insight_types or ["observation"]
+
+
+def infer_decision_power(name: str, utterances: list[str]) -> str:
+    combined = f"{name}\n" + "\n".join(utterances)
+    if DECISION_SIGNAL_PATTERN.search(combined) or re.search(r"老板|CEO|CMO|负责人|总经理|总监|创始人", combined):
+        return "high"
+    if re.search(r"经理|主管|客户|甲方|品牌", combined):
+        return "medium"
+    return "unknown"
+
+
+def infer_influence_level(count: int, total: int, decision_power: str) -> str:
+    if decision_power == "high":
+        return "high"
+    if total <= 0:
+        return "unknown"
+    share = count / total
+    if count >= 4 or share >= 0.35:
+        return "high"
+    if count >= 2 or share >= 0.15:
+        return "medium"
+    return "low"
+
+
+def infer_traits(utterances: list[str]) -> str:
+    joined = "\n".join(utterances)
+    traits: list[str] = []
+    if CONCERN_SIGNAL_PATTERN.search(joined):
+        traits.append("谨慎，关注风险边界")
+    if DECISION_SIGNAL_PATTERN.search(joined):
+        traits.append("会推动拍板或最终确认")
+    if BRAND_SIGNAL_PATTERN.search(joined):
+        traits.append("重视品牌调性和产品露出")
+    if re.search(r"时间|预算|交付|效率|周期", joined):
+        traits.append("关注执行效率和交付约束")
+    if PREFERENCE_SIGNAL_PATTERN.search(joined):
+        traits.append("对风格有明确偏好")
+    return "；".join(traits) if traits else "信息不足，需继续观察"
+
+
+def summarize_signals(utterances: list[str], pattern: re.Pattern[str], fallback: str) -> str:
+    matches = [quote_excerpt(item, 60) for item in utterances if pattern.search(item)]
+    return "；".join(matches[:3]) if matches else fallback
+
+
+def profile_subject_row(
+    *,
+    subject_type: str,
+    name: str,
+    source_ids: str,
+    now: str,
+    utterances: list[str],
+    total_utterances: int = 0,
+    organization: str = "",
+    role_or_title: str = "",
+) -> dict[str, str]:
+    decision_power = infer_decision_power(name, utterances) if subject_type == "participant" else "unknown"
+    influence_level = (
+        infer_influence_level(len(utterances), total_utterances or len(utterances), decision_power)
+        if subject_type == "participant"
+        else "unknown"
+    )
+    return {
+        "subject_id": stable_profile_id("PROF", subject_type, name),
+        "subject_type": subject_type,
+        "name": name,
+        "role_or_title": role_or_title,
+        "organization": organization,
+        "source_event_ids": source_ids,
+        "first_seen_at": now,
+        "last_seen_at": now,
+        "profile_status": "candidate",
+        "influence_level": influence_level,
+        "decision_power": decision_power,
+        "traits": infer_traits(utterances) if utterances else "待补充",
+        "needs": summarize_signals(utterances, NEED_SIGNAL_PATTERN, "待补充"),
+        "preferences": summarize_signals(utterances, PREFERENCE_SIGNAL_PATTERN, "待补充"),
+        "concerns": summarize_signals(utterances, CONCERN_SIGNAL_PATTERN, "待补充"),
+        "notes": "由会议/客户资料自动整理；需要人工确认后升级为 confirmed。",
+    }
+
+
+def merge_profile_subject(existing: dict[str, str], incoming: dict[str, str]) -> dict[str, str]:
+    merged = dict(existing)
+    for key in ["name", "subject_type", "role_or_title", "organization"]:
+        if incoming.get(key):
+            merged[key] = incoming[key]
+    merged["source_event_ids"] = join_unique_values(existing.get("source_event_ids", ""), incoming.get("source_event_ids", ""))
+    merged["last_seen_at"] = incoming.get("last_seen_at", existing.get("last_seen_at", ""))
+    for key in ["traits", "needs", "preferences", "concerns", "notes"]:
+        old = existing.get(key, "")
+        new = incoming.get(key, "")
+        if old in {"", "待补充", "信息不足，需继续观察"}:
+            merged[key] = new
+        elif new and new not in old:
+            merged[key] = join_unique_values(old.replace("；", ";"), new.replace("；", ";")).replace(";", "；")
+    level_order = {"unknown": 0, "low": 1, "medium": 2, "high": 3}
+    for key in ["influence_level", "decision_power"]:
+        if level_order.get(incoming.get(key, "unknown"), 0) > level_order.get(existing.get(key, "unknown"), 0):
+            merged[key] = incoming[key]
+    return merged
+
+
+def profile_priority(insight_type: str) -> str:
+    if insight_type in {"decision_signal", "concern"}:
+        return "high"
+    if insight_type in {"need", "brand_trait", "company_context"}:
+        return "medium"
+    return "low"
+
+
+def add_profile_insight(
+    rows_by_id: dict[str, dict[str, str]],
+    *,
+    subject_id: str,
+    subject_type: str,
+    source_id: str,
+    file_path: str,
+    insight_type: str,
+    statement: str,
+    evidence: str,
+    now: str,
+) -> tuple[int, int]:
+    insight_id = stable_profile_id("INS", subject_id, insight_type, statement)
+    row = {
+        "insight_id": insight_id,
+        "subject_id": subject_id,
+        "subject_type": subject_type,
+        "source_event_id": source_id,
+        "file_path": file_path,
+        "insight_type": insight_type,
+        "statement": statement,
+        "evidence_quote": quote_excerpt(evidence),
+        "confidence": "0.68" if insight_type in {"need", "preference", "concern", "decision_signal"} else "0.56",
+        "status": "candidate",
+        "priority": profile_priority(insight_type),
+        "linked_requirement_ids": "",
+        "supersedes_insight_id": "",
+        "created_at": now,
+        "updated_at": now,
+    }
+    if insight_id in rows_by_id:
+        existing = rows_by_id[insight_id]
+        existing["source_event_id"] = source_id or existing.get("source_event_id", "")
+        existing["file_path"] = file_path or existing.get("file_path", "")
+        existing["evidence_quote"] = row["evidence_quote"] or existing.get("evidence_quote", "")
+        existing["updated_at"] = now
+        return 0, 1
+    rows_by_id[insight_id] = row
+    return 1, 0
+
+
+def profile_current_truth_content(
+    project: Path,
+    subjects: list[dict[str, str]],
+    insights: list[dict[str, str]],
+    conflicts: list[dict[str, str]],
+) -> str:
+    participant_rows = [row for row in subjects if row.get("subject_type") == "participant"]
+    org_rows = [row for row in subjects if row.get("subject_type") in {"brand", "company", "client_group"}]
+    top_participants = sorted(
+        participant_rows,
+        key=lambda row: (
+            {"high": 3, "medium": 2, "low": 1}.get(row.get("decision_power", ""), 0),
+            {"high": 3, "medium": 2, "low": 1}.get(row.get("influence_level", ""), 0),
+        ),
+        reverse=True,
+    )[:8]
+    demand_insights = [row for row in insights if row.get("insight_type") in {"need", "preference", "concern", "decision_signal"}]
+    participant_table = "\n".join(
+        f"| {md_cell(row.get('name', ''))} | {row.get('influence_level', '')} | {row.get('decision_power', '')} | {md_cell(row.get('needs', ''))} | {md_cell(row.get('concerns', ''))} |"
+        for row in top_participants
+    ) or "| - | - | - | 暂无 | 暂无 |"
+    org_table = "\n".join(
+        f"| {md_cell(row.get('subject_type', ''))} | {md_cell(row.get('name', ''))} | {md_cell(row.get('traits', ''))} | {md_cell(row.get('preferences', ''))} |"
+        for row in org_rows[:8]
+    ) or "| - | - | 暂无 | 暂无 |"
+    demand_rows = "\n".join(
+        f"- {row.get('insight_type')}: {row.get('statement')}（证据：{row.get('evidence_quote')}）"
+        for row in demand_insights[:10]
+    ) or "- 暂无"
+    conflict_rows = "\n".join(
+        f"- {row.get('topic')}: {row.get('conflict_summary')}；建议：{row.get('recommended_resolution')}"
+        for row in conflicts[:8]
+    ) or "- 暂无显式分歧"
+    return f"""# Profile Current Truth
+
+## Project
+{project.name}
+
+## Participant Profiles
+| 人 | 影响力 | 决策权 | 想要什么 | 担心什么 |
+|---|---|---|---|---|
+{participant_table}
+
+## Brand / Company Profiles
+| 类型 | 名称 | 特点 | 偏好 |
+|---|---|---|---|
+{org_table}
+
+## Demand And Decision Map
+{demand_rows}
+
+## Conflicts
+{conflict_rows}
+
+## How To Use
+- 先满足高决策权/高影响力人物的明确诉求。
+- 有分歧时不要硬合并成一句口号，先列出双方关心点，再给折中方案。
+- 证据不足的画像只能作为 candidate，客户确认后再升级为 confirmed。
+
+## Next Confirmation
+- 请确认关键发言人姓名/职务、最终拍板人、品牌禁区，以及哪些分歧已经内部统一。
+"""
+
+
+def profile_handoff_content(
+    subjects: list[dict[str, str]],
+    insights: list[dict[str, str]],
+    conflicts: list[dict[str, str]],
+) -> str:
+    decision_people = [
+        row for row in subjects if row.get("subject_type") == "participant" and row.get("decision_power") in {"high", "medium"}
+    ][:6]
+    decision_rows = "\n".join(
+        f"| {md_cell(row.get('name', ''))} | {row.get('decision_power', '')} | {row.get('influence_level', '')} | {md_cell(row.get('traits', ''))} |"
+        for row in decision_people
+    ) or "| - | - | - | 暂无 |"
+    need_rows = "\n".join(
+        f"- {row.get('statement')}" for row in insights if row.get("insight_type") in {"need", "preference"}
+    ) or "- 暂无明确诉求"
+    concern_rows = "\n".join(
+        f"- {row.get('statement')}" for row in insights if row.get("insight_type") == "concern"
+    ) or "- 暂无明确担心"
+    conflict_rows = "\n".join(
+        f"- {row.get('conflict_summary')} 建议：{row.get('recommended_resolution')}" for row in conflicts
+    ) or "- 暂无显式分歧"
+    return f"""# 画像分析简报
+
+## 这次会议看出了什么
+{need_rows}
+
+## 谁更需要重点照顾
+| 人 | 决策权 | 影响力 | 特点 |
+|---|---|---|---|
+{decision_rows}
+
+## 他们担心什么
+{concern_rows}
+
+## 分歧怎么合
+{conflict_rows}
+
+## 下一步怎么用
+- 写方案前先看高决策权人物的诉求。
+- 研究阶段优先补齐有争议、证据不足、会影响客户拍板的信息。
+- 方案里同时照顾品牌特点、公司内部共识和具体发言人的担心点。
+"""
+
+
+def analyze_profiles(
+    project: Path,
+    *,
+    source_ids: list[str] | None = None,
+    work_id: str = "",
+    goal: str = "",
+    brand: str = "",
+    company: str = "",
+    client: str = "",
+) -> dict[str, object]:
+    ensure_profile_knowledge_base(project)
+    source_ids = source_ids or []
+    materials, resolved_source_ids = collect_source_materials(project, source_ids)
+    now = now_iso()
+    linked_source_ids = ";".join(source_ids or resolved_source_ids)
+    profile_dir = project / "AD-creative/orchestrator/profile_knowledge"
+
+    subject_fields, subject_rows = read_csv_rows(profile_dir / "profile_subjects.csv")
+    voice_fields, voice_rows = read_csv_rows(profile_dir / "meeting_voice_map.csv")
+    insight_fields, insight_rows = read_csv_rows(profile_dir / "profile_insights.csv")
+    conflict_fields, conflict_rows = read_csv_rows(profile_dir / "profile_conflicts.csv")
+    subjects_by_id = {row.get("subject_id", ""): row for row in subject_rows if row.get("subject_id")}
+    voices_by_id = {row.get("voice_id", ""): row for row in voice_rows if row.get("voice_id")}
+    insights_by_id = {row.get("insight_id", ""): row for row in insight_rows if row.get("insight_id")}
+    conflicts_by_id = {row.get("conflict_id", ""): row for row in conflict_rows if row.get("conflict_id")}
+
+    speaker_utterances: dict[str, list[str]] = {}
+    speaker_source_ids: dict[str, str] = {}
+    speaker_files: dict[str, str] = {}
+    new_voices = 0
+    deduped = 0
+    new_insights = 0
+    updated_insights = 0
+    conflict_candidates: list[tuple[str, str, str, str]] = []
+
+    for source, file_path, text in materials:
+        source_id = source.get("source_event_id", "")
+        rel_file = safe_rel(project, file_path)
+        for raw_line in text.splitlines():
+            line = clean_material_line(raw_line)
+            if not line or len(line) < 4:
+                continue
+            speaker_line = split_speaker_line(line)
+            if speaker_line:
+                speaker, utterance = speaker_line
+                speaker_utterances.setdefault(speaker, []).append(utterance)
+                speaker_source_ids[speaker] = join_unique_values(speaker_source_ids.get(speaker, ""), source_id)
+                speaker_files[speaker] = join_unique_values(speaker_files.get(speaker, ""), rel_file)
+                voice_id = stable_profile_id("VOICE", source_id, speaker, utterance)
+                voice_row = {
+                    "voice_id": voice_id,
+                    "source_event_id": source_id,
+                    "file_path": rel_file,
+                    "speaker": speaker,
+                    "utterance": utterance,
+                    "need_signal": profile_signal(utterance, NEED_SIGNAL_PATTERN),
+                    "preference_signal": profile_signal(utterance, PREFERENCE_SIGNAL_PATTERN),
+                    "concern_signal": profile_signal(utterance, CONCERN_SIGNAL_PATTERN),
+                    "decision_signal": profile_signal(utterance, DECISION_SIGNAL_PATTERN),
+                    "influence_level": "",
+                    "decision_power": "",
+                    "evidence_quote": quote_excerpt(utterance),
+                    "confidence": "0.72",
+                    "status": "candidate",
+                }
+                if voice_id in voices_by_id:
+                    voices_by_id[voice_id].update(voice_row)
+                    deduped += 1
+                else:
+                    voices_by_id[voice_id] = voice_row
+                    new_voices += 1
+                if CONFLICT_SIGNAL_PATTERN.search(utterance):
+                    conflict_candidates.append((source_id, rel_file, speaker, utterance))
+            elif BRAND_SIGNAL_PATTERN.search(line) or COMPANY_SIGNAL_PATTERN.search(line) or CONFLICT_SIGNAL_PATTERN.search(line):
+                subject_type = "brand" if BRAND_SIGNAL_PATTERN.search(line) else "company"
+                subject_name = brand if subject_type == "brand" and brand else company if company else client or "未命名客户"
+                subject_id = stable_profile_id("PROF", subject_type, subject_name)
+                if subject_id not in subjects_by_id:
+                    subjects_by_id[subject_id] = profile_subject_row(
+                        subject_type=subject_type,
+                        name=subject_name,
+                        source_ids=source_id,
+                        now=now,
+                        utterances=[line],
+                        organization=company or client,
+                    )
+                else:
+                    incoming = profile_subject_row(
+                        subject_type=subject_type,
+                        name=subject_name,
+                        source_ids=source_id,
+                        now=now,
+                        utterances=[line],
+                        organization=company or client,
+                    )
+                    subjects_by_id[subject_id] = merge_profile_subject(subjects_by_id[subject_id], incoming)
+                for insight_type in profile_insight_types(line, subject_type=subject_type):
+                    added, updated = add_profile_insight(
+                        insights_by_id,
+                        subject_id=subject_id,
+                        subject_type=subject_type,
+                        source_id=source_id,
+                        file_path=rel_file,
+                        insight_type=insight_type,
+                        statement=line,
+                        evidence=line,
+                        now=now,
+                    )
+                    new_insights += added
+                    updated_insights += updated
+                if CONFLICT_SIGNAL_PATTERN.search(line):
+                    conflict_candidates.append((source_id, rel_file, subject_name, line))
+
+    total_voice_count = sum(len(items) for items in speaker_utterances.values())
+    for speaker, utterances in speaker_utterances.items():
+        subject_id = stable_profile_id("PROF", "participant", speaker)
+        incoming = profile_subject_row(
+            subject_type="participant",
+            name=speaker,
+            source_ids=speaker_source_ids.get(speaker, linked_source_ids),
+            now=now,
+            utterances=utterances,
+            total_utterances=total_voice_count,
+            organization=company or client,
+        )
+        if subject_id in subjects_by_id:
+            subjects_by_id[subject_id] = merge_profile_subject(subjects_by_id[subject_id], incoming)
+        else:
+            subjects_by_id[subject_id] = incoming
+        for voice in voices_by_id.values():
+            if voice.get("speaker") == speaker:
+                voice["influence_level"] = subjects_by_id[subject_id].get("influence_level", "")
+                voice["decision_power"] = subjects_by_id[subject_id].get("decision_power", "")
+        for utterance in utterances:
+            for insight_type in profile_insight_types(utterance, subject_type="participant"):
+                added, updated = add_profile_insight(
+                    insights_by_id,
+                    subject_id=subject_id,
+                    subject_type="participant",
+                    source_id=speaker_source_ids.get(speaker, "").split(";")[0],
+                    file_path=speaker_files.get(speaker, "").split(";")[0],
+                    insight_type=insight_type,
+                    statement=utterance,
+                    evidence=utterance,
+                    now=now,
+                )
+                new_insights += added
+                updated_insights += updated
+
+    for subject_type, name in [("brand", brand), ("company", company), ("client_group", client)]:
+        if not name:
+            continue
+        subject_id = stable_profile_id("PROF", subject_type, name)
+        incoming = profile_subject_row(
+            subject_type=subject_type,
+            name=name,
+            source_ids=linked_source_ids,
+            now=now,
+            utterances=[],
+            organization=company if subject_type != "company" else name,
+        )
+        if subject_id in subjects_by_id:
+            subjects_by_id[subject_id] = merge_profile_subject(subjects_by_id[subject_id], incoming)
+        else:
+            subjects_by_id[subject_id] = incoming
+
+    for source_id, rel_file, speaker, utterance in conflict_candidates:
+        conflict_id = stable_profile_id("CONF", source_id, utterance)
+        subject_id = stable_profile_id("PROF", "participant", speaker)
+        row = {
+            "conflict_id": conflict_id,
+            "topic": "会议分歧 / 需要统一",
+            "source_event_ids": source_id,
+            "subject_ids": subject_id if subject_id in subjects_by_id else "",
+            "conflict_summary": utterance,
+            "recommended_resolution": "先确认最终拍板人；把双方担心点拆成必须满足、可折中、暂缓三类。",
+            "status": "candidate",
+            "confidence": "0.62",
+            "evidence_quotes": quote_excerpt(f"{speaker}: {utterance}"),
+            "created_at": now,
+            "updated_at": now,
+        }
+        if conflict_id in conflicts_by_id:
+            conflicts_by_id[conflict_id]["updated_at"] = now
+            deduped += 1
+        else:
+            conflicts_by_id[conflict_id] = row
+
+    subjects = sorted(subjects_by_id.values(), key=lambda row: (row.get("subject_type", ""), row.get("name", "")))
+    voices = sorted(voices_by_id.values(), key=lambda row: row.get("voice_id", ""))
+    insights = sorted(insights_by_id.values(), key=lambda row: (row.get("priority", ""), row.get("insight_id", "")), reverse=True)
+    conflicts = sorted(conflicts_by_id.values(), key=lambda row: row.get("conflict_id", ""))
+    write_csv_rows(profile_dir / "profile_subjects.csv", subject_fields, subjects)
+    write_csv_rows(profile_dir / "meeting_voice_map.csv", voice_fields, voices)
+    write_csv_rows(profile_dir / "profile_insights.csv", insight_fields, insights)
+    write_csv_rows(profile_dir / "profile_conflicts.csv", conflict_fields, conflicts)
+
+    profile_truth_path = profile_dir / "profile_current_truth.md"
+    handoff_path = project / "AD-creative/handoff/画像分析简报.md"
+    write_text(profile_truth_path, profile_current_truth_content(project, subjects, insights, conflicts))
+    write_text(handoff_path, profile_handoff_content(subjects, insights, conflicts))
+    for artifact_id, artifact_type, rel_path in [
+        ("ART-AUTO-PROFILE-TRUTH", "profile_current_truth", safe_rel(project, profile_truth_path)),
+        ("ART-AUTO-PROFILE-BRIEF", "profile_handoff_brief", safe_rel(project, handoff_path)),
+    ]:
+        update_artifact(
+            project,
+            artifact_id,
+            artifact_type,
+            rel_path,
+            "intake",
+            source_event_ids=linked_source_ids,
+            linked_work_items=work_id,
+            gate_status="PARTIAL_PASS",
+        )
+    append_gate(
+        project,
+        "GATE-AUTO-PROFILE-001",
+        "intake",
+        "PARTIAL_PASS",
+        "70",
+        "ART-AUTO-PROFILE-TRUTH;ART-AUTO-PROFILE-BRIEF",
+        "画像均为 candidate，需人工确认关键角色和最终拍板人。",
+        "确认关键发言人、决策权、分歧是否已统一。",
+        "请确认谁是最终拍板人、哪些画像结论可升级为 confirmed。",
+        "research_plan",
+        "ad_creative_operator",
+    )
+    append_event(
+        project,
+        {
+            "event_id": f"EVT-PROFILE-{now}",
+            "event_type": "profile_analysis_completed",
+            "created_at": now,
+            "actor": "ad_creative_operator",
+            "source_event_ids": linked_source_ids,
+            "goal": goal,
+            "subjects": len(subjects),
+            "insights": len(insights),
+            "conflicts": len(conflicts),
+        },
+    )
+    if work_id:
+        work_path = project / "AD-creative/orchestrator/work_items.csv"
+        work_fields, work_rows = read_csv_rows(work_path)
+        for row in work_rows:
+            if row.get("work_id") == work_id:
+                row["status"] = "done"
+                row["output_artifacts"] = "ART-AUTO-PROFILE-TRUTH;ART-AUTO-PROFILE-BRIEF"
+                row["linked_source_events"] = join_unique_values(row.get("linked_source_events", ""), linked_source_ids)
+                row["updated_at"] = now
+                break
+        write_csv_rows(work_path, work_fields, work_rows)
+    return {
+        "materials": len(materials),
+        "subjects": len(subjects),
+        "voices": len(voices),
+        "insights": len(insights),
+        "conflicts": len(conflicts),
+        "new_voices": new_voices,
+        "new_insights": new_insights,
+        "updated_insights": updated_insights,
+        "deduped": deduped,
+        "profile_current_truth": profile_truth_path,
+        "handoff": handoff_path,
+        "source_ids": linked_source_ids,
+    }
+
+
 def unique_rows(rows: list[dict[str, str]], key: str) -> set[str]:
     return {row.get(key, "").strip() for row in rows if row.get(key, "").strip()}
 
@@ -904,6 +1703,106 @@ def append_gate(
             "owner": owner,
         },
     )
+
+
+POLLUTION_DIR_NAMES = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+POLLUTION_FILE_SUFFIXES = {".pyc", ".pyo"}
+POLLUTION_FILE_NAMES = {".DS_Store"}
+THREAD_TERMINAL_STATES = {"archived", "closed", "reconciled", "superseded", "duplicate", "stale"}
+
+
+def find_pollution_paths(root: Path, limit: int = 80) -> list[str]:
+    if not root.exists():
+        return []
+    findings: list[str] = []
+    for path in root.rglob("*"):
+        if ".git" in path.parts:
+            continue
+        if path.name in POLLUTION_DIR_NAMES or path.name in POLLUTION_FILE_NAMES or path.suffix in POLLUTION_FILE_SUFFIXES:
+            findings.append(safe_rel(root, path))
+            if len(findings) >= limit:
+                break
+    return findings
+
+
+def git_status_for(root: Path) -> tuple[str, list[str], list[str]]:
+    try:
+        git_root = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "", [], []
+    completed = subprocess.run(
+        ["git", "-C", git_root, "status", "--short", "--untracked-files=all"],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    lines = [line for line in completed.stdout.splitlines() if line.strip()]
+    tracked = [line for line in lines if not line.startswith("??")]
+    untracked = [line for line in lines if line.startswith("??")]
+    return git_root, tracked, untracked
+
+
+def active_thread_registry_rows(project: Path) -> list[dict[str, str]]:
+    _, rows = read_csv_rows(project / "AD-creative/orchestrator/thread_registry.csv")
+    active: list[dict[str, str]] = []
+    for row in rows:
+        thread_id = row.get("thread_id", "").strip()
+        archived = row.get("archived", "").strip().lower()
+        lifecycle = row.get("lifecycle_state", "").strip().lower()
+        if not thread_id or thread_id.startswith("planned:"):
+            continue
+        if archived in {"true", "yes", "1"} or lifecycle in THREAD_TERMINAL_STATES:
+            continue
+        active.append(row)
+    return active
+
+
+def workspace_hygiene_report(project: Path) -> dict[str, object]:
+    project = project.resolve()
+    git_root, tracked, untracked = git_status_for(project)
+    pollution = find_pollution_paths(project)
+    active_threads = active_thread_registry_rows(project)
+    issues: list[str] = []
+    if tracked:
+        issues.append(f"tracked git changes: {len(tracked)}")
+    if untracked:
+        issues.append(f"untracked git files: {len(untracked)}")
+    if pollution:
+        issues.append(f"cache/temp pollution paths: {len(pollution)}")
+    if active_threads:
+        issues.append(f"active thread registry rows: {len(active_threads)}")
+    plan = [
+        "把验证和草稿生成放在 /tmp 或 AD-creative/workspaces/<work_id>/，不要写到仓库根目录。",
+        "每次大任务结束跑 git status --short --untracked-files=all，并清理 __pycache__ / .pytest_cache / .mypy_cache / .ruff_cache / *.pyc / *.pyo / .DS_Store。",
+        "Codex Thread 结果合并后立即归档，并把 cleanup_action / archived 写回 thread_registry.csv。",
+        "源码模板和 packaged mirror 必须一起更新，并跑 check_packaged_assets。",
+        "用户未要求 commit 前，只报告修改文件；不要 reset、checkout 或删除用户资料。",
+    ]
+    return {
+        "status": "PASS" if not issues else "CHECK",
+        "project": str(project),
+        "git_root": git_root,
+        "tracked_changes": tracked,
+        "untracked_files": untracked,
+        "pollution_paths": pollution,
+        "active_threads": [
+            {
+                "thread_id": row.get("thread_id", ""),
+                "title": row.get("title", ""),
+                "role": row.get("role", ""),
+                "lifecycle_state": row.get("lifecycle_state", ""),
+                "archived": row.get("archived", ""),
+            }
+            for row in active_threads
+        ],
+        "issues": issues,
+        "plan": plan,
+    }
 
 
 def host_platform(url: str) -> str:
@@ -4442,6 +5341,1045 @@ def safe_artifact_suffix(value: str) -> str:
     return cleaned[:48] or "GOAL"
 
 
+@dataclass(frozen=True)
+class ThreadRoleSpec:
+    role_id: str
+    label: str
+    professional_identity: str
+    purpose: str
+    default_environment: str
+    default_write_scope: str
+    read_first: tuple[str, ...]
+    allowed_actions: tuple[str, ...]
+    forbidden_actions: tuple[str, ...]
+    required_output: tuple[str, ...]
+    stop_condition: str
+    validation_proof: str
+
+
+THREADOPS_ROLE_ORDER = (
+    "brand_client",
+    "copy_creative",
+    "film_director",
+    "art_design",
+    "producer_risk",
+    "qa_review",
+)
+THREADOPS_DEFAULT_ROLES = ("brand_client", "copy_creative", "qa_review")
+THREADOPS_REGISTRY_FIELDS = [
+    "thread_id",
+    "title",
+    "role",
+    "lane_id",
+    "work_id",
+    "lifecycle_state",
+    "pinned",
+    "archived",
+    "created_at",
+    "updated_at",
+    "cleanup_action",
+    "notes",
+    "goal_id",
+    "mode",
+    "environment",
+    "workspace_path",
+    "write_scope",
+    "professional_identity",
+    "receipt_path",
+    "receipt_status",
+    "reconciliation_status",
+    "assigned_at",
+    "returned_at",
+    "reconciled_at",
+    "archived_at",
+    "cleanup_reason",
+    "last_seen_at",
+    "duplicate_of",
+]
+THREADOPS_AGENT_RUN_FIELDS = [
+    "run_id",
+    "work_id",
+    "agent_role",
+    "status",
+    "started_at",
+    "completed_at",
+    "input_files",
+    "output_files",
+    "gate_id",
+    "summary",
+    "next_action",
+    "thread_id",
+    "lane_id",
+    "receipt_path",
+    "proof_status",
+    "reconciliation_status",
+]
+THREADOPS_ROLE_SPECS = {
+    "brand_client": ThreadRoleSpec(
+        "BRAND_CLIENT",
+        "BrandClient",
+        "Brand strategist and client-demand interpreter.",
+        "Check client intent, misunderstanding risk, brand fit, and missing decisions.",
+        "read_only",
+        "receipt only",
+        (
+            "AD-creative/orchestrator/current_truth.md",
+            "AD-creative/orchestrator/requirements.csv",
+            "AD-creative/orchestrator/gaps.csv",
+            "AD-creative/handoff/待你确认.md",
+        ),
+        (
+            "Inspect project truth, requirements, gaps, and handoff files.",
+            "Propose questions, blockers, and client-risk guardrails.",
+        ),
+        (
+            "Do not edit current_truth, version_map, artifact_index, gate_log, final exports, or client-visible files.",
+            "Do not approve client send or mark AI assets client-visible.",
+        ),
+        (
+            "client intent summary",
+            "misunderstanding risks",
+            "blocking questions",
+            "recommended next action",
+        ),
+        "All client-intent risks and missing decisions are listed with evidence.",
+        "Receipt references exact project files and rows inspected.",
+    ),
+    "copy_creative": ThreadRoleSpec(
+        "COPY_CREATIVE",
+        "CopyCreative",
+        "Advertising copy lead for concepts, campaign lines, and tone.",
+        "Review concept clarity, message hierarchy, headlines, and proposal language.",
+        "isolated_workspace",
+        "AD-creative/workspaces/{work_id}/{lane_id}/copy_drafts.md; AD-creative/agents/receipts/{work_id}/{lane_id}_receipt.md",
+        (
+            "AD-creative/creative/creative_directions.md",
+            "AD-creative/copywriting/message_line_candidates.md",
+            "AD-creative/client_review/client_review_outline.md",
+            "AD-creative/client_review/slide_spec.md",
+        ),
+        (
+            "Inspect copy and proposal structure.",
+            "Draft rewrites only in the lane workspace and receipt path declared by write_scope.",
+        ),
+        (
+            "Do not rewrite client-visible files directly unless the lane plan grants an exact write path.",
+            "Do not remove story, brand mapping, timing, or key dialogue to simplify layout.",
+        ),
+        (
+            "copy diagnosis",
+            "candidate wording",
+            "message hierarchy risks",
+            "revision checklist",
+        ),
+        "Copy risks and proposed replacements are concrete enough for the master thread to merge.",
+        "Receipt includes old/new wording or target section references.",
+    ),
+    "film_director": ThreadRoleSpec(
+        "FILM_DIRECTOR",
+        "FilmDirector",
+        "Commercial film director focused on story logic and scene rhythm.",
+        "Review treatment, story beats, timing, scene transitions, and dialogue labels.",
+        "isolated_workspace",
+        "AD-creative/workspaces/{work_id}/{lane_id}/film_notes.md; AD-creative/agents/receipts/{work_id}/{lane_id}_receipt.md",
+        (
+            "AD-creative/film/treatment_packet.md",
+            "AD-creative/film/shot_list_storyboard_plan.md",
+            "AD-creative/film/production_constraints.md",
+            "AD-creative/client_review/slide_spec.md",
+        ),
+        (
+            "Inspect film/story files and slide spec.",
+            "Draft story, timing, and shot-level fixes only in the lane workspace and receipt path declared by write_scope.",
+        ),
+        (
+            "Do not export PPT/PDF.",
+            "Do not invent unavailable production facts or talent approvals.",
+        ),
+        (
+            "story logic review",
+            "timing and rhythm notes",
+            "shot/scene risks",
+            "fix recommendations",
+        ),
+        "Story and scene issues are listed with file/section evidence.",
+        "Receipt identifies affected scenes, slides, or treatment sections.",
+    ),
+    "art_design": ThreadRoleSpec(
+        "ART_DESIGN",
+        "ArtDesign",
+        "Art director for visual system, layout, typography, and image quality.",
+        "Review visual direction, asset slots, layout risks, and client-visible image safety.",
+        "isolated_workspace",
+        "AD-creative/workspaces/{work_id}/{lane_id}/art_direction_notes.md; AD-creative/agents/receipts/{work_id}/{lane_id}_receipt.md",
+        (
+            "AD-creative/ppt/ppt_visual_system.md",
+            "AD-creative/visual_assets/asset_manifest.csv",
+            "AD-creative/visual_assets/visual_asset_slots.csv",
+            "AD-creative/visual_review/visual_qa_checklist.md",
+        ),
+        (
+            "Inspect visual system, asset manifest, asset slots, and QA checklist.",
+            "Draft visual risks and exact gate/checklist additions only in the lane workspace and receipt path declared by write_scope.",
+        ),
+        (
+            "Do not mark generated assets client-visible.",
+            "Do not replace source images or final exports.",
+        ),
+        (
+            "visual system diagnosis",
+            "asset safety risks",
+            "layout QA issues",
+            "gate recommendations",
+        ),
+        "Visual risks are tied to asset ids, slots, or checklist items.",
+        "Receipt names asset/slot ids and required gate checks.",
+    ),
+    "producer_risk": ThreadRoleSpec(
+        "PRODUCER_RISK",
+        "ProducerRisk",
+        "Producer and risk controller for feasibility, scope, legal, and platform constraints.",
+        "Review feasibility, budget/scope exposure, rights risk, platform risk, and stop points.",
+        "read_only",
+        "receipt only",
+        (
+            "AD-creative/orchestrator/decisions.csv",
+            "AD-creative/orchestrator/resolutions.csv",
+            "AD-creative/film/production_constraints.md",
+            "AD-creative/handoff/待你确认.md",
+        ),
+        (
+            "Inspect decisions, resolutions, constraints, and pending confirmations.",
+            "Return production risks, stop points, and owner assignments.",
+        ),
+        (
+            "Do not approve paid, login, upload, send, identity, KYC, wallet, or private-account actions.",
+            "Do not downgrade blockers without evidence.",
+        ),
+        (
+            "feasibility risk list",
+            "stop conditions",
+            "owner/action matrix",
+            "scope guardrails",
+        ),
+        "Every high-risk action has an owner, stop condition, and evidence path.",
+        "Receipt lists blocker severity and affected delivery stage.",
+    ),
+    "qa_review": ThreadRoleSpec(
+        "QA_REVIEW",
+        "QAReview",
+        "Independent adversarial reviewer and evidence checker.",
+        "Cold-review the proposed handoff, validation evidence, thread cleanup, and missing tests.",
+        "read_only",
+        "receipt only",
+        (
+            "AD-creative/orchestrator/thread_lane_plan.md",
+            "AD-creative/orchestrator/thread_registry.csv",
+            "AD-creative/orchestrator/artifact_index.csv",
+            "AD-creative/orchestrator/gate_log.csv",
+        ),
+        (
+            "Inspect changed control-plane files and validation output.",
+            "Return severity-ranked findings and final readiness gate.",
+        ),
+        (
+            "Do not edit files.",
+            "Do not mark final readiness without validation and cleanup proof.",
+        ),
+        (
+            "severity-ranked findings",
+            "missing validation",
+            "thread cleanup issues",
+            "approve/block recommendation",
+        ),
+        "Review is complete when blocker, risk, and validation gaps are enumerated.",
+        "Receipt includes validation command/output references and cleanup status.",
+    ),
+}
+THREADOPS_ROLE_ALIASES = {
+    "brand": "brand_client",
+    "brand_client": "brand_client",
+    "client": "brand_client",
+    "copy": "copy_creative",
+    "copy_creative": "copy_creative",
+    "creative": "copy_creative",
+    "film": "film_director",
+    "film_director": "film_director",
+    "director": "film_director",
+    "art": "art_design",
+    "art_design": "art_design",
+    "design": "art_design",
+    "visual": "art_design",
+    "producer": "producer_risk",
+    "producer_risk": "producer_risk",
+    "risk": "producer_risk",
+    "qa": "qa_review",
+    "qa_review": "qa_review",
+    "review": "qa_review",
+}
+
+READ_ONLY_THREADOPS_ROLES = {"brand_client", "producer_risk"}
+
+
+def threadops_lane_mode(role: str, spec: ThreadRoleSpec) -> str:
+    if spec.default_environment in {"isolated_workspace", "worktree"}:
+        return "execution_worker"
+    if role == "brand_client":
+        return "research"
+    if role == "qa_review":
+        return "cold_review"
+    if role in READ_ONLY_THREADOPS_ROLES:
+        return "read_only_review"
+    return "read_only_review"
+
+
+def threadops_workspace_path(work_id: str, lane_id: str, spec: ThreadRoleSpec) -> str:
+    if spec.default_environment == "isolated_workspace":
+        return f"AD-creative/workspaces/{work_id}/{lane_id}"
+    if spec.default_environment == "worktree":
+        return "declared_git_worktree_required"
+    return "not_applicable_for_read_only"
+
+
+def resolve_threadops_write_scope(work_id: str, lane_id: str, spec: ThreadRoleSpec) -> str:
+    return spec.default_write_scope.format(work_id=work_id, lane_id=lane_id)
+
+
+def markdown_table_cell(value: str) -> str:
+    return re.sub(r"\s+", " ", value.replace("|", "/")).strip()
+
+
+def parse_threadops_roles(raw_roles: str) -> list[str]:
+    raw_values = [item.strip().lower() for item in raw_roles.split(",") if item.strip()]
+    if not raw_values:
+        raw_values = list(THREADOPS_DEFAULT_ROLES)
+    roles: list[str] = []
+    for raw in raw_values:
+        role = THREADOPS_ROLE_ALIASES.get(raw)
+        if not role:
+            choices = ", ".join(THREADOPS_ROLE_ORDER)
+            raise ValueError(f"unknown ThreadOps role: {raw}; choices: {choices}")
+        if role not in roles:
+            roles.append(role)
+    return roles
+
+
+def current_version_id(project: Path) -> str:
+    path = project / "AD-creative/orchestrator/current_truth.md"
+    if not path.exists():
+        return ""
+    return current_truth_value(path.read_text(encoding="utf-8"), "current_version_id")
+
+
+def default_threadops_work_id(goal_id: str) -> str:
+    return f"WORK-{safe_artifact_suffix(goal_id)}-THREADS"
+
+
+def default_task_signature_id(goal_id: str) -> str:
+    return f"TS-{safe_artifact_suffix(goal_id)}"
+
+
+def threadops_role_brief_content(
+    *,
+    spec: ThreadRoleSpec,
+    goal_id: str,
+    work_id: str,
+    title: str,
+    objective: str,
+    task_signature: dict[str, str],
+    mode: str,
+    write_scope: str,
+) -> str:
+    project_facts = "\n".join(
+        f"- {key}: {value or 'TBD'}" for key, value in task_signature.items()
+    )
+    read_first = "\n".join(f"- `{item}`" for item in spec.read_first)
+    allowed = "\n".join(f"- {item}" for item in spec.allowed_actions)
+    forbidden = "\n".join(f"- {item}" for item in spec.forbidden_actions)
+    output = "\n".join(f"- {item}" for item in spec.required_output)
+    return f"""# {spec.role_id} Role Brief
+
+goal_id: {goal_id}
+work_id: {work_id}
+goal_title: {title}
+role_id: {spec.role_id}
+role_label: {spec.label}
+mode: {mode}
+environment: {spec.default_environment}
+write_scope: {write_scope}
+
+## Professional Identity
+
+{spec.professional_identity}
+
+## Role Objective
+
+{spec.purpose}
+
+Goal objective: {objective}
+
+## Project Facts To Honor
+
+{project_facts}
+
+## Read First
+
+{read_first}
+
+## Allowed Actions
+
+{allowed}
+
+## Forbidden Actions
+
+{forbidden}
+
+## Output Contract
+
+{output}
+
+## Acceptance Evidence
+
+- Stop condition: {spec.stop_condition}
+- Validation proof: {spec.validation_proof}
+- Main/control thread is the only merge owner.
+- Final PPT/PDF export is not allowed from this lane.
+"""
+
+
+def threadops_worker_prompt_content(
+    *,
+    project: Path,
+    spec: ThreadRoleSpec,
+    goal_id: str,
+    work_id: str,
+    lane_id: str,
+    title: str,
+    objective: str,
+    task_signature_id: str,
+    task_signature: dict[str, str],
+    role_brief_path: Path,
+    receipt_path: Path,
+    extra_read_first: list[str],
+    mode: str,
+    workspace_path: str,
+    write_scope: str,
+) -> str:
+    read_first = list(dict.fromkeys([*spec.read_first, *extra_read_first]))
+    read_first_text = "\n".join(f"- {item}" for item in read_first)
+    allowed = "\n".join(f"- {item}" for item in spec.allowed_actions)
+    forbidden = "\n".join(f"- {item}" for item in spec.forbidden_actions)
+    output = "\n".join(f"- {item}" for item in spec.required_output)
+    task_signature_text = "\n".join(
+        f"- {key}: {value or 'TBD'}" for key, value in task_signature.items()
+    )
+    execution_receipt = (
+        "- write_scope\n"
+        "- files_changed\n"
+        "- validation_result\n"
+        "- dirty_state_impact\n"
+        "- cleanup_actions"
+        if mode == "execution_worker"
+        else "- files_inspected\n- proposed_changes\n- no_files_changed_confirmation"
+    )
+    return f"""Repo: {project}
+Mode: {mode}
+Task signature: {task_signature_id}
+Agent role md: {safe_rel(project, role_brief_path)}
+Agency selection id: none
+Agency role brief: {safe_rel(project, role_brief_path)}
+Agency source agents: none
+Source staff count: 0
+Goal: {title}
+Goal id: {goal_id}
+Goal objective: {objective}
+Work item: {work_id}
+Lane id: {lane_id}
+
+Task signature details:
+{task_signature_text}
+
+Read first:
+{read_first_text}
+
+Environment: {spec.default_environment}
+Workspace path: {workspace_path}
+Allowed actions:
+{allowed}
+
+Forbidden actions:
+{forbidden}
+- Do not edit files unless the lane plan grants an exact write path.
+- Do not update current_truth, version_map, artifact_index, gate_log, or final exports.
+- Do not send, upload, purchase, log in, or use private accounts.
+
+Write scope: {write_scope}
+Receipt path: {safe_rel(project, receipt_path)}
+Stop condition: {spec.stop_condition}
+Merge owner: main/control thread
+Final export allowed: no
+Completion proof: {spec.validation_proof}
+
+Return format:
+- summary
+- write_scope: {write_scope}
+{execution_receipt}
+- evidence refs
+- QA/gate status
+- open questions
+- workflow issue and recurrence guard, if found
+
+Required output:
+{output}
+"""
+
+
+def render_thread_cleanup_note(
+    project: Path,
+    *,
+    goal_id: str,
+    work_id: str,
+    roles: list[str],
+    max_active: int,
+) -> Path:
+    output = project / f"AD-creative/orchestrator/thread_cleanup_{work_id}.md"
+    role_lines = "\n".join(f"- {THREADOPS_ROLE_SPECS[role].role_id}: planned" for role in roles)
+    write_text(
+        output,
+        f"""# Thread Cleanup Plan
+
+goal_id: {goal_id}
+work_id: {work_id}
+status: planned
+created_at: {now_iso()}
+
+## Active Budget
+
+- max_active_worker_reviewer: {max_active}
+- main/control thread remains integration owner.
+- worker/reviewer threads are archived after their receipts are reconciled.
+
+## Planned Lanes
+
+{role_lines}
+
+## Audit Steps
+
+1. Run `list_threads` with query `ADCO`.
+2. Keep the main/control thread active.
+3. Keep only lanes whose lifecycle is `created`, `assigned`, `running`, or `returned`.
+4. Archive duplicate, stale, superseded, off-scope, or reconciled employee threads.
+5. Record real thread ids and archive decisions in `AD-creative/orchestrator/thread_registry.csv`.
+6. Before final status, confirm no consumed worker remains active.
+""",
+    )
+    return output
+
+
+def render_thread_execution_plan(
+    project: Path,
+    *,
+    goal_id: str,
+    title: str,
+    objective: str,
+    roles: list[str],
+    work_id: str = "",
+    task_signature_id: str = "",
+    brand: str = "",
+    product: str = "",
+    talent_or_ip: str = "",
+    platform_or_channel: str = "",
+    deliverable: str = "",
+    stage: str = "threadops",
+    primary_risks: str = "",
+    evidence_needed: str = "",
+    master_thread_id: str = "",
+    current_version: str = "",
+    max_active: int = 3,
+    extra_read_first: list[str] | None = None,
+    force: bool = False,
+) -> dict[str, object]:
+    if not roles:
+        raise ValueError("at least one ThreadOps role is required")
+    if max_active < 1 or max_active > 3:
+        raise ValueError("max_active_worker_reviewer must be between 1 and 3")
+    if len(roles) > 5:
+        raise ValueError("broad council over 5 roles requires explicit user approval")
+
+    ensure_project(project)
+    work_id = work_id or default_threadops_work_id(goal_id)
+    task_signature_id = task_signature_id or default_task_signature_id(goal_id)
+    current_version = current_version or current_version_id(project)
+    extra_read_first = extra_read_first or []
+    now = now_iso()
+    task_signature = {
+        "brand": brand,
+        "product": product,
+        "talent_or_ip": talent_or_ip,
+        "platform_or_channel": platform_or_channel,
+        "deliverable": deliverable,
+        "stage": stage,
+        "primary_risks": primary_risks,
+        "evidence_needed": evidence_needed,
+    }
+    plan_path = project / "AD-creative/orchestrator/thread_lane_plan.md"
+    if plan_path.exists() and not force:
+        raise FileExistsError(f"thread lane plan already exists: {plan_path}; pass --force to replace it")
+    ensure_csv_fields(project / "AD-creative/orchestrator/thread_registry.csv", THREADOPS_REGISTRY_FIELDS)
+    ensure_csv_fields(project / "AD-creative/orchestrator/agent_runs.csv", THREADOPS_AGENT_RUN_FIELDS)
+
+    role_dir = project / "AD-creative/agents/role_briefs"
+    prompt_dir = project / f"AD-creative/agents/thread_prompts/{work_id}"
+    receipt_dir = project / f"AD-creative/agents/receipts/{work_id}"
+    role_dir.mkdir(parents=True, exist_ok=True)
+    prompt_dir.mkdir(parents=True, exist_ok=True)
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+
+    lane_rows: list[dict[str, str]] = []
+    registry_rows: list[dict[str, str]] = []
+    prompt_paths: list[Path] = []
+    role_brief_paths: list[Path] = []
+    receipt_paths: list[Path] = []
+
+    for index, role in enumerate(roles, 1):
+        spec = THREADOPS_ROLE_SPECS[role]
+        lane_id = f"LANE-{index:02d}-{spec.role_id}"
+        mode = threadops_lane_mode(role, spec)
+        workspace_path = threadops_workspace_path(work_id, lane_id, spec)
+        write_scope = resolve_threadops_write_scope(work_id, lane_id, spec)
+        run_id = f"RUN-{safe_artifact_suffix(work_id)}-{index:02d}"
+        thread_title = f"ADCO 员工｜{spec.label}｜{title[:24] or work_id}"
+        role_brief_path = role_dir / f"{spec.role_id}_{work_id}.md"
+        prompt_path = prompt_dir / f"{lane_id}_prompt.md"
+        receipt_path = receipt_dir / f"{lane_id}_receipt.md"
+        role_brief_paths.append(role_brief_path)
+        prompt_paths.append(prompt_path)
+        receipt_paths.append(receipt_path)
+
+        write_text(
+            role_brief_path,
+            threadops_role_brief_content(
+                spec=spec,
+                goal_id=goal_id,
+                work_id=work_id,
+                title=title,
+                objective=objective,
+                task_signature=task_signature,
+                mode=mode,
+                write_scope=write_scope,
+            ),
+        )
+        write_text(
+            prompt_path,
+            threadops_worker_prompt_content(
+                project=project,
+                spec=spec,
+                goal_id=goal_id,
+                work_id=work_id,
+                lane_id=lane_id,
+                title=title,
+                objective=objective,
+                task_signature_id=task_signature_id,
+                task_signature=task_signature,
+                role_brief_path=role_brief_path,
+                receipt_path=receipt_path,
+                extra_read_first=extra_read_first,
+                mode=mode,
+                workspace_path=workspace_path,
+                write_scope=write_scope,
+            ),
+        )
+        write_text(
+            receipt_path,
+            f"""# {lane_id} Receipt
+
+status: pending
+goal_id: {goal_id}
+work_id: {work_id}
+role_id: {spec.role_id}
+mode: {mode}
+environment: {spec.default_environment}
+workspace_path: {workspace_path}
+write_scope: {write_scope}
+thread_id: TBD
+
+## Summary
+
+pending
+
+## Files Changed
+
+pending
+
+## Validation Result
+
+pending
+
+## Dirty-State Impact
+
+pending
+
+## Cleanup Actions
+
+pending
+
+## Evidence
+
+pending
+
+## Open Questions
+
+pending
+""",
+        )
+
+        lane_rows.append(
+            {
+                "lane_id": lane_id,
+                "thread_id": f"planned:{lane_id}",
+                "thread_title": thread_title,
+                "thread_role": spec.role_id,
+                "professional_identity": spec.professional_identity,
+                "agent_role_md": safe_rel(project, role_brief_path),
+                "agency_selection_id": "none",
+                "agency_role_brief": safe_rel(project, role_brief_path),
+                "agency_source_agents": "none",
+                "source_staff_count": "0",
+                "work_id": work_id,
+                "purpose": spec.purpose,
+                "spawn_mode": "create_or_reuse_codex_thread",
+                "mode": mode,
+                "environment": spec.default_environment,
+                "workspace_path": workspace_path,
+                "read_first": ";".join([*spec.read_first, *extra_read_first]),
+                "write_scope": write_scope,
+                "receipt_path": safe_rel(project, receipt_path),
+                "receipt_status": "missing",
+                "reconciliation_status": "pending",
+                "stop_condition": spec.stop_condition,
+                "validation_proof": spec.validation_proof,
+                "required_output": ";".join(spec.required_output),
+                "merge_owner": "main/control thread",
+                "final_export_allowed": "no",
+                "lifecycle_status": "planned",
+                "cleanup_note": "archive after receipt is reconciled",
+                "run_id": run_id,
+            }
+        )
+        registry_rows.append(
+            {
+                "thread_id": f"planned:{lane_id}",
+                "title": thread_title,
+                "role": spec.role_id,
+                "lane_id": lane_id,
+                "work_id": work_id,
+                "lifecycle_state": "planned",
+                "pinned": "false",
+                "archived": "false",
+                "created_at": now,
+                "updated_at": now,
+                "cleanup_action": "create_or_reuse_thread_then_archive_after_reconcile",
+                "notes": f"prompt={safe_rel(project, prompt_path)}",
+                "goal_id": goal_id,
+                "mode": mode,
+                "environment": spec.default_environment,
+                "workspace_path": workspace_path,
+                "write_scope": write_scope,
+                "professional_identity": spec.professional_identity,
+                "receipt_path": safe_rel(project, receipt_path),
+                "receipt_status": "missing",
+                "reconciliation_status": "pending",
+                "assigned_at": "",
+                "returned_at": "",
+                "reconciled_at": "",
+                "archived_at": "",
+                "cleanup_reason": "",
+                "last_seen_at": now,
+                "duplicate_of": "",
+            }
+        )
+        update_or_append_csv_row(
+            project / "AD-creative/orchestrator/agent_runs.csv",
+            "run_id",
+            {
+                "run_id": run_id,
+                "work_id": work_id,
+                "agent_role": spec.role_id,
+                "status": "planned",
+                "started_at": "",
+                "completed_at": "",
+                "input_files": ";".join([safe_rel(project, role_brief_path), safe_rel(project, prompt_path)]),
+                "output_files": safe_rel(project, receipt_path),
+                "gate_id": "",
+                "summary": f"Planned Codex Thread lane for {spec.role_id}.",
+                "next_action": "create_or_reuse_codex_thread",
+                "thread_id": f"planned:{lane_id}",
+                "lane_id": lane_id,
+                "receipt_path": safe_rel(project, receipt_path),
+                "proof_status": "pending",
+                "reconciliation_status": "pending",
+            },
+        )
+
+    for row in registry_rows:
+        update_or_append_csv_row(
+            project / "AD-creative/orchestrator/thread_registry.csv",
+            "thread_id",
+            row,
+        )
+
+    cleanup_path = render_thread_cleanup_note(
+        project,
+        goal_id=goal_id,
+        work_id=work_id,
+        roles=roles,
+        max_active=max_active,
+    )
+
+    lane_header = [
+        "lane_id",
+        "thread_id",
+        "thread_title",
+        "thread_role",
+        "professional_identity",
+        "agent_role_md",
+        "agency_selection_id",
+        "agency_role_brief",
+        "agency_source_agents",
+        "source_staff_count",
+        "work_id",
+        "purpose",
+        "spawn_mode",
+        "mode",
+        "environment",
+        "workspace_path",
+        "read_first",
+        "write_scope",
+        "receipt_path",
+        "receipt_status",
+        "reconciliation_status",
+        "stop_condition",
+        "validation_proof",
+        "required_output",
+        "merge_owner",
+        "final_export_allowed",
+        "lifecycle_status",
+        "cleanup_note",
+    ]
+    lane_table = [
+        "| " + " | ".join(lane_header) + " |",
+        "| " + " | ".join("---" for _ in lane_header) + " |",
+    ]
+    for row in lane_rows:
+        lane_table.append(
+            "| " + " | ".join(markdown_table_cell(row.get(column, "")) for column in lane_header) + " |"
+        )
+
+    registry_header = [
+        "thread_id",
+        "title",
+        "role",
+        "mode",
+        "lane_id",
+        "lifecycle_state",
+        "receipt_status",
+        "reconciliation_status",
+        "pinned",
+        "cleanup_action",
+        "notes",
+    ]
+    registry_table = [
+        "| " + " | ".join(registry_header) + " |",
+        "| " + " | ".join("---" for _ in registry_header) + " |",
+    ]
+    for row in registry_rows:
+        registry_table.append(
+            "| " + " | ".join(markdown_table_cell(row.get(column, "")) for column in registry_header) + " |"
+        )
+
+    task_signature_block = "\n".join(f"{key}: {value or 'TBD'}" for key, value in task_signature.items())
+    prompt_list = "\n".join(f"- `{safe_rel(project, path)}`" for path in prompt_paths)
+    role_brief_list = "\n".join(f"- `{safe_rel(project, path)}`" for path in role_brief_paths)
+    receipt_list = "\n".join(f"- `{safe_rel(project, path)}`" for path in receipt_paths)
+    write_text(
+        plan_path,
+        f"""# Thread Lane Plan
+
+goal_id: {goal_id}
+run_id: {work_id}
+created_at: {now}
+master_thread_id: {master_thread_id or 'TBD'}
+project_kind: ppt_material_project
+task_signature_id: {task_signature_id}
+current_version_id: {current_version or 'TBD'}
+
+## Goal
+
+```text
+user_outcome: {title}
+success_standard: {objective}
+blocked_if: thread budget exceeds {max_active}, worker edits undeclared files, validation fails, or cleanup proof is missing
+```
+
+## Task Signature
+
+```text
+{task_signature_block}
+```
+
+## Thread Budget
+
+```text
+max_active_worker_reviewer: {max_active}
+broad_council_requires_user_approval_over: 5
+main_thread_only_for: integration,current_truth,version_map,artifact_index,gate_log,final_export,final_status
+freeze_trigger: user reports thread confusion / high heat / wrong thread / cleanup request
+lane_modes: execution_worker requires exact write_scope; research/read_only_review/cold_review are read-only receipt lanes
+```
+
+## Invocation
+
+1. Run `list_threads` with query `ADCO` and reuse/archive stale project worker threads before spawning.
+2. Create at most {max_active} active worker/reviewer Codex Threads at one time.
+3. Send each worker exactly one prompt from `AD-creative/agents/thread_prompts/{work_id}/`.
+4. Require each worker to return a receipt matching `AD-creative/agents/receipts/{work_id}/`.
+5. Main/control thread reads every receipt, merges only accepted changes, runs validation/gates, then archives reconciled workers.
+
+## Role Briefs
+
+{role_brief_list}
+
+## Worker Prompts
+
+{prompt_list}
+
+## Receipts
+
+{receipt_list}
+
+## Lane Map
+
+{chr(10).join(lane_table)}
+
+## Thread Registry
+
+{chr(10).join(registry_table)}
+
+## Master Thread Rules
+
+```text
+Owns current_truth, work_items, agent_runs, gate_log, artifact_index, and final answer.
+Reads every worker result before accepting it.
+Does not copy worker output blindly.
+Runs or records the relevant validation/gate before advancing state.
+Lists existing ADCO threads before creating a new employee thread.
+Archives duplicate, stale, superseded, or reconciled employee threads.
+Uses execution_worker for scoped production/editing work; uses read_only only for explorer, reviewer, research, or cold-review lanes.
+Execution worker lanes must declare exact write_scope, files_changed, validation_result, dirty_state_impact, and cleanup_actions in the receipt.
+Does not allow more than {max_active} active workers in this plan.
+Exports final PPT/PDF only from the main control thread.
+```
+
+## Reconciliation Log
+
+| lane_id | accepted | rejected | files_merged | gate_id | notes |
+|---|---|---|---|---|---|
+
+## Cleanup Log
+
+| checked_at | active_threads_kept | threads_archived | duplicate_titles_fixed | notes |
+|---|---|---|---|---|
+| {now} | main/control only until worker creation | TBD | TBD | cleanup plan: `{safe_rel(project, cleanup_path)}` |
+""",
+    )
+
+    artifact_plan_id = f"ART-{safe_artifact_suffix(work_id)}-LANE-PLAN"
+    artifact_prompt_id = f"ART-{safe_artifact_suffix(work_id)}-PROMPTS"
+    artifact_cleanup_id = f"ART-{safe_artifact_suffix(work_id)}-CLEANUP"
+    update_artifact(
+        project,
+        artifact_plan_id,
+        "thread_lane_plan",
+        safe_rel(project, plan_path),
+        "threadops",
+        status="done",
+        visibility="internal_only",
+        gate_status="PASS",
+    )
+    update_artifact(
+        project,
+        artifact_prompt_id,
+        "thread_prompt_pack",
+        safe_rel(project, prompt_dir),
+        "threadops",
+        status="done",
+        visibility="internal_only",
+        gate_status="PASS",
+    )
+    update_artifact(
+        project,
+        artifact_cleanup_id,
+        "thread_cleanup_plan",
+        safe_rel(project, cleanup_path),
+        "threadops",
+        status="planned",
+        visibility="internal_only",
+        gate_status="PARTIAL_PASS",
+    )
+    update_or_append_csv_row(
+        project / "AD-creative/orchestrator/work_items.csv",
+        "work_id",
+        {
+            "work_id": work_id,
+            "stage": "threadops",
+            "title": title,
+            "objective": objective,
+            "owner_agent": "Main Controller",
+            "status": "planned",
+            "priority": "high",
+            "input_refs": "",
+            "output_artifacts": ";".join([artifact_plan_id, artifact_prompt_id, artifact_cleanup_id]),
+            "linked_requirements": "",
+            "linked_source_events": "",
+            "linked_references": "",
+            "linked_assets": "",
+            "linked_slides": "",
+            "blocked_by": "",
+            "gate_required": "ThreadOps cleanup audit",
+            "client_visibility": "internal_only",
+            "created_at": now,
+            "updated_at": now,
+            "supersedes_work_id": "",
+        },
+    )
+    append_event(
+        project,
+        {
+            "event_id": f"EVT-{work_id}",
+            "event_type": "thread_execution_plan_created",
+            "created_at": now,
+            "goal_id": goal_id,
+            "work_id": work_id,
+            "roles": [THREADOPS_ROLE_SPECS[role].role_id for role in roles],
+            "thread_lane_plan": safe_rel(project, plan_path),
+            "prompt_dir": safe_rel(project, prompt_dir),
+            "cleanup_plan": safe_rel(project, cleanup_path),
+        },
+    )
+    return {
+        "goal_id": goal_id,
+        "work_id": work_id,
+        "task_signature_id": task_signature_id,
+        "thread_lane_plan": plan_path,
+        "prompt_dir": prompt_dir,
+        "role_briefs": role_brief_paths,
+        "prompts": prompt_paths,
+        "receipts": receipt_paths,
+        "cleanup_plan": cleanup_path,
+        "roles": [THREADOPS_ROLE_SPECS[role].role_id for role in roles],
+    }
+
+
 def render_goal_iteration_plan(
     project: Path,
     *,
@@ -4919,6 +6857,78 @@ def command_goal_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_thread_plan(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    goal_id = args.goal_id or default_goal_id()
+    try:
+        roles = parse_threadops_roles(args.roles)
+        payload = render_thread_execution_plan(
+            project,
+            goal_id=goal_id,
+            title=args.title or goal_id,
+            objective=args.objective or "Use Codex Threads as controlled execution lanes for this delivery goal.",
+            roles=roles,
+            work_id=args.work_id,
+            task_signature_id=args.task_signature_id,
+            brand=args.brand,
+            product=args.product,
+            talent_or_ip=args.talent_or_ip,
+            platform_or_channel=args.platform_or_channel,
+            deliverable=args.deliverable,
+            stage=args.stage,
+            primary_risks=args.primary_risks,
+            evidence_needed=args.evidence_needed,
+            master_thread_id=args.master_thread_id,
+            current_version=args.current_version_id,
+            max_active=args.max_active,
+            extra_read_first=args.read_first,
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should surface actionable plan failure
+        print("THREAD_PLAN=CHECK")
+        print(f"ERROR={exc}")
+        return 1
+    dashboard = render_dashboard(project)
+    errors, stats = validate(project)
+    if args.json:
+        output = {
+            "thread_plan": "PASS" if not errors else "CHECK",
+            "project": str(project),
+            "goal_id": payload["goal_id"],
+            "work_id": payload["work_id"],
+            "task_signature_id": payload["task_signature_id"],
+            "thread_lane_plan": str(payload["thread_lane_plan"]),
+            "prompt_dir": str(payload["prompt_dir"]),
+            "cleanup_plan": str(payload["cleanup_plan"]),
+            "roles": payload["roles"],
+            "dashboard": str(dashboard),
+            "validation": "PASS" if not errors else "CHECK",
+            "stats": stats,
+            "errors": errors,
+        }
+        print(json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if not errors else 1
+    print(f"THREAD_PLAN={'PASS' if not errors else 'CHECK'}")
+    print(f"PROJECT={project}")
+    print(f"GOAL_ID={payload['goal_id']}")
+    print(f"WORK_ID={payload['work_id']}")
+    print(f"TASK_SIGNATURE_ID={payload['task_signature_id']}")
+    print(f"THREAD_LANE_PLAN={payload['thread_lane_plan']}")
+    print(f"PROMPT_DIR={payload['prompt_dir']}")
+    print(f"CLEANUP_PLAN={payload['cleanup_plan']}")
+    print("ROLES=" + ";".join(payload["roles"]))
+    print(f"DASHBOARD={dashboard}")
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    if errors:
+        print("ERRORS:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    return 0
+
+
 def command_goal_run(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     result = run_goal(
@@ -5357,6 +7367,99 @@ def command_intake(args: argparse.Namespace) -> int:
             print(f"- {error}")
         return 1
     return 0
+
+
+def command_profile_analyze(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    source_ids = args.source_id or []
+    work_id = ensure_profile_work(project, source_ids, args.goal)
+    try:
+        stats = analyze_profiles(
+            project,
+            source_ids=source_ids,
+            work_id=work_id,
+            goal=args.goal,
+            brand=args.brand,
+            company=args.company,
+            client=args.client,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should surface actionable analysis failure
+        print("PROFILE_ANALYSIS=CHECK")
+        print(f"ERROR={exc}")
+        return 1
+    dashboard = render_dashboard(project)
+    errors, validate_stats = validate(project)
+    if args.json:
+        output = {
+            "profile_analysis": "PASS" if not errors else "CHECK",
+            "project": str(project),
+            "work_id": work_id,
+            "profile_current_truth": str(stats["profile_current_truth"]),
+            "handoff": str(stats["handoff"]),
+            "stats": {key: value for key, value in stats.items() if isinstance(value, (int, str))},
+            "dashboard": str(dashboard),
+            "validation": "PASS" if not errors else "CHECK",
+            "validate_stats": validate_stats,
+            "errors": errors,
+        }
+        print(json.dumps(output, ensure_ascii=False, indent=2))
+        return 0 if not errors else 1
+    print(f"PROJECT={project}")
+    print(f"WORK_ID={work_id}")
+    print(f"PROFILE_MATERIALS={stats['materials']}")
+    print(f"PROFILE_SUBJECTS={stats['subjects']}")
+    print(f"PROFILE_VOICES={stats['voices']}")
+    print(f"PROFILE_INSIGHTS={stats['insights']}")
+    print(f"PROFILE_CONFLICTS={stats['conflicts']}")
+    print(f"PROFILE_DEDUPED={stats['deduped']}")
+    print(f"PROFILE_CURRENT_TRUTH={stats['profile_current_truth']}")
+    print(f"HANDOFF={stats['handoff']}")
+    print(f"DASHBOARD={dashboard}")
+    for key, value in validate_stats.items():
+        print(f"{key.upper()}={value}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    if errors:
+        print("ERRORS:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    return 0
+
+
+def command_hygiene(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    report = workspace_hygiene_report(project)
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["status"] == "PASS" or not args.strict else 1
+    print(f"WORKSPACE_HYGIENE={report['status']}")
+    print(f"PROJECT={report['project']}")
+    print(f"GIT_ROOT={report['git_root'] or 'none'}")
+    print(f"TRACKED_CHANGES={len(report['tracked_changes'])}")
+    print(f"UNTRACKED_FILES={len(report['untracked_files'])}")
+    print(f"POLLUTION_PATHS={len(report['pollution_paths'])}")
+    print(f"ACTIVE_THREADS={len(report['active_threads'])}")
+    if report["issues"]:
+        print("ISSUES:")
+        for issue in report["issues"]:
+            print(f"- {issue}")
+    if report["tracked_changes"]:
+        print("TRACKED:")
+        for line in report["tracked_changes"][:30]:
+            print(f"- {line}")
+    if report["untracked_files"]:
+        print("UNTRACKED:")
+        for line in report["untracked_files"][:30]:
+            print(f"- {line}")
+    if report["pollution_paths"]:
+        print("POLLUTION:")
+        for path in report["pollution_paths"][:30]:
+            print(f"- {path}")
+    print("PLAN:")
+    for item in report["plan"]:
+        print(f"- {item}")
+    return 0 if report["status"] == "PASS" or not args.strict else 1
 
 
 def command_council(args: argparse.Namespace) -> int:
@@ -5962,6 +8065,37 @@ def build_parser() -> argparse.ArgumentParser:
     goal_parser.add_argument("--force", action="store_true", help="Overwrite an existing goal plan with the same id.")
     goal_parser.set_defaults(func=command_goal_plan)
 
+    thread_plan_parser = subparsers.add_parser(
+        "thread-plan",
+        help="Create a Codex ThreadOps lane plan, role briefs, worker prompts, and registry rows.",
+    )
+    thread_plan_parser.add_argument("project", help="Project directory.")
+    thread_plan_parser.add_argument("--goal-id", default="", help="Stable goal id. Defaults to timestamp.")
+    thread_plan_parser.add_argument("--work-id", default="", help="Stable work id. Defaults from goal id.")
+    thread_plan_parser.add_argument("--task-signature-id", default="", help="Stable task signature id. Defaults from goal id.")
+    thread_plan_parser.add_argument("--title", default="", help="Human-readable goal title.")
+    thread_plan_parser.add_argument("--objective", default="", help="Goal objective.")
+    thread_plan_parser.add_argument(
+        "--roles",
+        default=",".join(THREADOPS_DEFAULT_ROLES),
+        help="Comma-separated roles. Choices: brand_client, copy_creative, film_director, art_design, producer_risk, qa_review.",
+    )
+    thread_plan_parser.add_argument("--brand", default="")
+    thread_plan_parser.add_argument("--product", default="")
+    thread_plan_parser.add_argument("--talent-or-ip", default="")
+    thread_plan_parser.add_argument("--platform-or-channel", default="")
+    thread_plan_parser.add_argument("--deliverable", default="")
+    thread_plan_parser.add_argument("--stage", default="threadops")
+    thread_plan_parser.add_argument("--primary-risks", default="")
+    thread_plan_parser.add_argument("--evidence-needed", default="")
+    thread_plan_parser.add_argument("--master-thread-id", default="")
+    thread_plan_parser.add_argument("--current-version-id", default="")
+    thread_plan_parser.add_argument("--max-active", type=int, default=3)
+    thread_plan_parser.add_argument("--read-first", action="append", default=[], help="Extra read-first file for every lane. Repeatable.")
+    thread_plan_parser.add_argument("--force", action="store_true", help="Replace an existing thread_lane_plan.md for this project.")
+    thread_plan_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    thread_plan_parser.set_defaults(func=command_thread_plan)
+
     goal_run_parser = subparsers.add_parser("goal-run", help="Run deterministic local goal steps until a safe stop condition.")
     goal_run_parser.add_argument("project", help="Project directory.")
     goal_run_parser.add_argument("--goal-id", default="latest", help="Goal id or latest.")
@@ -6081,6 +8215,28 @@ def build_parser() -> argparse.ArgumentParser:
     intake_parser.add_argument("--source-id", action="append", default=[], help="Registered source_event_id to process. Repeatable.")
     intake_parser.add_argument("--goal", default="先完成需求整理、缺口判断、客户追问、下一步建议。")
     intake_parser.set_defaults(func=command_intake)
+
+    profile_parser = subparsers.add_parser(
+        "profile-analyze",
+        help="Analyze meeting/client materials into participant, brand, company, decision, and conflict profiles.",
+    )
+    profile_parser.add_argument("project", help="Project directory.")
+    profile_parser.add_argument("--source-id", action="append", default=[], help="Registered source_event_id to process. Repeatable.")
+    profile_parser.add_argument("--goal", default="分析会议资料中的人物画像、品牌画像、需求权重、决策权和分歧融合路径。")
+    profile_parser.add_argument("--brand", default="", help="Brand name to use for brand profile.")
+    profile_parser.add_argument("--company", default="", help="Company or client organization name.")
+    profile_parser.add_argument("--client", default="", help="Client group name if the company/brand is unclear.")
+    profile_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    profile_parser.set_defaults(func=command_profile_analyze)
+
+    hygiene_parser = subparsers.add_parser(
+        "hygiene",
+        help="Audit workspace cleanliness without deleting files.",
+    )
+    hygiene_parser.add_argument("project", help="Project or repo directory.")
+    hygiene_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    hygiene_parser.add_argument("--strict", action="store_true", help="Return non-zero when hygiene status is CHECK.")
+    hygiene_parser.set_defaults(func=command_hygiene)
 
     audit_parser = subparsers.add_parser("audit-dashboard", help="Audit dashboard usability markers.")
     audit_parser.add_argument("project", help="Project directory.")

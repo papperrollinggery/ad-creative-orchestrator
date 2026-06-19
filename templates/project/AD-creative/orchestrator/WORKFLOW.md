@@ -18,6 +18,7 @@ Default flow:
 
 ```text
 Intake
+→ Meeting / Client Profile Analysis
 → Diagnose
 → Research Plan
 → Reference Research
@@ -44,7 +45,29 @@ Read dual_lane_goal_delivery_workflow.md
 → run stage work
 → run adversarial council before Gate
 → update thread_registry / gate_log / decisions / resolutions / handoff
+→ run hygiene check before final status
 → continue, pause, or rollback by explicit rule
+```
+
+ThreadOps execution layer:
+
+```text
+Main/control thread decomposes, assigns, integrates, validates, cleans up, and reports.
+Execution workers own scoped implementation, document edits, artifact production, or material drafting.
+Read-only lanes are only explorer, reviewer, research, and cold-review lanes.
+Every execution worker must have exact write_scope before spawn.
+Every execution worker returns files_changed, validation, dirty-state impact, and cleanup actions.
+Main/control thread archives the worker thread after consuming and reconciling the receipt.
+```
+
+Profile analysis flow:
+
+```text
+Use profile-analyze when meeting notes, transcripts, or client discussions are available.
+Store people, brand, company, decision, influence, demand, concern, and conflict signals in profile_knowledge/.
+Treat every profile claim as candidate until the user/client confirms it.
+Use profile_current_truth.md before research, strategy, copy, visual, and council work.
+When stakeholders disagree, record the disagreement and proposed reconciliation path instead of flattening it.
 ```
 
 Agency staff selection flow:
@@ -78,6 +101,7 @@ PPT editability check passes on the exact current PPTX.
 All user/client/Pro-review diff comments are fixed, explicitly deferred with owner, or listed in 待你确认.md.
 validate_project.py reports ERRORS=0 and VALIDATION=PASS.
 Thread cleanup audit is done when Codex threads were used.
+Workspace hygiene check has no cache pollution, unexpected untracked files, or unreconciled active thread rows.
 ```
 
 Hard rules:
@@ -88,6 +112,8 @@ No visual asset without asset manifest entry.
 No stage advance without gate.
 No Gate higher than PARTIAL_PASS without adversarial council notes.
 No worker run completion without harness proof: files, evidence, QA/gate status, and affected manifest/index rows.
+No execution worker without exact write_scope and receipt path.
+No execution worker completion without files_changed, validation, dirty-state impact, and cleanup actions.
 No prompt-only handoff for visual work; visual workers must provide storyboard/base asset/final asset state as applicable.
 No worker thread may update master truth files unless the handoff explicitly grants that write scope.
 No worker thread may export final PPT/PDF; only the main control thread owns final export and delivery status.
@@ -95,5 +121,6 @@ No worker starts from raw Agency staff text; synthesize a project-specific role 
 No client-facing page may mention prompts, execution steps, thread plans, lane plans, worker roles, or internal QA mechanics.
 No fake logo, fake packaging, fake case, internal notes, or contact sheet in client-facing material.
 Do not overwrite old client review versions.
+Do not leave __pycache__, .pytest_cache, *.pyc, stale workspaces, or consumed thread rows after verification.
 Do not install project skill drafts globally without explicit user approval.
 ```
