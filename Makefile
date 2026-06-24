@@ -15,6 +15,7 @@ install-dev:
 	$(PYTHON) -m pip install -e .
 
 install-smoke:
+	set -e; \
 	tmp_dir=$$(mktemp -d /tmp/adco-install-XXXXXX); \
 	$(PYTHON) -m venv $$tmp_dir/venv; \
 	$$tmp_dir/venv/bin/python -m pip install --upgrade pip >/dev/null; \
@@ -44,6 +45,7 @@ install-smoke:
 	echo "INSTALL_SMOKE=PASS $$tmp_dir"
 
 package-smoke:
+	set -e; \
 	tmp_dir=$$(mktemp -d /tmp/adco-package-XXXXXX); \
 	$(PYTHON) -m venv $$tmp_dir/venv; \
 	$$tmp_dir/venv/bin/python -m pip install --upgrade pip >/dev/null; \

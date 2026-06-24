@@ -27,6 +27,18 @@ from run_checks import cleanup_python_caches
 from validate_project import validate
 
 
+OPTIONAL_SKIPS: list[str] = []
+
+
+def optional_module(name: str) -> bool:
+    try:
+        __import__(name)
+        return True
+    except Exception as exc:  # noqa: BLE001 - tests report optional fixture coverage
+        OPTIONAL_SKIPS.append(f"{name}: {exc}")
+        return False
+
+
 def assert_valid(project: Path) -> None:
     errors, _ = validate(project)
     if errors:
@@ -405,6 +417,9 @@ def test_creative_doctor_respects_env_root() -> None:
 
 
 def test_import_creative_production_run_registers_assets() -> None:
+    if not optional_module("PIL"):
+        return
+
     from PIL import Image
 
     with tempfile.TemporaryDirectory(prefix="adco-cp-import-") as raw_project:
@@ -463,6 +478,8 @@ def main() -> int:
     test_creative_doctor_respects_env_root()
     test_import_creative_production_run_registers_assets()
     test_film_quality_gate_writes_report()
+    if OPTIONAL_SKIPS:
+        print("TEST_GOAL_WORKFLOW_OPTIONAL_SKIPS=" + "; ".join(OPTIONAL_SKIPS))
     print("TEST_GOAL_WORKFLOW=PASS")
     return 0
 
