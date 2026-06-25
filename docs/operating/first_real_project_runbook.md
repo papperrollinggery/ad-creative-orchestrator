@@ -14,6 +14,7 @@
 04_客户审阅_ClientReview/
 05_最终交付_FinalDelivery/
 AD-creative/
+AGENTS.md
 ```
 
 可从这里复制：
@@ -27,6 +28,10 @@ AD-creative/
 ```text
 adco init <真实项目路径>
 ```
+
+新项目根目录的 `AGENTS.md` 是项目级执行规则。它要求所有 Codex 线程先读取项目事实源、handoff 文件和安全边界，再开始执行；也会明确 `VALIDATION=PASS` 只是结构和追溯通过，不代表客户创意质量批准。
+
+如果真实项目目录已有 `AGENTS.md`，初始化会跳过已有文件，不会覆盖，并写出 `AD-creative/orchestrator/AGENTS.merge_suggestion.md`。把 Ad Creative Orchestrator 的规则人工合并到现有文件，保留客户、仓库或团队已有禁区；未合并前 `adco validate` 会返回 `CHECK`。
 
 ## 1. 放入资料
 
@@ -85,7 +90,7 @@ ad-creative:start
 <填真实项目路径>
 
 要求：
-1. 先读取 AD-creative/orchestrator/ 和 AD-creative/handoff/。
+1. 先读取项目根目录 AGENTS.md、AD-creative/orchestrator/ 和 AD-creative/handoff/。
 2. 如果是新项目，按模板初始化缺失文件。
 3. 不做创意生产。
 4. 只输出当前状态、缺失文件、下一步建议。
@@ -143,6 +148,41 @@ ad-creative:next
 8. 运行 `adco validate` 后再报告结果。
 ```
 
+## 4.2 Creative Proposal Prompt
+
+命令：
+
+```text
+adco creative-proposal <真实项目路径> [--work-id <id>] [--json]
+adco creative-quality-gate <真实项目路径>
+```
+
+```text
+creative-proposal
+
+要求：
+1. 只起草 internal proposal，不写 client-approved / final。
+2. 产出 challenge interpretation、insight、creative idea、option matrix、message line、proposal structure。
+3. 每个 claim 必须绑定 requirement、source_event、reference 或明确标成 assumption / gap。
+4. 使用 docs/operating/creative_proposal_quality_standard.md 的 source mapping 做本地检查。
+5. 不复制 Cannes / Effie / System1 / Google / TikTok / WARC / Ipsos 案例措辞。
+6. 视频脚本、分镜、video prompt 只写 handoff 给 dircreative。
+7. image / KV / 背景图只写 image job spec，交给 imagegen 或 Creative Production。
+8. 固定 PPT / DOCX / XLSX 模板只写结构和字段，交给 Template Creator。
+```
+
+如果要审核 proposal：
+
+```text
+creative-quality-gate
+
+要求：
+1. 审核结构、追溯、证据、专业完整度和客户可见风险。
+2. 明确输出 PASS / PARTIAL_PASS / REVISE / BLOCKED。
+3. PASS 只表示 ready for human creative review 或 specialist handoff。
+4. 不把 PASS 写成客户批准、审美批准、商业效果证明或最终发送许可。
+```
+
 ## 5. 状态 Prompt
 
 ```text
@@ -196,7 +236,16 @@ ad-creative:mine-skill
 ```text
 adco council <真实项目路径> --render-dashboard
 adco validate <真实项目路径>
+adco creative-proposal <真实项目路径>
+adco creative-quality-gate <真实项目路径>
+adco search-quality-gate <真实项目路径>
+adco reference-pack-gate <真实项目路径>
+adco visual-quality-gate <真实项目路径>
+adco client-pack-gate <真实项目路径>
+adco handoff-readiness-gate <真实项目路径>
 ```
+
+`creative-quality-gate` 会把审核结果写入 Gate report / gate_log。证据稀疏、来源未闭合或关键假设未确认时，应接受 PARTIAL_PASS / BLOCKED，不要强行写 PASS。
 
 通过标准：
 
@@ -204,7 +253,15 @@ adco validate <真实项目路径>
 COUNCIL=PASS
 ERRORS=0
 VALIDATION=PASS
+CREATIVE_QUALITY_GATE=PASS 或 PARTIAL_PASS
+SEARCH_QUALITY_GATE=PASS 或 PARTIAL_PASS
+REFERENCE_PACK_GATE=PASS 或 PARTIAL_PASS
+VISUAL_QUALITY_GATE=PASS
+CLIENT_PACK_GATE=PASS
+HANDOFF_READINESS_GATE=PASS
 ```
+
+`VALIDATION=PASS` 只证明结构、CSV/JSON、引用链和 traceability 成立。它不批准创意质量、审美、客户话术、客户可见 AI 图或最终发送。`CREATIVE_QUALITY_GATE=PASS` 也只是 proposal 草稿可进入人工创意复核或专项模块交接，不是客户批准。
 
 ## 9. 人工停点
 

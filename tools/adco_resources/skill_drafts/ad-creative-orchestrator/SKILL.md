@@ -271,6 +271,9 @@ adco audit-dashboard <project_dir> --render --json
 adco validate <project_dir>
 adco check
 adco run <project_dir> --material <materials_path>
+adco creative-proposal <project_dir> --work-id <WORK-ID>
+adco creative-proposal <project_dir> --json
+adco creative-quality-gate <project_dir>
 adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
 adco thread-plan <project_dir> --title <goal_title> --objective <goal_objective> --roles brand_client,copy_creative,qa_review
 adco profile-analyze <project_dir> --source-id <SRC-ID> --brand <brand> --company <company>
@@ -316,6 +319,9 @@ adco validate <project_dir>
 adco validate <project_dir> --json
 adco check
 adco run <project_dir> --material <materials_path>
+adco creative-proposal <project_dir> --work-id <WORK-ID>
+adco creative-proposal <project_dir> --json
+adco creative-quality-gate <project_dir>
 adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
 adco thread-plan <project_dir> --title <goal_title> --objective <goal_objective> --roles brand_client,copy_creative,qa_review
 adco profile-analyze <project_dir> --source-id <SRC-ID> --brand <brand> --company <company>
@@ -329,7 +335,7 @@ make release-check
 Gate commands enforce adversarial council:
 
 ```text
-reference-pack-gate / search-quality-gate / visual-quality-gate / client-pack-gate / handoff-readiness-gate
+creative-quality-gate / reference-pack-gate / search-quality-gate / visual-quality-gate / client-pack-gate / handoff-readiness-gate
 ```
 
 If no valid adversarial council note exists for the stage, a clean PASS is downgraded to PARTIAL_PASS.
@@ -601,6 +607,17 @@ uneditable PPT content presented as editable
 ```
 
 Client-visible copy must read like an advertising proposal, not an execution plan. Keep story, segment summary, brand mapping, timing, and key dialogue/key phrase where those are part of the concept. Do not compress story pages into generic slogans just to make layout easier.
+
+Creative proposal drafts are internal, traceable strategy artifacts. Use `adco creative-proposal <project_dir> [--work-id <id>]` to create or update:
+
+```text
+AD-creative/creative/creative_directions.md
+AD-creative/creative/option_matrix.csv
+AD-creative/proposal_architecture/proposal_structure.md
+AD-creative/client_review/slide_spec.md
+```
+
+Then run `adco creative-quality-gate <project_dir>`. This gate checks proposal completeness, evidence gaps, generic slogans, unsupported case/reference claims, product-to-benefit translation, differentiated directions, key visual/action, client choice rationale, and internal language leaks. `VALIDATION=PASS` is structural only; it is not creative quality approval.
 
 ## Visual Rules
 

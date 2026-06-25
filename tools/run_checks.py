@@ -135,6 +135,8 @@ def main() -> int:
         run([python, *operator, "init", str(initialized)])
         run_json([python, *operator, "validate", str(initialized), "--json"])
         run([python, *operator, "sample", str(sample)])
+        run_json([python, *operator, "creative-proposal", str(sample), "--json"])
+        run([python, *operator, "creative-quality-gate", str(sample)])
         run([python, *operator, "profile-analyze", str(sample), "--brand", "NOVA Trail", "--company", "NOVA Client"])
         run_json([python, *operator, "profile-analyze", str(sample), "--brand", "NOVA Trail", "--company", "NOVA Client", "--json"])
         run([python, *operator, "hygiene", str(sample), "--strict"])

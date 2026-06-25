@@ -52,10 +52,15 @@ adco open-dashboard <project_dir>
 adco next <project_dir>
 ```
 
+Every initialized project gets a root `AGENTS.md`. If the directory already has one, adco leaves it untouched and writes `AD-creative/orchestrator/AGENTS.merge_suggestion.md`; merge the suggested rules into the root file, then run `adco validate` again.
+
 ## What You Get
 
 - `AD-creative/orchestrator/`: structured source of truth for requirements, gaps, work, artifacts, Gates, versions.
 - `AD-creative/handoff/`: non-developer dashboard, project board, pending decisions, client question script.
+- Project-root `AGENTS.md`: project-local Codex rules for new threads, safety stops, handoff files, and required Gates.
+- `adco creative-proposal`: internal strategy/proposal draft control for challenge, insight, creative idea, evidence mapping, and client questions.
+- `adco creative-quality-gate`: proposal quality checks for structure, traceability, evidence, and professional readiness, separate from human/client approval.
 - `adco quickstart`: one-command first run that creates a demo, validates it, opens the dashboard, and prints next steps.
 - `adco demo`: one-command local demo with no real client material.
 - `adco sample`: deterministic sample project generator.
@@ -68,10 +73,14 @@ adco next <project_dir>
 
 ## Safety Model
 
+- This is not a video, image, or fixed PPT/DOCX/XLSX template generator. Route video/storyboard/video prompts to `dircreative`, image/KV/backgrounds to `imagegen` or Creative Production, and fixed office templates to Template Creator.
 - Client-facing files are never sent automatically.
 - External uploads, paid/login/private account actions, global skill installs, and destructive overwrites require explicit human confirmation.
 - AI/generated images stay `internal_only` until visual QA and approval evidence exist.
 - Clean Gates without adversarial council evidence are downgraded to `PARTIAL_PASS`.
+- `VALIDATION=PASS` means the project structure and traceability links are valid. It is not customer creative quality approval.
+- `creative-quality-gate` can only mark an internal proposal draft as structurally/professionally ready for review. It does not certify taste, client preference, business impact, or final approval.
+- Before handoff or client-visible work, run `adco validate` plus `search-quality-gate`, `reference-pack-gate`, `visual-quality-gate`, `client-pack-gate`, and `handoff-readiness-gate`.
 
 当前目标不是做独立 SaaS，也不是直接安装全局 Skill。
 
@@ -132,6 +141,8 @@ adco thread-plan <项目目录> --title "<目标标题>" --objective "<目标内
 adco profile-analyze <项目目录> --source-id <SRC-ID> --brand "<品牌>" --company "<公司>"
 adco hygiene <项目目录>
 adco goal-run <项目目录> --goal-id latest --max-steps 3
+adco creative-proposal <项目目录> [--work-id <id>] [--json]
+adco creative-quality-gate <项目目录>
 adco creative-doctor
 adco creative-run <项目目录> --kind ads --work-id <工作ID> --brief-file <brief.md>
 adco import-creative-production <项目目录> --run-dir <run目录> --kind ads --slot-prefix CP
@@ -157,6 +168,14 @@ python3 -m pip install .
 ```text
 拿到客户资料后，Codex 能稳定完成：
 Intake → 缺口判断 → 搜索建议 → 任务拆分 → agent handoff → 参考包 → 创意方向 → 视觉/image_gen 规划 → 视觉审核 → 客户审阅包/SlideSpec → PPT Gate → 反馈合并 → Final Gate → Skill 草稿沉淀
+```
+
+升级后的定位：
+
+```text
+adco 负责项目控制、可追溯策略/创意 proposal 草稿、质量 Gate、交接和版本归属。
+adco 不负责直接生成视频、图片或固定 PPT/DOCX/XLSX 模板。
+proposal 默认是 internal draft；只有经过对应 Gate、参考/视觉复核和人工批准后，才可进入客户可见链路。
 ```
 
 ## 当前可操作入口
@@ -195,6 +214,8 @@ adco run <项目目录> --material <资料文件或文件夹>
 运行 `adco validate`
 ```
 
+新项目根目录会带 `AGENTS.md`。它让后续 Codex 线程先读项目规则、`AD-creative/orchestrator/` 和 `AD-creative/handoff/`，并遵守人工停点、客户可见限制、Gate 顺序和验证边界。初始化只创建缺失文件；如果目标目录已有 `AGENTS.md`，不会覆盖，内容不同时会写 `AD-creative/orchestrator/AGENTS.merge_suggestion.md` 供人工合并。
+
 项目本地 Skill 草稿：
 
 ```text
@@ -227,6 +248,7 @@ docs/operating/demo_script.md
 docs/operating/github_release_checklist.md
 docs/operating/adoption_patterns.md
 docs/operating/operating_manual.md
+docs/operating/creative_proposal_quality_standard.md
 docs/operating/dual_lane_goal_delivery_workflow.md
 docs/operating/dual_lane_goal_optimization_plan.md
 docs/operating/open_source_release_plan.md
@@ -283,6 +305,8 @@ adco thread-plan <项目目录> --title <目标标题> --objective <目标内容
 adco profile-analyze <项目目录> --source-id <SRC-ID> --brand <品牌> --company <公司>
 adco hygiene <项目目录>
 adco intake <项目目录>
+adco creative-proposal <项目目录> [--work-id <id>] [--json]
+adco creative-quality-gate <项目目录>
 adco add-reference <项目目录> --url <https链接> --title <标题>
 adco search-quality-gate <项目目录>
 adco reference-pack-gate <项目目录>

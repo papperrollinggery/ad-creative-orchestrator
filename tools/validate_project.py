@@ -143,8 +143,54 @@ PROFILE_STATUS_VALUES = {"candidate", "confirmed", "conflicted", "deprecated"}
 PROFILE_SUBJECT_TYPES = {"participant", "brand", "company", "client_group"}
 PROFILE_DECISION_LEVELS = {"high", "medium", "low", "unknown", ""}
 
+AGENTS_REQUIRED_SNIPPETS = [
+    "ad-creative-orchestrator",
+    "AD-creative/orchestrator/",
+    "AD-creative/handoff/",
+    "current_truth.md",
+    "version_map.csv",
+    "artifact_index.csv",
+    "requirements.csv",
+    "gaps.csv",
+    "gate_log.csv",
+    "internal comments",
+    "prompts",
+    "thread names",
+    "worker names",
+    "lane plans",
+    "fake logos",
+    "fake packaging copy",
+    "imagegen",
+    "untraceable references",
+    "unapproved AI images",
+    "archive",
+    "version_archive",
+    "VALIDATION=PASS",
+    "does not mean creative quality",
+    "human confirmation",
+    "real search",
+    "final send",
+    "dircreative",
+    "specialist film workflow",
+    "adco validate",
+    "stage gates",
+    "search-quality-gate",
+    "reference-pack-gate",
+    "creative-quality-gate",
+    "visual-quality-gate",
+    "client-pack-gate",
+    "handoff-readiness-gate",
+    "Codex Threads",
+    "main thread",
+    "write scope",
+    "worker receipts",
+    "clean up",
+    "thread_cleanup",
+]
+
 
 REQUIRED_FILES = [
+    "AGENTS.md",
     "AD-creative/orchestrator/source_events.csv",
     "AD-creative/orchestrator/current_truth.md",
     "AD-creative/orchestrator/requirements.csv",
@@ -238,6 +284,24 @@ def check_structured_files(project: Path, errors: list[str]) -> None:
                     json.load(handle)
             except json.JSONDecodeError as exc:
                 errors.append(f"json parse error: {path}: {exc}")
+
+
+def check_agents_policy(project: Path, errors: list[str]) -> bool:
+    path = project / "AGENTS.md"
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    normalized = text.lower()
+    missing = [
+        snippet
+        for snippet in AGENTS_REQUIRED_SNIPPETS
+        if snippet.lower() not in normalized
+    ]
+    if missing:
+        errors.append(
+            "AGENTS.md missing required policy snippets: " + ", ".join(missing)
+        )
+    return not missing
 
 
 def parse_markdown_table_after_heading(text: str, heading: str) -> list[dict[str, str]]:
@@ -466,6 +530,7 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
         if not (project / rel_path).exists():
             errors.append(f"missing required file: {rel_path}")
 
+    agents_policy_ok = check_agents_policy(project, errors)
     check_structured_files(project, errors)
 
     source_events = load_csv(ad_root / "orchestrator/source_events.csv", errors)
@@ -708,6 +773,7 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
         "profile_subjects": len(profile_subjects),
         "profile_insights": len(profile_insights),
         "profile_conflicts": len(profile_conflicts),
+        "agents_policy": int(agents_policy_ok),
         "errors": len(errors),
     }
     return errors, stats

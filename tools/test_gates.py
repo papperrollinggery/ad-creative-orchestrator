@@ -12,7 +12,9 @@ from ad_creative_operator import (
     export_editable_pptx,
     read_csv_rows,
     render_goal_iteration_plan,
+    render_creative_proposal,
     review_client_pack,
+    review_creative_quality,
     review_handoff_readiness,
     review_reference_pack,
     review_search_quality,
@@ -114,6 +116,153 @@ def add_delivery_artifact(
             "created_at": "",
             "updated_at": "",
         },
+    )
+
+
+def write_complete_creative_fixture(project: Path, *, unsupported_claim: bool = False, generic: bool = False) -> None:
+    claim = "案例证明这个打法有效。" if unsupported_claim else "Registered REF-001 is a placeholder reference boundary, not a case-study claim."
+    slogan = "unlock next level innovative breakthrough" if generic else "continue the morning trail"
+    write_text(
+        project / "AD-creative/creative/creative_directions.md",
+        f"""# Creative Directions
+
+status: draft
+visibility: internal_only
+
+## Proposal Inputs
+- business problem: New product needs a clear internal proposal route. [source: SRC-001]
+- client real objective: Choose one reviewable advertising direction. [source: SRC-001]
+- target audience: Morning trail runners and light outdoor users. [source: SRC-001]
+- behavior barrier: They distrust abstract energy claims unless the usage moment is concrete. [source: SRC-001]
+- consumer insight: A replenishment claim becomes credible when it is shown at the exact moment the user keeps moving. [source: SRC-001]
+- feature to benefit: Electrolyte hydration feature -> visible confidence to continue the activity. [source: SRC-001]
+- brand/category/competitor notes: Category codes are functional refreshment and outdoor credibility; competitor naming is intentionally excluded from this internal fixture.
+- strategy path: source evidence -> audience barrier -> product benefit -> execution route -> client choice rationale.
+
+## Direction Overview
+| Direction | Name | Role | Strategy Path | Core Message | Why Choose |
+|---|---|---|---|---|---|
+| DIR-01 | Trail Continuation | Usage proof | product_feature_to_behavior_moment | {slogan} | Most directly links product and behavior. |
+| DIR-02 | Choice Rationale | Internal decision | client_objective_to_choice_rationale | Compare routes by evidence, action, and risk. | Best for client alignment. |
+
+## DIR-01 Trail Continuation
+- creative proposition: Show the product in the replenishment moment before the user keeps moving.
+- core message: Hydration is not a claim; it is the reason the next step happens.
+- key visual/action: Runner pauses on a morning trail, drinks, and continues uphill.
+- title/use case: Morning trail continuation.
+- risk: Requires real product image before client review.
+- why choose: Most direct product-to-benefit translation.
+
+## DIR-02 Choice Rationale
+- creative proposition: Turn the client review into a structured choice between two routes.
+- core message: Pick the direction whose evidence and risk fit the decision.
+- key visual/action: Editable comparison page with action frame slots.
+- title/use case: Internal review decision slide.
+- risk: Needs confirmation of final decision criteria.
+- why choose: Useful when stakeholders need alignment.
+
+## Reference Boundary
+{claim}
+
+## Confirmation Items
+- Confirm final product asset before client review.
+""",
+    )
+    write_csv_rows(
+        project / "AD-creative/creative/option_matrix.csv",
+        [
+            "direction_id",
+            "name",
+            "role",
+            "strategy_path",
+            "creative_proposition",
+            "core_message",
+            "target_feeling",
+            "product_feature",
+            "communication_benefit",
+            "behavior_barrier",
+            "key_visual_or_action",
+            "title_or_use_case",
+            "reference_ids",
+            "risk",
+            "why_choose",
+            "evidence_refs",
+            "status",
+            "notes",
+        ],
+        [
+            {
+                "direction_id": "DIR-01",
+                "name": "Trail Continuation",
+                "role": "Usage proof",
+                "strategy_path": "product_feature_to_behavior_moment",
+                "creative_proposition": "Show the product in the replenishment moment before the user keeps moving.",
+                "core_message": "Hydration becomes credible when the next step happens.",
+                "target_feeling": "credible",
+                "product_feature": "Electrolyte hydration",
+                "communication_benefit": "Confidence to continue",
+                "behavior_barrier": "Distrust of abstract claims",
+                "key_visual_or_action": "Runner drinks and continues uphill.",
+                "title_or_use_case": "Morning trail continuation",
+                "reference_ids": "REF-001",
+                "risk": "Needs real product image.",
+                "why_choose": "Direct product-to-benefit translation.",
+                "evidence_refs": "SRC-001",
+                "status": "draft",
+                "notes": "",
+            },
+            {
+                "direction_id": "DIR-02",
+                "name": "Choice Rationale",
+                "role": "Internal decision",
+                "strategy_path": "client_objective_to_choice_rationale",
+                "creative_proposition": "Make route selection explicit through evidence, action, and risk.",
+                "core_message": "Choose by fit, not slogan preference.",
+                "target_feeling": "clear",
+                "product_feature": "Electrolyte hydration",
+                "communication_benefit": "Reviewable decision confidence",
+                "behavior_barrier": "Stakeholder alignment",
+                "key_visual_or_action": "Editable comparison matrix.",
+                "title_or_use_case": "Review decision slide",
+                "reference_ids": "REF-001",
+                "risk": "Needs decision criteria.",
+                "why_choose": "Best for client alignment.",
+                "evidence_refs": "SRC-001",
+                "status": "draft",
+                "notes": "",
+            },
+        ],
+    )
+    write_text(
+        project / "AD-creative/proposal_architecture/proposal_structure.md",
+        """# Proposal Structure
+
+status: draft
+visibility: internal_only
+
+## Client Review Goal
+Choose a reviewable advertising direction.
+
+## Recommended Page Flow
+Business problem, client real objective, target audience, behavior barrier, consumer insight, feature to benefit, strategy path, directions, proposal outline.
+
+## Proposal Outline
+PPT/proposal outline includes problem, audience, product benefit, direction comparison, key visual/action, risk, and why choose.
+""",
+    )
+    write_text(
+        project / "AD-creative/client_review/slide_spec.md",
+        """# Slide Spec
+
+status: draft
+visibility: internal_only
+
+## Slides
+| Slide | Purpose | Content | Asset Slot | Visibility |
+|---|---|---|---|---|
+| 1 | Proposal outline | Business problem and client real objective | none | internal_only |
+| 2 | Direction | Creative proposition, core message, key visual/action, title/use case, risk, why choose | DIR-01 | internal_only |
+""",
     )
 
 
@@ -372,6 +521,78 @@ def test_handoff_readiness_blocks_incomplete_project() -> None:
         assert_valid(project)
 
 
+def test_creative_proposal_writes_required_internal_fields() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-creative-proposal-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        payload = render_creative_proposal(project, work_id="WORK-001")
+        text = (project / "AD-creative/creative/creative_directions.md").read_text(encoding="utf-8")
+        for marker in [
+            "business problem",
+            "client real objective",
+            "target audience",
+            "behavior barrier",
+            "consumer insight",
+            "feature to benefit",
+            "brand/category/competitor notes",
+            "creative proposition",
+            "key visual/action",
+            "why choose",
+        ]:
+            assert marker in text, marker
+        assert "ART-AUTO-CREATIVE-DIRECTIONS" in payload["artifact_ids"]
+        assert_valid(project)
+
+
+def test_creative_quality_blocks_generic_proposal() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-creative-generic-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_adversarial_record(project, "creative")
+        write_complete_creative_fixture(project, generic=True)
+        status, findings, report = review_creative_quality(project)
+        assert status == "BLOCKED", (status, findings)
+        assert report.exists()
+        assert any("GENERIC_AI_CLICHE" in item or "cliche" in item for item in findings), findings
+        assert_valid(project)
+
+
+def test_creative_quality_passes_complete_structured_fixture() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-creative-pass-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_adversarial_record(project, "creative")
+        write_complete_creative_fixture(project)
+        status, findings, _ = review_creative_quality(project)
+        assert status == "PASS", (status, findings)
+        assert findings == [], findings
+        assert_valid(project)
+
+
+def test_creative_quality_blocks_unsupported_case_claim() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-creative-case-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_adversarial_record(project, "creative")
+        write_complete_creative_fixture(project, unsupported_claim=True)
+        status, findings, _ = review_creative_quality(project)
+        assert status == "BLOCKED", (status, findings)
+        assert any("UNSUPPORTED_REFERENCE_OR_CASE_CLAIM" in item or "案例" in item for item in findings), findings
+        assert_valid(project)
+
+
+def test_validation_pass_is_not_creative_quality_pass() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-creative-validation-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        errors, _ = validate(project)
+        assert errors == [], errors
+        status, findings, _ = review_creative_quality(project)
+        assert status == "BLOCKED", (status, findings)
+        assert any("EMPTY_SKELETON" in item or "空骨架" in item for item in findings), findings
+        assert_valid(project)
+
+
 def main() -> int:
     test_reference_pack_blocks_client_visible_bad_reference()
     test_search_quality_passes_clean_plan_with_adversarial_record()
@@ -382,6 +603,11 @@ def main() -> int:
     test_validate_blocks_mismatched_current_delivery_version()
     test_client_pack_blocks_missing_exact_current_pptx_without_crashing()
     test_handoff_readiness_blocks_incomplete_project()
+    test_creative_proposal_writes_required_internal_fields()
+    test_creative_quality_blocks_generic_proposal()
+    test_creative_quality_passes_complete_structured_fixture()
+    test_creative_quality_blocks_unsupported_case_claim()
+    test_validation_pass_is_not_creative_quality_pass()
     if OPTIONAL_SKIPS:
         print("TEST_GATES_OPTIONAL_SKIPS=" + "; ".join(OPTIONAL_SKIPS))
     print("TEST_GATES=PASS")

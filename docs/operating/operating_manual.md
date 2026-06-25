@@ -47,6 +47,7 @@ AD-creative/handoff/客户追问话术.md
 AD-creative/ppt/client_review_draft.pptx
 AD-creative/ppt/ppt_editability_check.md
 AD-creative/gates/THREE-COUNCIL-READINESS_report.md
+AGENTS.md
 ```
 
 检查状态：
@@ -71,6 +72,18 @@ AD-creative/orchestrator/goal_iterations/<goal_id>.md
 
 ```text
 adco thread-plan <项目目录> --title <目标标题> --objective <目标内容> --roles brand_client,copy_creative,qa_review
+```
+
+生成内部创意 proposal 草稿：
+
+```text
+adco creative-proposal <项目目录> [--work-id <id>] [--json]
+```
+
+运行创意 proposal 质量 Gate：
+
+```text
+adco creative-quality-gate <项目目录>
 ```
 
 该命令会写入：
@@ -98,11 +111,53 @@ execution_worker 必须先写清 exact write_scope。
 客户可见稿不得出现 prompt、thread、worker、lane plan、执行步骤等内部语言。
 ```
 
+项目级 AGENTS.md：
+
+```text
+新项目根目录会生成 AGENTS.md。
+它是给 Codex 线程看的项目规则，不是客户稿。
+所有新线程先读 AGENTS.md，再读 AD-creative/orchestrator/ 和 AD-creative/handoff/。
+它固定人工停点、客户可见限制、ThreadOps 分工、Gate 顺序和验证边界。
+复制或交接项目时必须一起保留。
+```
+
+已有文件处理：
+
+```text
+adco init 按文件创建缺失模板。
+如果目标目录已有 AGENTS.md，不覆盖、不重写。
+写出 AD-creative/orchestrator/AGENTS.merge_suggestion.md。
+把本项目规则人工合并到现有 AGENTS.md，并保留客户、仓库或团队已有禁区。
+未合并必需规则前，adco validate 返回 CHECK。
+```
+
 Gate 规则：
 
 ```text
-reference-pack-gate / search-quality-gate / visual-quality-gate / client-pack-gate / handoff-readiness-gate
+adco validate
+search-quality-gate / reference-pack-gate / visual-quality-gate / client-pack-gate / handoff-readiness-gate
 若缺少有效反驳性议会记录，PASS 会自动降级为 PARTIAL_PASS。
+```
+
+创意 proposal 和质量 Gate：
+
+```text
+creative-proposal 是工作流和 CLI 命令，不是客户最终稿。
+它用于起草 challenge interpretation、insight、creative idea、option matrix、message line、proposal structure、证据映射和客户待确认项。
+creative-quality-gate 是独立 Gate 和 CLI 命令，独立于 adco validate。
+adco validate 只看结构和追溯；creative-quality-gate 看 proposal 草稿的策略/创意/专业完整度。
+creative-quality-gate 通过也不代表创意品味、客户偏好、商业效果或最终发送已经批准。
+证据稀疏、来源未闭合或关键假设未确认时，creative-quality-gate 可以是 PARTIAL_PASS / BLOCKED。
+详细标准见 docs/operating/creative_proposal_quality_standard.md。
+```
+
+模块路由：
+
+```text
+策略方向、创意 proposal、option matrix、message line、proposal structure：留在 adco。
+视频脚本、分镜、导演阐述、video prompt：交给 dircreative 或专门 film workflow。
+image / KV / 背景图 / moodboard / visual asset：交给 imagegen 或 Creative Production，回到 adco 登记和 visual-quality-gate。
+固定 PPT / DOCX / XLSX 模板和版式系统：交给 Template Creator 或专门文档模板流程，adco 只维护内容结构、字段、追溯和 Gate。
 ```
 
 重新抽取 intake：
@@ -299,6 +354,8 @@ Codex 自动：
 运行 adco validate
 ```
 
+`adco validate` 只验证结构和追溯关系。`VALIDATION=PASS` 不代表创意质量、审美、客户措辞、AI 图客户可见性或最终发送已经批准；这些必须继续跑对应 Gate 并人工确认。
+
 ### ad-creative:start
 
 启动或恢复项目。
@@ -306,6 +363,7 @@ Codex 自动：
 Codex 必须读取：
 
 ```text
+AGENTS.md
 AD-creative/orchestrator/project.yml
 AD-creative/orchestrator/current_truth.md
 AD-creative/orchestrator/work_items.csv
@@ -395,6 +453,7 @@ Codex 必须：
 Brief Gate
 Research Gate
 Creative Gate
+Creative Quality Gate
 Visual Gate
 HTML Gate
 Visual Plan Gate
@@ -409,6 +468,16 @@ Skill Gate
 ```text
 AD-creative/gates/<gate_id>_report.md
 ```
+
+Creative Quality Gate 必须同时读取：
+
+```text
+docs/operating/creative_proposal_quality_standard.md
+proposal_structure.md / creative_directions.md / option_matrix.csv / message_line_candidates.md 中存在的对应草稿
+requirements / source_events / references / gaps
+```
+
+审核只把公开行业框架映射成本地检查项；不能复制案例文案，不能声称达到 Cannes / Effie / System1 / Google / TikTok / WARC / Ipsos 的认证或效果水平。
 
 并更新：
 
@@ -522,6 +591,26 @@ adco check
 TEST_GOAL_WORKFLOW=PASS
 ERRORS=0
 VALIDATION=PASS
+```
+
+`VALIDATION=PASS` 的含义：
+
+```text
+结构完整
+CSV 列数正确
+JSON / JSONL 可解析
+追溯链可连接
+必需产物路径存在
+```
+
+不代表：
+
+```text
+客户创意质量已批准
+客户稿可以自动发送
+生成图可以客户可见
+搜索参考已经足够用于客户稿
+最终审美和商业判断已经通过
 ```
 
 该命令检查：

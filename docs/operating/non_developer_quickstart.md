@@ -64,6 +64,39 @@ AD-creative/orchestrator/current_truth.md
 AD-creative/orchestrator/profile_knowledge/profile_current_truth.md
 AD-creative/handoff/画像分析简报.md
 AD-creative/gates/THREE-COUNCIL-READINESS_report.md
+AGENTS.md
+```
+
+`AGENTS.md` 在项目根目录。它不是客户稿，而是给 Codex 线程看的项目规则：先读哪些文件、哪些事必须停下来确认、哪些 Gate 必须跑、`VALIDATION=PASS` 不能当作客户创意质量批准。
+
+如果项目里已经有 `AGENTS.md`，初始化不会覆盖。保留原有规则；如果生成 `AD-creative/orchestrator/AGENTS.merge_suggestion.md`，把里面的 Ad Creative Orchestrator 项目规则人工合并进根目录 `AGENTS.md`。
+合并建议会写到：
+
+```text
+AD-creative/orchestrator/AGENTS.merge_suggestion.md
+```
+
+如果根目录 `AGENTS.md` 缺失或没有合入必需规则，`adco validate` 会返回 `CHECK`。
+
+adco 的创意方案定位：
+
+```text
+adco creative-proposal <项目目录> [--work-id <id>] [--json]
+adco creative-quality-gate <项目目录>
+
+creative-proposal 起草 internal creative proposal：challenge、insight、creative idea、proposal structure、证据映射和客户待确认项。
+creative-quality-gate 只检查 proposal 草稿的结构、追溯、证据和专业完整度。
+证据稀疏、来源未闭合或关键假设未确认时，可以是 PARTIAL_PASS / BLOCKED。
+它不批准审美、不代表客户喜欢、不保证商业效果，也不能替代客户或创意负责人确认。
+视频/分镜/video prompt 交给 dircreative。
+image / KV / 背景图交给 imagegen 或 Creative Production。
+固定 PPT / DOCX / XLSX 模板交给 Template Creator。
+```
+
+标准见：
+
+```text
+docs/operating/creative_proposal_quality_standard.md
 ```
 
 ## 3. 看哪里
@@ -144,6 +177,7 @@ AD-creative/orchestrator/events.jsonl
 对 Codex 说：
 
 ```text
+先读取项目根目录 AGENTS.md。
 继续执行 ad-creative:next
 读取 AD-creative/handoff/项目看板.md 和 AD-creative/handoff/待你确认.md
 优先完成需求整理、缺口判断、客户追问、下一步建议
@@ -179,6 +213,8 @@ adco next <项目目录>
 adco council <项目目录> --render-dashboard
 adco intake <项目目录>
 adco profile-analyze <项目目录> --source-id <SRC-ID> --brand <品牌> --company <公司>
+adco creative-proposal <项目目录>
+adco creative-quality-gate <项目目录>
 adco search-quality-gate <项目目录>
 adco reference-pack-gate <项目目录>
 adco import-imagegen <项目目录> --slot-id <槽位> --selected
@@ -210,3 +246,5 @@ DASHBOARD_AUDIT=PASS
 DASHBOARD_OPEN=SKIPPED
 VALIDATION=PASS
 ```
+
+`VALIDATION=PASS` 只说明必需文件、CSV/JSON 可解析、产物和 requirement/source/gate 的追溯关系成立；不说明创意方向、审美质量、客户话术或最终客户稿已经被批准。客户可见前还要看 `creative-quality-gate`、`search-quality-gate`、`reference-pack-gate`、`visual-quality-gate`、`client-pack-gate`、`handoff-readiness-gate`，并做人工确认。

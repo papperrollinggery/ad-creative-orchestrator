@@ -23,6 +23,7 @@ from ad_creative_operator import (
     run_goal,
     workspace_hygiene_report,
 )
+from init_project import AGENTS_MERGE_SUGGESTION_REL, agents_policy_status
 from run_checks import cleanup_python_caches
 from validate_project import validate
 
@@ -57,6 +58,54 @@ def add_clean_reference(project: Path) -> None:
         do_not_copy="Do not copy visible identity.",
         live_check=False,
     )
+
+
+def test_project_agents_policy_created_and_validated() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-agents-policy-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        agents = project / "AGENTS.md"
+        assert agents.exists()
+        text = agents.read_text(encoding="utf-8")
+        assert "ad-creative-orchestrator" in text
+        assert "VALIDATION=PASS" in text
+        assert "creative-quality-gate" in text
+        assert "client-pack-gate" in text
+        assert_valid(project)
+
+
+def test_validate_rejects_missing_project_agents_policy() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-agents-missing-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        (project / "AGENTS.md").unlink()
+        errors, _ = validate(project)
+        assert any("missing required file: AGENTS.md" in error for error in errors), errors
+
+
+def test_existing_agents_policy_is_not_overwritten() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-agents-existing-") as raw_project:
+        project = Path(raw_project)
+        custom_agents = project / "AGENTS.md"
+        custom_agents.write_text("# Custom Project Rules\n", encoding="utf-8")
+        ensure_project(project)
+        assert custom_agents.read_text(encoding="utf-8") == "# Custom Project Rules\n"
+        suggestion = project / "AD-creative/orchestrator/AGENTS.merge_suggestion.md"
+        assert suggestion.exists()
+        errors, _ = validate(project)
+        assert any("AGENTS.md missing required policy" in error for error in errors), errors
+
+
+def test_agents_policy_status_clears_after_manual_merge() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-agents-merged-") as raw_project:
+        project = Path(raw_project)
+        custom_agents = project / "AGENTS.md"
+        custom_agents.write_text("# Custom Project Rules\n", encoding="utf-8")
+        ensure_project(project)
+        assert agents_policy_status(project).startswith("MERGE_REQUIRED:"), agents_policy_status(project)
+        custom_agents.write_text((project / AGENTS_MERGE_SUGGESTION_REL).read_text(encoding="utf-8"), encoding="utf-8")
+        assert agents_policy_status(project) == "PRESENT"
+        assert_valid(project)
 
 
 def test_gate_downgrades_without_adversarial_record() -> None:
@@ -463,6 +512,10 @@ def test_film_quality_gate_writes_report() -> None:
 
 
 def main() -> int:
+    test_project_agents_policy_created_and_validated()
+    test_validate_rejects_missing_project_agents_policy()
+    test_existing_agents_policy_is_not_overwritten()
+    test_agents_policy_status_clears_after_manual_merge()
     test_gate_downgrades_without_adversarial_record()
     test_goal_plan_allows_clean_gate_pass()
     test_goal_run_stops_without_material()

@@ -22,6 +22,7 @@ REQUIRED_PATHS = [
     "runtime_paths.py",
     "test_gates.py",
     "test_goal_workflow.py",
+    "adco_resources/templates/project/AGENTS.md",
     "adco_resources/templates/project/AD-creative/orchestrator/project.yml",
     "adco_resources/templates/project/AD-creative/orchestrator/thread_registry.csv",
     "adco_resources/templates/project/AD-creative/orchestrator/thread_lane_plan_template.md",

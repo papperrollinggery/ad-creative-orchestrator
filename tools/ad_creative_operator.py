@@ -28,7 +28,7 @@ import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
 
-from init_project import copy_template
+from init_project import agents_policy_status, copy_template
 from runtime_paths import repo_or_module_root, skill_draft_dir, source_root, template_root
 from validate_project import current_truth_value, validate, validate_client_delivery_readiness
 
@@ -102,6 +102,78 @@ VISUAL_RISK_PATTERNS = {
 }
 VISUAL_RISK_PATTERN = re.compile(
     "|".join(re.escape(pattern) for pattern in sorted(VISUAL_RISK_PATTERNS, key=len, reverse=True))
+)
+CREATIVE_PROPOSAL_ARTIFACTS = [
+    (
+        "ART-AUTO-CREATIVE-DIRECTIONS",
+        "creative_directions",
+        Path("AD-creative/creative/creative_directions.md"),
+    ),
+    (
+        "ART-AUTO-CREATIVE-OPTION-MATRIX",
+        "creative_option_matrix",
+        Path("AD-creative/creative/option_matrix.csv"),
+    ),
+    (
+        "ART-AUTO-PROPOSAL-STRUCTURE",
+        "proposal_structure",
+        Path("AD-creative/proposal_architecture/proposal_structure.md"),
+    ),
+    (
+        "ART-AUTO-SLIDE-SPEC",
+        "slide_spec",
+        Path("AD-creative/client_review/slide_spec.md"),
+    ),
+]
+CREATIVE_PROPOSAL_REQUIRED_LABELS = [
+    "business problem",
+    "client real objective",
+    "target audience",
+    "behavior barrier",
+    "consumer insight",
+    "feature to benefit",
+    "brand/category/competitor notes",
+    "strategy path",
+    "creative proposition",
+    "core message",
+    "key visual/action",
+    "title/use case",
+    "risk",
+    "why choose",
+    "proposal outline",
+]
+GENERIC_CREATIVE_PATTERNS = [
+    "unlock",
+    "elevate",
+    "game changer",
+    "next level",
+    "seamless",
+    "innovative",
+    "empower",
+    "reimagine",
+    "breakthrough",
+    "bold new",
+    "打造全新体验",
+    "重新定义",
+    "引爆",
+    "破圈",
+    "赋能",
+    "焕新",
+    "不止于",
+    "美好生活",
+    "无限可能",
+]
+GENERIC_CREATIVE_PATTERN = re.compile(
+    "|".join(re.escape(pattern) for pattern in sorted(GENERIC_CREATIVE_PATTERNS, key=len, reverse=True)),
+    re.IGNORECASE,
+)
+CASE_CLAIM_PATTERN = re.compile(
+    r"case study|案例|campaign proved|proven by|according to|数据显示|行业报告|竞品证明|参考案例",
+    re.IGNORECASE,
+)
+INTERNAL_LANGUAGE_PATTERN = re.compile(
+    r"prompt|thread|worker|lane|subagent|codex|worktree|执行线程|工作线程|提示词|子代理|泳道|lane plan",
+    re.IGNORECASE,
 )
 PROFILE_SUBJECT_FIELDS = [
     "subject_id",
@@ -287,6 +359,7 @@ def doctor_report() -> tuple[str, list[str], list[str], list[str]]:
 
     required_template_files = [
         "AD-creative/orchestrator/project.yml",
+        "AGENTS.md",
         "AD-creative/orchestrator/requirements.csv",
         "AD-creative/orchestrator/thread_registry.csv",
         "AD-creative/orchestrator/thread_lane_plan_template.md",
@@ -789,6 +862,51 @@ def ensure_profile_work(project: Path, source_ids: list[str], goal: str) -> str:
     )
     write_csv_rows(work_path, fieldnames, rows)
     return work_id
+
+
+def ensure_creative_proposal_work(project: Path, work_id: str, source_ids: str, objective: str) -> str:
+    work_path = project / "AD-creative/orchestrator/work_items.csv"
+    fieldnames, rows = read_csv_rows(work_path)
+    if not fieldnames:
+        raise FileNotFoundError(f"CSV header not found: {work_path}")
+    for row in rows:
+        if work_id and row.get("work_id") == work_id:
+            row["linked_source_events"] = join_unique_values(row.get("linked_source_events", ""), source_ids)
+            row["updated_at"] = now_iso()
+            write_csv_rows(work_path, fieldnames, rows)
+            return work_id
+        if not work_id and row.get("stage") == "creative" and row.get("title") == "内部创意提案草案":
+            row["linked_source_events"] = join_unique_values(row.get("linked_source_events", ""), source_ids)
+            row["updated_at"] = now_iso()
+            write_csv_rows(work_path, fieldnames, rows)
+            return row.get("work_id", "")
+    new_work_id = work_id or next_id(rows, "work_id", "WORK")
+    rows.append(
+        {
+            "work_id": new_work_id,
+            "stage": "creative",
+            "title": "内部创意提案草案",
+            "objective": objective or "生成可追溯的内部创意提案草案，并在客户可见前通过 creative-quality-gate。",
+            "owner_agent": "Codex",
+            "status": "ready",
+            "priority": "high",
+            "input_refs": source_ids,
+            "output_artifacts": "ART-AUTO-CREATIVE-DIRECTIONS;ART-AUTO-CREATIVE-OPTION-MATRIX;ART-AUTO-PROPOSAL-STRUCTURE;ART-AUTO-SLIDE-SPEC",
+            "linked_requirements": "",
+            "linked_source_events": source_ids,
+            "linked_references": "",
+            "linked_assets": "",
+            "linked_slides": "",
+            "blocked_by": "",
+            "gate_required": "Creative Quality Gate",
+            "client_visibility": "internal_only",
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+            "supersedes_work_id": "",
+        }
+    )
+    write_csv_rows(work_path, fieldnames, rows)
+    return new_work_id
 
 
 def read_counts(project: Path) -> dict[str, int]:
@@ -1954,6 +2072,714 @@ def add_reference(
         },
     )
     return ref_id, "created"
+
+
+def compact_evidence(value: str, limit: int = 140) -> str:
+    cleaned = re.sub(r"\s+", " ", clean_material_line(value)).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1].rstrip() + "…"
+
+
+def first_evidence_line(lines: list[tuple[str, str]], patterns: list[str], fallback: str) -> tuple[str, str]:
+    regex = re.compile("|".join(re.escape(pattern) for pattern in patterns), re.IGNORECASE)
+    for source_id, line in lines:
+        if regex.search(line):
+            return compact_evidence(line), source_id
+    return fallback, ""
+
+
+def open_question(label: str) -> str:
+    return f"TBD - open question: {label}"
+
+
+def collect_proposal_evidence(project: Path) -> dict[str, object]:
+    _, requirement_rows = read_csv_rows(project / "AD-creative/orchestrator/requirements.csv")
+    _, gap_rows = read_csv_rows(project / "AD-creative/orchestrator/gaps.csv")
+    _, reference_rows = read_csv_rows(project / "AD-creative/references/reference_cards.csv")
+    _, profile_insights = read_csv_rows(project / "AD-creative/orchestrator/profile_knowledge/profile_insights.csv")
+    source_materials, resolved_source_ids = collect_source_materials(project, [])
+    evidence_lines: list[tuple[str, str]] = []
+    for requirement in requirement_rows:
+        statement = requirement.get("statement", "").strip()
+        if statement:
+            evidence_lines.append((requirement.get("source_event_id", ""), statement))
+    for gap in gap_rows:
+        description = gap.get("description", "").strip()
+        question = gap.get("question_for_client", "").strip()
+        if description:
+            evidence_lines.append((gap.get("linked_requirement_id", ""), description))
+        if question:
+            evidence_lines.append((gap.get("linked_requirement_id", ""), question))
+    for source, _, text in source_materials:
+        source_id = source.get("source_event_id", "")
+        for raw_line in text.splitlines():
+            line = clean_material_line(raw_line)
+            if 6 <= len(line) <= 180:
+                evidence_lines.append((source_id, line))
+
+    business_problem, business_source = first_evidence_line(
+        evidence_lines,
+        ["问题", "挑战", "新品", "launch", "广告创意", "提案", "内部评审", "交付"],
+        open_question("business problem"),
+    )
+    client_objective, objective_source = first_evidence_line(
+        evidence_lines,
+        ["客户希望", "目标", "本轮交付", "需要", "PPT", "内部评审", "审阅"],
+        open_question("client real objective"),
+    )
+    audience, audience_source = first_evidence_line(
+        evidence_lines,
+        ["人群", "用户", "消费者", "轻运动", "户外", "年轻", "audience"],
+        open_question("target audience"),
+    )
+    barrier, barrier_source = first_evidence_line(
+        evidence_lines,
+        ["担心", "不要", "不能", "缺少", "暂缺", "风险", "障碍", "痛点", "限制"],
+        open_question("target behavior barrier"),
+    )
+    product_feature, feature_source = first_evidence_line(
+        evidence_lines,
+        ["产品", "功能", "饮料", "包装", "高清图", "补给", "功能饮料", "卖点"],
+        open_question("product feature"),
+    )
+    visual_reference, visual_source = first_evidence_line(
+        evidence_lines,
+        ["真实户外", "清爽", "清晨", "山路", "手持产品", "关键视觉", "画面", "视觉"],
+        open_question("visual/action evidence"),
+    )
+    insight = open_question("consumer insight")
+    insight_source = ""
+    for row in profile_insights:
+        if row.get("insight_type") in {"need", "preference", "concern", "brand_trait"}:
+            insight = compact_evidence(row.get("statement", ""))
+            insight_source = row.get("source_event_id", "")
+            break
+    if insight.startswith("TBD"):
+        insight, insight_source = first_evidence_line(
+            evidence_lines,
+            ["真实", "清爽", "担心", "偏", "希望", "需要", "不要", "轻运动", "户外"],
+            open_question("consumer insight"),
+        )
+    reference_notes = [
+        f"{ref.get('reference_id')}: {ref.get('title') or ref.get('url')} ({ref.get('role')})"
+        for ref in reference_rows
+        if ref.get("reference_id")
+    ]
+    competitor_notes = "; ".join(reference_notes[:5]) or open_question("brand/category/competitor notes")
+    source_ids = ";".join(sorted({item for item in resolved_source_ids if item}))
+    return {
+        "business_problem": business_problem,
+        "business_source": business_source,
+        "client_objective": client_objective,
+        "objective_source": objective_source,
+        "audience": audience,
+        "audience_source": audience_source,
+        "barrier": barrier,
+        "barrier_source": barrier_source,
+        "insight": insight,
+        "insight_source": insight_source,
+        "product_feature": product_feature,
+        "feature_source": feature_source,
+        "visual_reference": visual_reference,
+        "visual_source": visual_source,
+        "competitor_notes": competitor_notes,
+        "source_ids": source_ids,
+        "requirement_ids": ";".join(row.get("requirement_id", "") for row in requirement_rows if row.get("requirement_id")),
+        "reference_ids": ";".join(row.get("reference_id", "") for row in reference_rows if row.get("reference_id")),
+    }
+
+
+def proposal_evidence_ref(source: str) -> str:
+    return source or "TBD"
+
+
+def build_creative_direction_rows(context: dict[str, object]) -> list[dict[str, str]]:
+    feature = str(context["product_feature"])
+    benefit = (
+        "把产品从静态卖点翻译成可感知的场景价值。"
+        if not feature.startswith("TBD")
+        else open_question("communication benefit")
+    )
+    insight = str(context["insight"])
+    visual = str(context["visual_reference"])
+    audience = str(context["audience"])
+    barrier = str(context["barrier"])
+    return [
+        {
+            "direction_id": "DIR-01",
+            "name": "场景补给证明",
+            "role": "把产品功能落到真实使用场景",
+            "strategy_path": "product_feature_to_behavior_moment",
+            "creative_proposition": f"在{audience}最需要补给的时刻，让产品成为动作继续发生的证据。",
+            "core_message": f"{feature} -> {benefit}",
+            "target_feeling": "真实、清爽、可信",
+            "product_feature": feature,
+            "communication_benefit": benefit,
+            "behavior_barrier": barrier,
+            "key_visual_or_action": visual,
+            "title_or_use_case": "清晨出发前 / 山路途中 / 手持产品的连续动作",
+            "reference_ids": str(context["reference_ids"]),
+            "risk": "缺少产品高清图时只能保留 internal_only placeholder。",
+            "why_choose": "适合先证明产品如何进入真实行为，不依赖竞品或案例背书。",
+            "evidence_refs": ";".join(
+                filter(
+                    None,
+                    [
+                        proposal_evidence_ref(str(context["audience_source"])),
+                        proposal_evidence_ref(str(context["feature_source"])),
+                        proposal_evidence_ref(str(context["visual_source"])),
+                    ],
+                )
+            ),
+            "status": "draft",
+            "notes": "internal traceable draft",
+        },
+        {
+            "direction_id": "DIR-02",
+            "name": "选择理由显性化",
+            "role": "把客户目标翻译成可比较的提案路径",
+            "strategy_path": "client_objective_to_choice_rationale",
+            "creative_proposition": f"围绕客户真实目标：{context['client_objective']}，把每个方向的取舍说清楚。",
+            "core_message": "不是口号比拼，而是让客户能判断为什么选这一条。",
+            "target_feeling": "清晰、有判断依据、可推进",
+            "product_feature": feature,
+            "communication_benefit": "让产品利益、执行方式、风险边界能同时被审阅。",
+            "behavior_barrier": barrier,
+            "key_visual_or_action": "一页对比矩阵 + 每条方向一张关键动作图或 placeholder slot。",
+            "title_or_use_case": "内部评审会方向选择页",
+            "reference_ids": str(context["reference_ids"]),
+            "risk": "如果客户目标证据不足，本方向必须降级为 open question。",
+            "why_choose": "适合客户还在内部统一意见时使用。",
+            "evidence_refs": proposal_evidence_ref(str(context["objective_source"])),
+            "status": "draft",
+            "notes": "internal traceable draft",
+        },
+        {
+            "direction_id": "DIR-03",
+            "name": "阻力转译",
+            "role": "把受众阻力转成创意动作",
+            "strategy_path": "audience_barrier_to_execution",
+            "creative_proposition": f"承认阻力：{barrier}，用更具体的行动画面降低理解成本。",
+            "core_message": f"{insight} -> 看见行动理由。",
+            "target_feeling": "直接、具体、少解释",
+            "product_feature": feature,
+            "communication_benefit": "让受众先理解为什么需要它，再记住产品。",
+            "behavior_barrier": barrier,
+            "key_visual_or_action": "障碍前后对比：出发前犹豫 / 使用产品 / 继续行动。",
+            "title_or_use_case": "受众痛点页或短片第一幕",
+            "reference_ids": str(context["reference_ids"]),
+            "risk": "若 insight 未被资料支持，只能作为假设方向，不可客户可见。",
+            "why_choose": "适合资料里已有明确担心、禁区或使用障碍时推进。",
+            "evidence_refs": ";".join(
+                filter(
+                    None,
+                    [
+                        proposal_evidence_ref(str(context["barrier_source"])),
+                        proposal_evidence_ref(str(context["insight_source"])),
+                    ],
+                )
+            ),
+            "status": "draft",
+            "notes": "internal traceable draft",
+        },
+    ]
+
+
+def render_creative_directions_content(context: dict[str, object], rows: list[dict[str, str]]) -> str:
+    overview = "\n".join(
+        "| {direction_id} | {name} | {role} | {strategy_path} | {core_message} | {why_choose} |".format(
+            **{key: md_cell(row.get(key, "")) for key in [
+                "direction_id",
+                "name",
+                "role",
+                "strategy_path",
+                "core_message",
+                "why_choose",
+            ]}
+        )
+        for row in rows
+    )
+    detail_sections = "\n\n".join(
+        f"""## {row['direction_id']} {row['name']}
+
+- creative proposition: {row['creative_proposition']}
+- core message: {row['core_message']}
+- key visual/action: {row['key_visual_or_action']}
+- title/use case: {row['title_or_use_case']}
+- risk: {row['risk']}
+- why choose: {row['why_choose']}
+- evidence refs: {row['evidence_refs'] or 'TBD'}
+"""
+        for row in rows
+    )
+    return f"""# Creative Directions
+
+status: draft
+visibility: internal_only
+artifact_role: traceable_internal_creative_proposal_draft
+
+## Evidence Boundaries
+- Do not fabricate insight, competitors, audience barriers, or case-study facts.
+- Missing facts stay as TBD/open questions and must not become client-visible claims.
+- Video/storyboard execution goes to dircreative; image/KV/backgrounds go to imagegen or Creative Production; fixed templates go to Template Creator.
+
+## Proposal Inputs
+- business problem: {context['business_problem']} [source: {proposal_evidence_ref(str(context['business_source']))}]
+- client real objective: {context['client_objective']} [source: {proposal_evidence_ref(str(context['objective_source']))}]
+- target audience: {context['audience']} [source: {proposal_evidence_ref(str(context['audience_source']))}]
+- behavior barrier: {context['barrier']} [source: {proposal_evidence_ref(str(context['barrier_source']))}]
+- consumer insight: {context['insight']} [source: {proposal_evidence_ref(str(context['insight_source']))}]
+- feature to benefit: {context['product_feature']} -> {rows[0]['communication_benefit']} [source: {proposal_evidence_ref(str(context['feature_source']))}]
+- brand/category/competitor notes: {context['competitor_notes']}
+- strategy path: product evidence -> audience barrier -> differentiated direction -> client choice rationale
+
+## Direction Overview
+
+| Direction | Name | Role | Strategy Path | Core Message | Why Choose |
+|---|---|---|---|---|---|
+{overview}
+
+{detail_sections}
+## Open Questions
+- Confirm unsupported TBD fields before client-facing use.
+- Confirm competitor/category evidence before naming any real competitor.
+- Confirm which direction should become a PPT/client review lane.
+"""
+
+
+def render_proposal_structure_content(context: dict[str, object], rows: list[dict[str, str]]) -> str:
+    direction_pages = "\n".join(
+        f"- {row['direction_id']} {row['name']}: proposition / core message / key visual-action / use case / risk / why choose."
+        for row in rows
+    )
+    return f"""# Proposal Structure
+
+status: draft
+visibility: internal_only
+artifact_role: traceable_internal_proposal_architecture
+
+## Client Review Goal
+client real objective: {context['client_objective']}
+
+## Business Problem
+{context['business_problem']}
+
+## Audience And Insight
+- target audience: {context['audience']}
+- behavior barrier: {context['barrier']}
+- consumer insight: {context['insight']}
+
+## Feature To Benefit
+- product feature: {context['product_feature']}
+- communication benefit: {rows[0]['communication_benefit']}
+
+## Brand/Category/Competitor Notes
+{context['competitor_notes']}
+
+## Recommended Page Flow
+1. 目标和问题界定
+2. 受众与行为阻力
+3. 产品功能到传播利益
+4. 策略路径
+5. 2-3 条创意方向对比
+6. 推荐方向与选择理由
+7. 风险、缺口、待确认问题
+
+## Direction Pages
+{direction_pages}
+
+## Reference Pages
+- Only cite registered REF rows or explicit TBD search targets.
+- Do not use case-study facts until source evidence exists.
+
+## Visual Asset Slots
+- DIR-01 key action frame: internal placeholder until visual-quality-gate.
+- DIR-02 matrix/choice slide: editable text first.
+- DIR-03 barrier/action contrast: internal placeholder until asset slot is bound.
+
+## Proposal Outline
+The PPT/proposal outline must preserve problem, objective, audience, insight, feature-to-benefit, direction choices, visual/action execution, risks, and open questions.
+
+## Open Questions
+- Which TBD fields must be confirmed before client review?
+- Which visual route should be delegated to imagegen/Creative Production?
+- Which video/storyboard route should be delegated to dircreative?
+"""
+
+
+def render_slide_spec_content(rows: list[dict[str, str]]) -> str:
+    slide_rows = [
+        ("1", "Problem", "Business problem + client real objective", "none", "internal_only"),
+        ("2", "Audience Insight", "Target audience + behavior barrier + consumer insight", "none", "internal_only"),
+        ("3", "Feature To Benefit", "Product feature translated to communication benefit", "none", "internal_only"),
+        ("4", "Direction Matrix", "2-3 differentiated directions with why choose", "none", "internal_only"),
+    ]
+    for index, row in enumerate(rows, start=5):
+        slide_rows.append(
+            (
+                str(index),
+                row["name"],
+                f"{row['creative_proposition']} / {row['core_message']} / risk: {row['risk']}",
+                f"{row['direction_id']}-KEY-ACTION",
+                "internal_only",
+            )
+        )
+    table = "\n".join(
+        f"| {num} | {md_cell(purpose)} | {md_cell(content)} | {md_cell(slot)} | {visibility} |"
+        for num, purpose, content, slot, visibility in slide_rows
+    )
+    return f"""# Slide Spec
+
+status: draft
+visibility: internal_only
+artifact_role: internal_editable_proposal_outline
+
+## Rules
+
+```text
+Text must remain editable.
+Images must have asset IDs or placeholder IDs.
+No internal notes in client-visible slides.
+No fake logo or fake case evidence.
+Do not treat VALIDATION=PASS as creative quality approval.
+```
+
+## Slides
+
+| Slide | Purpose | Content | Asset Slot | Visibility |
+|---|---|---|---|---|
+{table}
+"""
+
+
+def render_creative_proposal(project: Path, *, work_id: str = "") -> dict[str, object]:
+    ensure_project(project)
+    context = collect_proposal_evidence(project)
+    work_id = ensure_creative_proposal_work(
+        project,
+        work_id,
+        str(context["source_ids"]),
+        str(context["client_objective"]),
+    )
+    rows = build_creative_direction_rows(context)
+    creative_path = project / "AD-creative/creative/creative_directions.md"
+    matrix_path = project / "AD-creative/creative/option_matrix.csv"
+    structure_path = project / "AD-creative/proposal_architecture/proposal_structure.md"
+    slide_path = project / "AD-creative/client_review/slide_spec.md"
+    write_text(creative_path, render_creative_directions_content(context, rows))
+    matrix_fields = [
+        "direction_id",
+        "name",
+        "role",
+        "strategy_path",
+        "creative_proposition",
+        "core_message",
+        "target_feeling",
+        "product_feature",
+        "communication_benefit",
+        "behavior_barrier",
+        "key_visual_or_action",
+        "title_or_use_case",
+        "reference_ids",
+        "risk",
+        "why_choose",
+        "evidence_refs",
+        "status",
+        "notes",
+    ]
+    write_csv_rows(matrix_path, matrix_fields, rows)
+    write_text(structure_path, render_proposal_structure_content(context, rows))
+    write_text(slide_path, render_slide_spec_content(rows))
+    artifact_ids: list[str] = []
+    for artifact_id, artifact_type, rel_path in CREATIVE_PROPOSAL_ARTIFACTS:
+        artifact_ids.append(artifact_id)
+        update_artifact(
+            project,
+            artifact_id,
+            artifact_type,
+            str(rel_path),
+            "creative",
+            visibility="internal_only",
+            source_event_ids=str(context["source_ids"]),
+            linked_requirements=str(context["requirement_ids"]),
+            linked_work_items=work_id,
+            linked_references=str(context["reference_ids"]),
+            gate_status="NOT_RUN",
+        )
+    append_event(
+        project,
+        {
+            "event_id": f"EVT-CREATIVE-PROPOSAL-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            "event_type": "creative_proposal_rendered",
+            "created_at": now_iso(),
+            "work_id": work_id,
+            "artifacts": artifact_ids,
+        },
+    )
+    return {
+        "project": str(project),
+        "work_id": work_id,
+        "artifact_ids": artifact_ids,
+        "paths": [str(project / rel_path) for _, _, rel_path in CREATIVE_PROPOSAL_ARTIFACTS],
+        "context": context,
+    }
+
+
+def creative_proposal_scan_files(project: Path) -> list[Path]:
+    _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    paths = [project / rel_path for _, _, rel_path in CREATIVE_PROPOSAL_ARTIFACTS]
+    creative_types = {
+        "creative_directions",
+        "creative_option_matrix",
+        "proposal_structure",
+        "slide_spec",
+        "creative_proposal",
+        "proposal_outline",
+    }
+    for artifact in artifacts:
+        if artifact.get("artifact_type", "").strip() in creative_types:
+            rel_path = artifact.get("path", "").strip()
+            if rel_path:
+                paths.append(project / rel_path)
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        resolved = path.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            deduped.append(path)
+    return deduped
+
+
+def read_proposal_texts(paths: list[Path]) -> tuple[str, list[str]]:
+    chunks: list[str] = []
+    missing: list[str] = []
+    for path in paths:
+        if not path.exists():
+            missing.append(str(path))
+            continue
+        if path.suffix.lower() not in TEXT_SUFFIXES:
+            continue
+        chunks.append(path.read_text(encoding="utf-8", errors="ignore"))
+    return "\n\n".join(chunks), missing
+
+
+def load_direction_rows(project: Path) -> list[dict[str, str]]:
+    _, rows = read_csv_rows(project / "AD-creative/creative/option_matrix.csv")
+    return [row for row in rows if row.get("direction_id", "").strip()]
+
+
+def field_is_tbd(value: str) -> bool:
+    cleaned = value.strip().lower()
+    return cleaned in {"", "tbd", "n/a", "-"} or "tbd" in cleaned or "open question" in cleaned or "待补充" in value or "暂无" in value
+
+
+def has_supported_case_claim(line: str) -> bool:
+    if not CASE_CLAIM_PATTERN.search(line):
+        return True
+    if re.search(r"不依赖|不是|非|不能|不要|without|not a|not rely|excluded", line, re.IGNORECASE):
+        return True
+    return bool(re.search(r"\b(REF|SRC|ART)-[A-Z0-9-]+|https://|TBD|open question|待补充", line))
+
+
+def client_facing_scan_paths(project: Path, files: list[Path]) -> list[Path]:
+    _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    client_paths: set[Path] = set()
+    for artifact in artifacts:
+        if artifact.get("visibility", "").lower() in CLIENT_VISIBLE_VALUES:
+            rel_path = artifact.get("path", "").strip()
+            if rel_path:
+                client_paths.add((project / rel_path).resolve())
+    for path in files:
+        if not path.exists() or path.suffix.lower() not in TEXT_SUFFIXES:
+            continue
+        head = "\n".join(path.read_text(encoding="utf-8", errors="ignore").splitlines()[:12]).lower()
+        if "visibility: client_visible" in head or "visibility: client_visible_ready" in head:
+            client_paths.add(path.resolve())
+    return sorted(client_paths)
+
+
+def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
+    files = creative_proposal_scan_files(project)
+    for artifact_id, artifact_type, rel_path in CREATIVE_PROPOSAL_ARTIFACTS:
+        if (project / rel_path).exists():
+            update_artifact(
+                project,
+                artifact_id,
+                artifact_type,
+                str(rel_path),
+                "creative",
+                visibility="internal_only",
+                gate_status="NOT_RUN",
+            )
+    combined_text, missing_files = read_proposal_texts(files)
+    lower_text = combined_text.lower()
+    direction_rows = load_direction_rows(project)
+    issues: list[str] = []
+    warnings: list[str] = []
+    reason_codes: list[str] = []
+    evidence: list[str] = [
+        f"scanned_files={len(files)}",
+        f"direction_rows={len(direction_rows)}",
+    ]
+
+    if missing_files:
+        reason_codes.append("MISSING_PROPOSAL_ARTIFACT")
+        issues.extend(f"creative proposal artifact missing: {safe_rel(project, Path(path))}" for path in missing_files[:6])
+    if len(combined_text.strip()) < 900 or not direction_rows:
+        reason_codes.append("EMPTY_SKELETON")
+        issues.append("创意/提案文件仍是空骨架或缺少 option_matrix 方向行。")
+    for label in CREATIVE_PROPOSAL_REQUIRED_LABELS:
+        if label not in lower_text:
+            reason_codes.append("MISSING_REQUIRED_FIELD")
+            issues.append(f"缺少必要提案字段: {label}")
+            break
+
+    insight_lines = [line for line in combined_text.splitlines() if "consumer insight" in line.lower()]
+    if not insight_lines or all(field_is_tbd(line) for line in insight_lines):
+        reason_codes.append("WEAK_OR_MISSING_INSIGHT")
+        issues.append("consumer insight 缺失、过薄或仍是 TBD。")
+    feature_lines = [line for line in combined_text.splitlines() if "feature to benefit" in line.lower()]
+    if not feature_lines or all(field_is_tbd(line) for line in feature_lines):
+        reason_codes.append("NO_PRODUCT_TO_BENEFIT")
+        issues.append("缺少产品功能到传播利益的明确翻译。")
+
+    if len(direction_rows) < 2:
+        reason_codes.append("TOO_FEW_DIRECTIONS")
+        issues.append("创意方向少于 2 条。")
+    else:
+        signatures = {
+            re.sub(
+                r"\s+",
+                " ",
+                " ".join(
+                    row.get(field, "").strip().lower()
+                    for field in ["strategy_path", "creative_proposition", "core_message", "key_visual_or_action"]
+                ),
+            )
+            for row in direction_rows
+        }
+        if len(signatures) < len(direction_rows):
+            reason_codes.append("UNDIFFERENTIATED_DIRECTIONS")
+            issues.append("创意方向之间不可区分，strategy/proposition/message/action 过度重复。")
+    if direction_rows and all(field_is_tbd(row.get("key_visual_or_action", "")) for row in direction_rows):
+        reason_codes.append("NO_KEY_VISUAL_OR_ACTION")
+        issues.append("所有方向都缺少 key visual/actionable execution。")
+    if direction_rows and all(field_is_tbd(row.get("why_choose", "")) for row in direction_rows):
+        reason_codes.append("NO_CLIENT_CHOICE_RATIONALE")
+        issues.append("所有方向都缺少客户选择理由。")
+    if direction_rows and any(field_is_tbd(row.get("creative_proposition", "")) for row in direction_rows):
+        reason_codes.append("THIN_CREATIVE_PROPOSITION")
+        issues.append("至少一条方向的 creative proposition 仍是 TBD。")
+
+    generic_hits = sorted({match.group(0) for match in GENERIC_CREATIVE_PATTERN.finditer(combined_text)})
+    if generic_hits:
+        reason_codes.append("GENERIC_AI_CLICHE")
+        issues.append("提案含泛化口号/AI cliche: " + ", ".join(generic_hits[:8]))
+
+    unsupported_claims = [
+        compact_evidence(line, 120)
+        for line in combined_text.splitlines()
+        if CASE_CLAIM_PATTERN.search(line) and not has_supported_case_claim(line)
+    ]
+    if unsupported_claims:
+        reason_codes.append("UNSUPPORTED_REFERENCE_OR_CASE_CLAIM")
+        issues.extend(f"未追溯案例/参考/数据声明: {line}" for line in unsupported_claims[:6])
+
+    client_paths = client_facing_scan_paths(project, files)
+    for path in client_paths:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        risky = sorted({match.group(0) for match in INTERNAL_LANGUAGE_PATTERN.finditer(text)})
+        if risky:
+            reason_codes.append("INTERNAL_LANGUAGE_LEAK")
+            issues.append(f"client-facing material contains internal language: {safe_rel(project, path)}: {', '.join(risky[:6])}")
+
+    tbd_count = len(re.findall(r"\bTBD\b|open question|待补充|暂无", combined_text, flags=re.IGNORECASE))
+    if tbd_count:
+        reason_codes.append("OPEN_EVIDENCE_GAPS")
+        warnings.append(f"仍有 {tbd_count} 个 TBD/open question，只能作为内部草案或 PARTIAL。")
+
+    status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
+    status = enforce_adversarial_gate_policy(project, "creative", status, warnings, evidence)
+    if status == "PARTIAL_PASS" and "ADVERSARIAL_COUNCIL_MISSING" not in reason_codes and any("反驳性议会" in item for item in warnings):
+        reason_codes.append("ADVERSARIAL_COUNCIL_MISSING")
+
+    report_path = project / "AD-creative/gates/GATE-AUTO-CREATIVE-QUALITY-001_report.md"
+    issue_text = "\n".join(f"- {issue}" for issue in issues) or "- 无"
+    warning_text = "\n".join(f"- {warning}" for warning in warnings) or "- 无"
+    reason_text = "\n".join(f"- {code}" for code in sorted(set(reason_codes))) or "- NONE"
+    evidence_text = "\n".join(f"- {item}" for item in evidence)
+    write_text(
+        report_path,
+        f"""# Creative Quality Gate
+
+status: {status}
+visibility: internal_only
+checked_at: {now_iso()}
+
+## Reason Codes
+
+{reason_text}
+
+## Evidence
+
+{evidence_text}
+
+## Blocking Issues
+
+{issue_text}
+
+## Warnings
+
+{warning_text}
+
+## Rules
+
+- Gate checks proposal traceability and completeness, not subjective taste.
+- PASS/PARTIAL_PASS/BLOCKED are reason-code based; score alone is never approval.
+- Missing facts stay as TBD/open questions and prevent client-ready claims.
+- Blocks empty skeletons, generic slogans, weak insight, undifferentiated directions, missing feature-to-benefit, missing key visual/action, missing why-choose, unsupported case/reference claims, and internal language leaks.
+- `VALIDATION=PASS` is structural only and never replaces this creative-quality-gate.
+""",
+    )
+    update_artifact(
+        project,
+        "ART-AUTO-CREATIVE-QUALITY-GATE",
+        "creative_quality_gate_report",
+        safe_rel(project, report_path),
+        "creative",
+        status="done" if status != "BLOCKED" else "blocked",
+        visibility="internal_only",
+        gate_status=status,
+    )
+    checked_artifacts = ";".join([artifact_id for artifact_id, _, _ in CREATIVE_PROPOSAL_ARTIFACTS] + ["ART-AUTO-CREATIVE-QUALITY-GATE"])
+    append_gate(
+        project,
+        "GATE-AUTO-CREATIVE-QUALITY-001",
+        "creative",
+        status,
+        "90" if status == "PASS" else "65" if status == "PARTIAL_PASS" else "30",
+        checked_artifacts,
+        ";".join(sorted(set(reason_codes))) if issues else "",
+        ";".join(warnings[:8]) or ("修正创意提案后重跑 creative-quality-gate。" if issues else ""),
+        "",
+        "ready_for_internal_ppt" if status == "PASS" else "resolve_creative_gaps" if status == "PARTIAL_PASS" else "revise_creative_proposal",
+        "ad_creative_operator",
+    )
+    append_event(
+        project,
+        {
+            "event_id": "EVT-AUTO-CREATIVE-QUALITY-GATE",
+            "event_type": "creative_quality_gate_run",
+            "created_at": now_iso(),
+            "status": status,
+            "reason_codes": sorted(set(reason_codes)),
+            "issues": issues[:12],
+            "warnings": warnings[:12],
+        },
+    )
+    return status, issues + warnings, report_path
 
 
 def review_reference_pack(project: Path, *, live_check: bool = False) -> tuple[str, list[str], Path]:
@@ -7053,6 +7879,42 @@ def command_import_creative_production(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_creative_proposal(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    payload = render_creative_proposal(project, work_id=args.work_id)
+    dashboard = render_dashboard(project)
+    errors, stats = validate(project)
+    payload.update(
+        {
+            "creative_proposal": "PASS" if not errors else "CHECK",
+            "dashboard": str(dashboard),
+            "validation": "PASS" if not errors else "CHECK",
+            "stats": stats,
+            "errors": errors,
+        }
+    )
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if not errors else 1
+    print(f"CREATIVE_PROPOSAL={'PASS' if not errors else 'CHECK'}")
+    print(f"PROJECT={project}")
+    if args.work_id:
+        print(f"WORK_ID={args.work_id}")
+    print("ARTIFACT_IDS=" + ";".join(payload["artifact_ids"]))
+    for path in payload["paths"]:
+        print(f"ARTIFACT_PATH={path}")
+    print(f"DASHBOARD={dashboard}")
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    if errors:
+        print("ERRORS:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    return 0
+
+
 def command_init(args: argparse.Namespace) -> int:
     project = Path(args.project).expanduser().resolve()
     template = Path(args.template).expanduser().resolve() if args.template else TEMPLATE_ROOT
@@ -7062,11 +7924,13 @@ def command_init(args: argparse.Namespace) -> int:
         return 1
     project.mkdir(parents=True, exist_ok=True)
     created, skipped = copy_template(template, project)
+    agents_status = agents_policy_status(project)
     errors, stats = validate(project)
     print(f"PROJECT={project}")
     print(f"TEMPLATE={template}")
     print(f"CREATED_FILES={created}")
     print(f"SKIPPED_EXISTING_FILES={skipped}")
+    print(f"AGENTS_MD={agents_status}")
     print(f"INIT={'PASS' if not errors else 'CHECK'}")
     for key, value in stats.items():
         print(f"{key.upper()}={value}")
@@ -7082,6 +7946,7 @@ def command_init(args: argparse.Namespace) -> int:
 def command_run(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     created, skipped = ensure_project(project)
+    agents_status = agents_policy_status(project)
     materials = [Path(item).expanduser().resolve() for item in args.material]
     source_ids = register_materials(project, materials, args.goal) if materials else []
     if source_ids or args.goal:
@@ -7100,6 +7965,7 @@ def command_run(args: argparse.Namespace) -> int:
     print(f"PROJECT={project}")
     print(f"CREATED_FILES={created}")
     print(f"SKIPPED_EXISTING_FILES={skipped}")
+    print(f"AGENTS_MD={agents_status}")
     print(f"REGISTERED_SOURCES={len(source_ids)}")
     print(f"INTAKE_MATERIALS={intake_stats['materials']}")
     print(f"INTAKE_REQUIREMENTS={intake_stats['requirements']}")
@@ -7121,6 +7987,7 @@ def command_run(args: argparse.Namespace) -> int:
 def command_sample(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     created, skipped = ensure_project(project)
+    agents_status = agents_policy_status(project)
     material, material_action = write_sample_brief(project, force=args.force_material)
     source_ids = existing_source_ids_for_material(project, material)
     registered_sources = 0
@@ -7147,6 +8014,7 @@ def command_sample(args: argparse.Namespace) -> int:
     print(f"PROJECT={project}")
     print(f"CREATED_FILES={created}")
     print(f"SKIPPED_EXISTING_FILES={skipped}")
+    print(f"AGENTS_MD={agents_status}")
     print(f"SAMPLE_MATERIAL={material}")
     print(f"SAMPLE_MATERIAL_ACTION={material_action}")
     print(f"REGISTERED_SOURCES={registered_sources}")
@@ -7172,6 +8040,7 @@ def command_sample(args: argparse.Namespace) -> int:
 def command_demo(args: argparse.Namespace) -> int:
     project = Path(args.project).expanduser().resolve() if args.project else DEFAULT_DEMO_PROJECT
     created, skipped = ensure_project(project)
+    agents_status = agents_policy_status(project)
     material, material_action = write_sample_brief(project, force=args.force_material)
     source_ids = existing_source_ids_for_material(project, material)
     registered_sources = 0
@@ -7201,6 +8070,7 @@ def command_demo(args: argparse.Namespace) -> int:
     print(f"PROJECT={project}")
     print(f"CREATED_FILES={created}")
     print(f"SKIPPED_EXISTING_FILES={skipped}")
+    print(f"AGENTS_MD={agents_status}")
     print(f"SAMPLE_MATERIAL={material}")
     print(f"SAMPLE_MATERIAL_ACTION={material_action}")
     print(f"REGISTERED_SOURCES={registered_sources}")
@@ -7228,6 +8098,7 @@ def command_demo(args: argparse.Namespace) -> int:
 def command_quickstart(args: argparse.Namespace) -> int:
     project = Path(args.project).expanduser().resolve() if args.project else DEFAULT_DEMO_PROJECT
     created, skipped = ensure_project(project)
+    agents_status = agents_policy_status(project)
     material, material_action = write_sample_brief(project, force=args.force_material)
     source_ids = existing_source_ids_for_material(project, material)
     registered_sources = 0
@@ -7259,6 +8130,7 @@ def command_quickstart(args: argparse.Namespace) -> int:
         "project": str(project),
         "created_files": created,
         "skipped_existing_files": skipped,
+        "agents_md": agents_status,
         "sample_material": str(material),
         "sample_material_action": material_action,
         "registered_sources": registered_sources,
@@ -7286,6 +8158,7 @@ def command_quickstart(args: argparse.Namespace) -> int:
     print(f"PROJECT={project}")
     print(f"CREATED_FILES={created}")
     print(f"SKIPPED_EXISTING_FILES={skipped}")
+    print(f"AGENTS_MD={agents_status}")
     print(f"SAMPLE_MATERIAL={material}")
     print(f"SAMPLE_MATERIAL_ACTION={material_action}")
     print(f"REGISTERED_SOURCES={registered_sources}")
@@ -7784,6 +8657,32 @@ def command_search_quality_gate(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_creative_quality_gate(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    status, items, report = review_creative_quality(project)
+    dashboard = render_dashboard(project)
+    errors, stats = validate(project)
+    print(f"CREATIVE_QUALITY_GATE={status}")
+    print(f"REPORT={report}")
+    print(f"FINDINGS={len(items)}")
+    print(f"DASHBOARD={dashboard}")
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    if errors or status == "BLOCKED":
+        if items:
+            print("GATE_ISSUES:")
+            for item in items:
+                print(f"- {item}")
+        if errors:
+            print("ERRORS:")
+            for error in errors:
+                print(f"- {error}")
+        return 1
+    return 0
+
+
 def command_add_asset(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     ensure_project(project)
@@ -8128,6 +9027,15 @@ def build_parser() -> argparse.ArgumentParser:
     creative_import_parser.add_argument("--reference-id", default="pending")
     creative_import_parser.set_defaults(func=command_import_creative_production)
 
+    proposal_parser = subparsers.add_parser(
+        "creative-proposal",
+        help="Create traceable internal creative proposal draft artifacts.",
+    )
+    proposal_parser.add_argument("project", help="Project directory.")
+    proposal_parser.add_argument("--work-id", default="", help="Optional work item id to link artifacts.")
+    proposal_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    proposal_parser.set_defaults(func=command_creative_proposal)
+
     run_parser = subparsers.add_parser("run", help="Initialize, register materials, render dashboard, run council.")
     run_parser.add_argument("project", help="Project directory.")
     run_parser.add_argument("--material", action="append", default=[], help="Client material file or folder. Repeatable.")
@@ -8271,6 +9179,13 @@ def build_parser() -> argparse.ArgumentParser:
     search_gate_parser = subparsers.add_parser("search-quality-gate", help="Audit search plans and search-target references.")
     search_gate_parser.add_argument("project", help="Project directory.")
     search_gate_parser.set_defaults(func=command_search_quality_gate)
+
+    creative_quality_parser = subparsers.add_parser(
+        "creative-quality-gate",
+        help="Audit creative/proposal artifacts for traceable quality and client-facing safety.",
+    )
+    creative_quality_parser.add_argument("project", help="Project directory.")
+    creative_quality_parser.set_defaults(func=command_creative_quality_gate)
 
     asset_parser = subparsers.add_parser("add-asset", help="Register a real/generated visual asset file.")
     asset_parser.add_argument("project", help="Project directory.")
