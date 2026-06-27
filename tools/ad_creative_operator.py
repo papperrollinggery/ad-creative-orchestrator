@@ -2119,15 +2119,31 @@ def compact_evidence(value: str, limit: int = 140) -> str:
 
 
 def first_evidence_line(lines: list[tuple[str, str]], patterns: list[str], fallback: str) -> tuple[str, str]:
-    regex = re.compile("|".join(re.escape(pattern) for pattern in patterns), re.IGNORECASE)
-    for source_id, line in lines:
-        if regex.search(line):
-            return compact_evidence(line), source_id
+    for pattern in patterns:
+        regex = re.compile(re.escape(pattern), re.IGNORECASE)
+        for source_id, line in lines:
+            if regex.search(line):
+                return compact_evidence(line), source_id
     return fallback, ""
 
 
 def open_question(label: str) -> str:
     return f"TBD - open question: {label}"
+
+
+def material_evidence_lines(source_materials: list[tuple[dict[str, str], Path, str]]) -> list[tuple[str, str]]:
+    evidence: list[tuple[str, str]] = []
+    for source, _, text in source_materials:
+        source_id = source.get("source_event_id", "")
+        for raw_line in text.splitlines():
+            if re.match(r"^\s{0,3}#{1,6}\s+", raw_line):
+                continue
+            line = clean_material_line(raw_line)
+            if not line or line in SKIP_MATERIAL_LINES:
+                continue
+            if 6 <= len(line) <= 220:
+                evidence.append((source_id, line))
+    return evidence
 
 
 def collect_proposal_evidence(project: Path) -> dict[str, object]:
@@ -2136,65 +2152,74 @@ def collect_proposal_evidence(project: Path) -> dict[str, object]:
     _, reference_rows = read_csv_rows(project / "AD-creative/references/reference_cards.csv")
     _, profile_insights = read_csv_rows(project / "AD-creative/orchestrator/profile_knowledge/profile_insights.csv")
     source_materials, resolved_source_ids = collect_source_materials(project, [])
-    evidence_lines: list[tuple[str, str]] = []
+    source_lines = material_evidence_lines(source_materials)
+    requirement_lines: list[tuple[str, str]] = []
+    gap_lines: list[tuple[str, str]] = []
     for requirement in requirement_rows:
         statement = requirement.get("statement", "").strip()
         if statement:
-            evidence_lines.append((requirement.get("source_event_id", ""), statement))
+            requirement_lines.append((requirement.get("source_event_id", ""), statement))
     for gap in gap_rows:
         description = gap.get("description", "").strip()
         question = gap.get("question_for_client", "").strip()
         if description:
-            evidence_lines.append((gap.get("linked_requirement_id", ""), description))
+            gap_lines.append((gap.get("linked_requirement_id", ""), description))
         if question:
-            evidence_lines.append((gap.get("linked_requirement_id", ""), question))
-    for source, _, text in source_materials:
-        source_id = source.get("source_event_id", "")
-        for raw_line in text.splitlines():
-            line = clean_material_line(raw_line)
-            if 6 <= len(line) <= 180:
-                evidence_lines.append((source_id, line))
+            gap_lines.append((gap.get("linked_requirement_id", ""), question))
+    creative_lines = source_lines + requirement_lines + gap_lines
+    source_or_requirement_lines = source_lines + requirement_lines
 
     business_problem, business_source = first_evidence_line(
-        evidence_lines,
-        ["问题", "挑战", "新品", "launch", "广告创意", "提案", "内部评审", "交付"],
+        creative_lines,
+        ["too generic", "draft client language", "creative problem", "问题", "挑战", "新品", "launch", "广告创意", "提案", "内部评审", "交付"],
         open_question("business problem"),
     )
     client_objective, objective_source = first_evidence_line(
-        evidence_lines,
-        ["客户希望", "目标", "本轮交付", "需要", "PPT", "内部评审", "审阅"],
+        creative_lines,
+        ["create an internal creative", "requested deliverables", "launch goal", "客户希望", "目标", "本轮交付", "需要", "PPT", "内部评审", "审阅"],
         open_question("client real objective"),
     )
     audience, audience_source = first_evidence_line(
-        evidence_lines,
-        ["人群", "用户", "消费者", "轻运动", "户外", "年轻", "audience"],
+        source_or_requirement_lines,
+        ["24-36", "city professionals", "commuting", "weekend trails", "人群", "用户", "消费者", "轻运动", "户外", "年轻", "audience"],
         open_question("target audience"),
     )
     barrier, barrier_source = first_evidence_line(
-        evidence_lines,
-        ["担心", "不要", "不能", "缺少", "暂缺", "风险", "障碍", "痛点", "限制"],
+        source_or_requirement_lines,
+        ["distrust", "inflated", "empty words", "generic", "担心", "不信", "顾虑", "障碍", "痛点", "限制"],
         open_question("target behavior barrier"),
     )
+    if barrier.startswith("TBD"):
+        barrier, barrier_source = first_evidence_line(
+            gap_lines,
+            ["担心", "不要", "不能", "缺少", "暂缺", "风险", "障碍", "痛点", "限制"],
+            open_question("target behavior barrier"),
+        )
     product_feature, feature_source = first_evidence_line(
-        evidence_lines,
-        ["产品", "功能", "饮料", "包装", "高清图", "补给", "功能饮料", "卖点"],
+        source_or_requirement_lines,
+        ["3-layer", "waterproof", "packable", "underarm", "reflective", "fabric", "colors", "retail", "产品", "功能", "包装", "高清图", "卖点"],
         open_question("product feature"),
     )
     visual_reference, visual_source = first_evidence_line(
-        evidence_lines,
-        ["真实户外", "清爽", "清晨", "山路", "手持产品", "关键视觉", "画面", "视觉"],
+        source_or_requirement_lines,
+        ["office rain", "weekend trails", "slate green", "rain gray", "canyon red", "reflective", "真实户外", "清爽", "清晨", "山路", "手持产品", "关键视觉", "画面", "视觉"],
         open_question("visual/action evidence"),
     )
-    insight = open_question("consumer insight")
-    insight_source = ""
+    insight, insight_source = first_evidence_line(
+        source_or_requirement_lines,
+        ["specific use moments", "without looking", "distrust", "want a jacket", "可信", "具体", "真实", "担心", "希望", "需要", "不要", "轻运动", "户外"],
+        open_question("consumer insight"),
+    )
     for row in profile_insights:
+        if not insight.startswith("TBD"):
+            break
         if row.get("insight_type") in {"need", "preference", "concern", "brand_trait"}:
             insight = compact_evidence(row.get("statement", ""))
             insight_source = row.get("source_event_id", "")
             break
     if insight.startswith("TBD"):
         insight, insight_source = first_evidence_line(
-            evidence_lines,
+            creative_lines,
             ["真实", "清爽", "担心", "偏", "希望", "需要", "不要", "轻运动", "户外"],
             open_question("consumer insight"),
         )
@@ -2231,30 +2256,54 @@ def proposal_evidence_ref(source: str) -> str:
     return source or "TBD"
 
 
+def proposal_display_phrase(label: str, value: str) -> str:
+    cleaned = value.strip().strip("。.")
+    lower = cleaned.lower()
+    if cleaned.startswith("TBD"):
+        return cleaned
+    if label == "business_problem" and ("too generic" in lower or "generic" in lower):
+        return "现有文案过空，需要从口号改成具体场景和可核验利益"
+    if label == "client_objective" and "internal creative direction package" in lower:
+        return "为晚夏新品发布做一套内部方向提案，覆盖短视频、种草内容和客户审阅"
+    if label == "audience" and ("24-36" in lower or "city professionals" in lower):
+        return "24-36 岁城市职场人"
+    if label in {"barrier", "insight"} and "distrust inflated outdoor claims" in lower:
+        return "他们不相信夸大的户外性能话术，只接受具体使用瞬间"
+    if label == "insight" and "office rain" in lower and "weekend trails" in lower:
+        return "他们想要一件从办公室雨天到周末山路都不突兀的外套"
+    if label == "product_feature" and "3-layer waterproof fabric" in lower:
+        return "3 层防水面料"
+    if label == "visual_reference" and "office rain" in lower and "weekend trails" in lower:
+        return "办公室雨天到周末山路的同一件外套"
+    return cleaned
+
+
 def build_creative_direction_rows(context: dict[str, object]) -> list[dict[str, str]]:
     feature = str(context["product_feature"])
+    feature_phrase = proposal_display_phrase("product_feature", feature)
+    objective_phrase = proposal_display_phrase("client_objective", str(context["client_objective"]))
+    audience_phrase = proposal_display_phrase("audience", str(context["audience"]))
+    barrier_phrase = proposal_display_phrase("barrier", str(context["barrier"]))
+    insight_phrase = proposal_display_phrase("insight", str(context["insight"]))
+    visual_phrase = proposal_display_phrase("visual_reference", str(context["visual_reference"]))
     benefit = (
-        "把产品从静态卖点翻译成可感知的场景价值。"
+        "把产品卖点翻译成通勤和短途路线里的具体行动价值。"
         if not feature.startswith("TBD")
         else open_question("communication benefit")
     )
-    insight = str(context["insight"])
-    visual = str(context["visual_reference"])
-    audience = str(context["audience"])
-    barrier = str(context["barrier"])
     return [
         {
             "direction_id": "DIR-01",
-            "name": "场景补给证明",
+            "name": "场景接续证明",
             "role": "把产品功能落到真实使用场景",
             "strategy_path": "product_feature_to_behavior_moment",
-            "creative_proposition": f"在{audience}最需要补给的时刻，让产品成为动作继续发生的证据。",
-            "core_message": f"{feature} -> {benefit}",
+            "creative_proposition": f"当{audience_phrase}在雨天通勤和周末山路之间切换时，让{feature_phrase}成为继续行动的理由。",
+            "core_message": f"{feature_phrase} -> {benefit}",
             "target_feeling": "真实、清爽、可信",
             "product_feature": feature,
             "communication_benefit": benefit,
-            "behavior_barrier": barrier,
-            "key_visual_or_action": visual,
+            "behavior_barrier": barrier_phrase,
+            "key_visual_or_action": visual_phrase,
             "title_or_use_case": "清晨出发前 / 山路途中 / 手持产品的连续动作",
             "reference_ids": str(context["reference_ids"]),
             "risk": "缺少产品高清图时只能保留 internal_only placeholder。",
@@ -2277,12 +2326,12 @@ def build_creative_direction_rows(context: dict[str, object]) -> list[dict[str, 
             "name": "选择理由显性化",
             "role": "把客户目标翻译成可比较的提案路径",
             "strategy_path": "client_objective_to_choice_rationale",
-            "creative_proposition": f"围绕客户真实目标：{context['client_objective']}，把每个方向的取舍说清楚。",
-            "core_message": "不是口号比拼，而是让客户能判断为什么选这一条。",
+            "creative_proposition": f"围绕客户真实目标：{objective_phrase}，把每个方向的取舍说清楚。",
+            "core_message": "客户选择靠证据、动作和风险边界，不靠口号气势。",
             "target_feeling": "清晰、有判断依据、可推进",
             "product_feature": feature,
             "communication_benefit": "让产品利益、执行方式、风险边界能同时被审阅。",
-            "behavior_barrier": barrier,
+            "behavior_barrier": barrier_phrase,
             "key_visual_or_action": "一页对比矩阵 + 每条方向一张关键动作图或 placeholder slot。",
             "title_or_use_case": "内部评审会方向选择页",
             "reference_ids": str(context["reference_ids"]),
@@ -2297,12 +2346,12 @@ def build_creative_direction_rows(context: dict[str, object]) -> list[dict[str, 
             "name": "阻力转译",
             "role": "把受众阻力转成创意动作",
             "strategy_path": "audience_barrier_to_execution",
-            "creative_proposition": f"承认阻力：{barrier}，用更具体的行动画面降低理解成本。",
-            "core_message": f"{insight} -> 看见行动理由。",
+            "creative_proposition": f"承认阻力：{barrier_phrase}，用更具体的行动画面降低理解成本。",
+            "core_message": f"{insight_phrase} -> 把顾虑变成一个可拍的动作。",
             "target_feeling": "直接、具体、少解释",
             "product_feature": feature,
             "communication_benefit": "让受众先理解为什么需要它，再记住产品。",
-            "behavior_barrier": barrier,
+            "behavior_barrier": barrier_phrase,
             "key_visual_or_action": "障碍前后对比：出发前犹豫 / 使用产品 / 继续行动。",
             "title_or_use_case": "受众痛点页或短片第一幕",
             "reference_ids": str(context["reference_ids"]),

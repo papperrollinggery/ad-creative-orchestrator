@@ -13,6 +13,7 @@ from ad_creative_operator import (
     read_csv_rows,
     render_goal_iteration_plan,
     render_creative_proposal,
+    register_materials,
     review_client_pack,
     review_creative_quality,
     review_handoff_readiness,
@@ -557,6 +558,60 @@ def test_creative_proposal_writes_required_internal_fields() -> None:
         ]:
             assert marker in text, marker
         assert "ART-AUTO-CREATIVE-DIRECTIONS" in payload["artifact_ids"]
+        assert_valid(project)
+
+
+def test_creative_proposal_prefers_source_brief_over_asset_gaps() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-creative-source-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        brief = project / "briefs/nova-trail.md"
+        write_text(
+            brief,
+            """# NOVA Trail Shell Launch Brief
+
+## Target Audience
+- 24-36 year-old city professionals who commute on rainy weekdays and hike short trails on weekends.
+- They distrust inflated outdoor claims and want specific use moments.
+
+## Known Product Facts
+- 3-layer waterproof fabric.
+- Packable hood.
+- Two-way underarm vents.
+- Reflective side tabs.
+
+## Creative Problem
+The draft client language is too generic and must become specific, grounded, and useful.
+""",
+        )
+        register_materials(project, [brief], "Create a grounded internal launch proposal.")
+        add_row(
+            project,
+            "AD-creative/orchestrator/gaps.csv",
+            {
+                "gap_id": "GAP-999",
+                "linked_requirement_id": "",
+                "description": "缺少品牌 logo / 字体 / 包装 / 视觉规范，不能进入客户可见稿。",
+                "impact": "blocking",
+                "owner": "client",
+                "question_for_client": "请提供品牌 logo、字体、包装或产品露出规范。",
+                "question_for_director": "",
+                "question_for_user": "",
+                "recommended_action": "向客户索取品牌资产包；没有资产前只做内部方向稿。",
+                "status": "open",
+            },
+        )
+
+        render_creative_proposal(project, work_id="WORK-001")
+
+        text = (project / "AD-creative/creative/creative_directions.md").read_text(encoding="utf-8")
+        assert "3-layer waterproof fabric" in text
+        assert "3 层防水面料" in text
+        assert "24-36 year-old city professionals" in text
+        assert "24-36 岁城市职场人" in text
+        assert "target audience: Target Audience" not in text
+        assert "在24-36 year-old" not in text
+        assert "缺少品牌 logo" not in text
         assert_valid(project)
 
 
