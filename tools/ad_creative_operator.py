@@ -175,6 +175,43 @@ INTERNAL_LANGUAGE_PATTERN = re.compile(
     r"prompt|thread|worker|lane|subagent|codex|worktree|执行线程|工作线程|提示词|子代理|泳道|lane plan",
     re.IGNORECASE,
 )
+CHATBOT_RESIDUE_PATTERN = re.compile(
+    r"hope this helps|let me know|would you like|want me to|of course[!,]|certainly[!,]|"
+    r"\bhere (?:is|are) (?:a|an|the)\b|"
+    r"希望这对.{0,8}有帮助|请告诉我|您想要|当然[！!]|一定[！!]",
+    re.IGNORECASE,
+)
+VAGUE_AUTHORITY_PATTERN = re.compile(
+    r"industry reports?|experts? (?:argue|believe|say|suggest)|observers? (?:have )?(?:cited|noted|say)|"
+    r"some critics argue|studies show|data shows|leading experts?|"
+    r"行业报告|专家(?:认为|指出|表示)|观察者(?:指出|认为)|一些批评者|数据显示|多方(?:认为|指出)",
+    re.IGNORECASE,
+)
+EXAGGERATED_SIGNIFICANCE_PATTERN = re.compile(
+    r"stands as|serves as|testament to|pivotal moment|crucial role|key role|marks a shift|"
+    r"broader trend|evolving landscape|lasting impact|transformative|game-changing|"
+    r"标志着|见证了|是.+证明|关键(?:性)?(?:时刻|转折|作用)|至关重要|深远影响|"
+    r"不断演变的格局|变革性|重塑(?:行业|市场|格局)",
+    re.IGNORECASE,
+)
+NOT_ONLY_BUT_PATTERN = re.compile(
+    r"not only .{0,120} but|not just .{0,120} (?:but|it'?s)|not merely .{0,120} but|"
+    r"不仅.{0,80}而且|不止于.{0,80}(?:更是|而是)|不只是.{0,80}(?:更是|而是)",
+    re.IGNORECASE,
+)
+GENERIC_AI_VOCABULARY_PATTERN = re.compile(
+    r"additionally|align with|crucial|delve|enduring|enhance|foster(?:ing)?|highlight(?:ing)?|"
+    r"interplay|intricate|landscape|pivotal|showcase|tapestry|testament|underscore|valuable|vibrant|"
+    r"此外|至关重要|深入探讨|彰显|凸显|赋能|焕新|无缝|沉浸式|多维|格局|"
+    r"重要抓手|有力抓手|强势助推|生态闭环",
+    re.IGNORECASE,
+)
+CLIENT_WRITING_RISK_CODES = {
+    "CHATBOT_RESIDUE": CHATBOT_RESIDUE_PATTERN,
+    "VAGUE_AUTHORITY_CLAIM": VAGUE_AUTHORITY_PATTERN,
+    "EXAGGERATED_SIGNIFICANCE": EXAGGERATED_SIGNIFICANCE_PATTERN,
+    "FORMULAIC_NOT_ONLY_BUT": NOT_ONLY_BUT_PATTERN,
+}
 PROFILE_SUBJECT_FIELDS = [
     "subject_id",
     "subject_type",
@@ -2583,6 +2620,41 @@ def has_supported_case_claim(line: str) -> bool:
     return bool(re.search(r"\b(REF|SRC|ART)-[A-Z0-9-]+|https://|TBD|open question|待补充", line))
 
 
+def has_trace_marker(line: str) -> bool:
+    return bool(re.search(r"\b(REF|SRC|REQ|ART)-[A-Z0-9-]+|https://|\[source:", line, re.IGNORECASE))
+
+
+def collect_humanizer_writing_risks(combined_text: str, client_texts: list[tuple[Path, str]], project: Path) -> list[tuple[str, str]]:
+    risks: list[tuple[str, str]] = []
+    for code, pattern in CLIENT_WRITING_RISK_CODES.items():
+        hits: list[str] = []
+        for line in combined_text.splitlines():
+            if not pattern.search(line):
+                continue
+            if code == "VAGUE_AUTHORITY_CLAIM" and has_trace_marker(line):
+                continue
+            hits.append(compact_evidence(line, 120))
+        if hits:
+            risks.append((code, "; ".join(hits[:3])))
+
+    vocab_hits = [match.group(0) for match in GENERIC_AI_VOCABULARY_PATTERN.finditer(combined_text)]
+    unique_vocab_hits = sorted(set(vocab_hits), key=str.lower)
+    if len(vocab_hits) >= 4 or len(unique_vocab_hits) >= 3:
+        risks.append(("GENERIC_AI_VOCABULARY", ", ".join(unique_vocab_hits[:8])))
+
+    dash_hits = re.findall(r"—|–| -- ", combined_text)
+    client_dash_locations = [
+        safe_rel(project, path)
+        for path, text in client_texts
+        if re.search(r"—|–| -- ", text)
+    ]
+    if len(dash_hits) >= 2:
+        risks.append(("DASH_OVERUSE", f"{len(dash_hits)} dash-like separators in proposal text"))
+    elif client_dash_locations:
+        risks.append(("DASH_OVERUSE", "client-facing dash-like separators: " + ", ".join(client_dash_locations[:4])))
+    return risks
+
+
 def client_facing_scan_paths(project: Path, files: list[Path]) -> list[Path]:
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
     client_paths: set[Path] = set()
@@ -2688,12 +2760,18 @@ def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
         issues.extend(f"未追溯案例/参考/数据声明: {line}" for line in unsupported_claims[:6])
 
     client_paths = client_facing_scan_paths(project, files)
+    client_texts: list[tuple[Path, str]] = []
     for path in client_paths:
         text = path.read_text(encoding="utf-8", errors="ignore")
+        client_texts.append((path, text))
         risky = sorted({match.group(0) for match in INTERNAL_LANGUAGE_PATTERN.finditer(text)})
         if risky:
             reason_codes.append("INTERNAL_LANGUAGE_LEAK")
             issues.append(f"client-facing material contains internal language: {safe_rel(project, path)}: {', '.join(risky[:6])}")
+
+    for code, evidence_item in collect_humanizer_writing_risks(combined_text, client_texts, project):
+        reason_codes.append(code)
+        issues.append(f"humanizer writing risk ({code}): {evidence_item}")
 
     tbd_count = len(re.findall(r"\bTBD\b|open question|待补充|暂无", combined_text, flags=re.IGNORECASE))
     if tbd_count:
@@ -2739,7 +2817,7 @@ checked_at: {now_iso()}
 - Gate checks proposal traceability and completeness, not subjective taste.
 - PASS/PARTIAL_PASS/BLOCKED are reason-code based; score alone is never approval.
 - Missing facts stay as TBD/open questions and prevent client-ready claims.
-- Blocks empty skeletons, generic slogans, weak insight, undifferentiated directions, missing feature-to-benefit, missing key visual/action, missing why-choose, unsupported case/reference claims, and internal language leaks.
+- Blocks empty skeletons, generic slogans, weak insight, undifferentiated directions, missing feature-to-benefit, missing key visual/action, missing why-choose, unsupported case/reference claims, internal language leaks, and humanizer writing risks.
 - `VALIDATION=PASS` is structural only and never replaces this creative-quality-gate.
 """,
     )
@@ -6445,6 +6523,135 @@ THREADOPS_ROLE_ALIASES = {
 }
 
 READ_ONLY_THREADOPS_ROLES = {"brand_client", "producer_risk"}
+THREADOPS_DEFAULT_LOOP_MODE = "sequential"
+THREADOPS_LOOP_MODES = ("sequential", "rfc_dag", "continuous_pr", "infinite")
+THREADOPS_OBSERVATION_CONTRACT = (
+    "status success|warning|error; summary one-line result; artifacts file paths or ids; "
+    "next_actions actionable follow-ups; evidence_refs exact files, rows, or commands"
+)
+THREADOPS_ERROR_RECOVERY_CONTRACT = (
+    "include root_cause_hint, safe_retry_instruction, and explicit_stop_condition; "
+    "freeze after repeated same root cause or thread confusion"
+)
+THREADOPS_CONTEXT_BUDGET = (
+    "role brief, lane plan, and declared read_first files only; load extra context only with a reason"
+)
+THREADOPS_ITERATION_BUDGET = (
+    "max 3 internal passes per worker; no unbounded retries; main/control may lower the budget"
+)
+THREADOPS_REPLAY_TRIGGER = (
+    "validation_result FAIL, missing required receipt field, stale evidence, out-of-scope edit, "
+    "or reopened user/client feedback"
+)
+THREADOPS_FREEZE_TRIGGER = (
+    "thread confusion, wrong-thread behavior, heat/cost spike, worker budget exceeded, "
+    "same root cause twice, or cleanup request"
+)
+THREADOPS_PROMPT_ONLY_FORBIDDEN = (
+    "prompt-only output is invalid for production workers; execution_worker must produce declared files "
+    "or return BLOCKED with evidence"
+)
+THREADOPS_HELPER_DEFAULT_MODE = "none"
+THREADOPS_HELPER_MODE = "stateless_secondary_helper"
+THREADOPS_ALLOWED_HELPER_KINDS = (
+    "image_generation",
+    "ocr",
+    "layout_lint",
+    "asset_resize",
+    "reference_extraction",
+)
+THREADOPS_HELPER_POLICY = (
+    "optional bounded stateless helper/subagent-style local invocation inside a real Codex Thread worker; "
+    "helper is stateless and cannot replace the worker/reviewer layer"
+)
+THREADOPS_HELPER_WRITE_BOUNDARY = (
+    "helper has no thread_id, no thread_registry row, and no write_scope; "
+    "any kept artifact must be written or imported by the L1 worker inside declared write_scope"
+)
+THREADOPS_HELPER_EVIDENCE_REQUIRED = (
+    "when helper_mode is stateless_secondary_helper, receipt must include helper_invocations, "
+    "helper_input_refs, helper_output_refs, helper_artifacts, helper_validation_result, "
+    "helper_adopted_by_worker, helper_failure_reason if any, and worker_synthesis"
+)
+THREADOPS_HELPER_FAILURE_POLICY = (
+    "helper failure cannot bypass worker validation; worker records failure reason, "
+    "continues without helper evidence only when safe, or returns BLOCKED/PARTIAL"
+)
+
+
+def threadops_action_space(mode: str, write_scope: str) -> str:
+    if mode == "execution_worker":
+        return (
+            "read declared inputs; write only declared workspace and receipt paths; "
+            f"respect write_scope [{write_scope}]; no master truth, final export, send, upload, login, or paid action"
+        )
+    return (
+        "read declared inputs; write receipt only; propose changes and blockers; "
+        "do not edit artifacts, master truth, final exports, or client-visible files"
+    )
+
+
+def threadops_harness_contract(
+    *,
+    mode: str,
+    write_scope: str,
+    validation_proof: str,
+    stop_condition: str,
+) -> dict[str, str]:
+    return {
+        "action_space": threadops_action_space(mode, write_scope),
+        "observation_contract": THREADOPS_OBSERVATION_CONTRACT,
+        "error_recovery_contract": THREADOPS_ERROR_RECOVERY_CONTRACT,
+        "context_budget": THREADOPS_CONTEXT_BUDGET,
+        "iteration_budget": THREADOPS_ITERATION_BUDGET,
+        "eval_gate": validation_proof,
+        "adoption_decision": "pending_main_control_adoption",
+        "rejection_reason": "required_if_adoption_decision_is_reject_or_partial",
+        "loop_state": "planned",
+        "replay_trigger": THREADOPS_REPLAY_TRIGGER,
+        "freeze_trigger": THREADOPS_FREEZE_TRIGGER,
+        "stop_condition": stop_condition,
+    }
+
+
+def format_threadops_contract(contract: dict[str, str]) -> str:
+    return "\n".join(f"{key}: {value}" for key, value in contract.items())
+
+
+def threadops_helper_contract() -> dict[str, str]:
+    return {
+        "helper_mode": THREADOPS_HELPER_DEFAULT_MODE,
+        "helper_policy": THREADOPS_HELPER_POLICY,
+        "allowed_helper_kinds": ",".join(THREADOPS_ALLOWED_HELPER_KINDS),
+        "helper_write_boundary": THREADOPS_HELPER_WRITE_BOUNDARY,
+        "helper_evidence_required": THREADOPS_HELPER_EVIDENCE_REQUIRED,
+        "helper_failure_policy": THREADOPS_HELPER_FAILURE_POLICY,
+        "helper_invocations": "none",
+        "helper_input_refs": "none",
+        "helper_output_refs": "none",
+        "helper_artifacts": "none",
+        "helper_validation_result": "not_applicable",
+        "helper_adopted_by_worker": "no",
+        "helper_failure_reason": "none",
+        "worker_synthesis": "worker must synthesize and adopt/reject helper output before returning receipt",
+    }
+
+
+def format_threadops_helper_contract(contract: dict[str, str] | None = None) -> str:
+    return format_threadops_contract(contract or threadops_helper_contract())
+
+
+def threadops_loop_mode_contract() -> str:
+    return """loop_mode: sequential
+allowed_loop_modes: sequential,rfc_dag,continuous_pr,infinite
+sequential: default; finish one bounded lane step before the next handoff
+rfc_dag: use only when an RFC-style dependency graph is written in the lane plan
+continuous_pr: use only for controlled PR/check cycles with explicit validation commands
+infinite: bounded internal exploration only; must declare iteration_budget, freeze_trigger, replay_trigger, and stop_condition
+safe_stop: stop before client-visible send, paid/private/upload actions, destructive edits, global install, validation failure, or missing receipt proof
+replay_trigger: validation_result FAIL, missing receipt schema, stale evidence, out-of-scope edit, or reopened feedback
+freeze_trigger: thread confusion, wrong thread, heat/cost spike, budget exceeded, repeated same root cause, or cleanup request
+stop_condition: receipt reconciled, eval_gate passed or blocker recorded, adoption_decision recorded, and cleanup action planned"""
 
 
 def threadops_lane_mode(role: str, spec: ThreadRoleSpec) -> str:
@@ -6516,6 +6723,13 @@ def threadops_role_brief_content(
     mode: str,
     write_scope: str,
 ) -> str:
+    contract = threadops_harness_contract(
+        mode=mode,
+        write_scope=write_scope,
+        validation_proof=spec.validation_proof,
+        stop_condition=spec.stop_condition,
+    )
+    helper_contract = threadops_helper_contract()
     project_facts = "\n".join(
         f"- {key}: {value or 'TBD'}" for key, value in task_signature.items()
     )
@@ -6533,6 +6747,7 @@ role_label: {spec.label}
 mode: {mode}
 environment: {spec.default_environment}
 write_scope: {write_scope}
+loop_mode: {THREADOPS_DEFAULT_LOOP_MODE}
 
 ## Professional Identity
 
@@ -6564,12 +6779,31 @@ Goal objective: {objective}
 
 {output}
 
+## Harness Contract
+
+```text
+{format_threadops_contract(contract)}
+```
+
+## Loop Mode Contract
+
+```text
+{threadops_loop_mode_contract()}
+```
+
+## Stateless Secondary Helper Contract
+
+```text
+{format_threadops_helper_contract(helper_contract)}
+```
+
 ## Acceptance Evidence
 
 - Stop condition: {spec.stop_condition}
 - Validation proof: {spec.validation_proof}
 - Main/control thread is the only merge owner.
 - Final PPT/PDF export is not allowed from this lane.
+- Helpers are not Codex Threads, substitute workers, registry rows, or write scopes.
 """
 
 
@@ -6591,6 +6825,13 @@ def threadops_worker_prompt_content(
     workspace_path: str,
     write_scope: str,
 ) -> str:
+    contract = threadops_harness_contract(
+        mode=mode,
+        write_scope=write_scope,
+        validation_proof=spec.validation_proof,
+        stop_condition=spec.stop_condition,
+    )
+    helper_contract = threadops_helper_contract()
     read_first = list(dict.fromkeys([*spec.read_first, *extra_read_first]))
     read_first_text = "\n".join(f"- {item}" for item in read_first)
     allowed = "\n".join(f"- {item}" for item in spec.allowed_actions)
@@ -6601,15 +6842,20 @@ def threadops_worker_prompt_content(
     )
     execution_receipt = (
         "- write_scope\n"
-        "- files_changed\n"
+        "- files_changed (required; prompt-only output is invalid)\n"
         "- validation_result\n"
         "- dirty_state_impact\n"
+        "- manifest_index_updates\n"
+        "- QA/gate status\n"
+        "- adoption/rejection recommendation\n"
+        "- recurrence_guard\n"
         "- cleanup_actions"
         if mode == "execution_worker"
-        else "- files_inspected\n- proposed_changes\n- no_files_changed_confirmation"
+        else "- files_inspected\n- proposed_changes\n- no_files_changed_confirmation\n- adoption/rejection recommendation"
     )
     return f"""Repo: {project}
 Mode: {mode}
+Loop mode: {THREADOPS_DEFAULT_LOOP_MODE}
 Task signature: {task_signature_id}
 Agent role md: {safe_rel(project, role_brief_path)}
 Agency selection id: none
@@ -6624,6 +6870,24 @@ Lane id: {lane_id}
 
 Task signature details:
 {task_signature_text}
+
+Harness contract:
+{format_threadops_contract(contract)}
+
+Loop mode contract:
+{threadops_loop_mode_contract()}
+
+Codex Thread contract:
+- Main/control must create or reuse a real Codex Thread for this prompt and replace the planned thread id in thread_registry.csv.
+- Codex Threads are not subagents and must not be simulated by role-play inside the control thread.
+- Writable work requires an execution_worker lane with isolated_workspace or worktree write_scope.
+- If real Codex Thread tooling or isolated writable scope is unavailable for writable work, stop with TOOL_BLOCKED instead of falling back.
+
+Stateless secondary helper invocation contract:
+{format_threadops_helper_contract(helper_contract)}
+- A helper invocation may be backed by a stateless helper/subagent-style call, but it is not a Codex Thread, not a substitute worker/reviewer, has no thread_id, has no thread_registry.csv row, and has no write_scope.
+- Helper output must be recorded in this L1 worker receipt, adopted or rejected by the worker, then exposed to main/control through the worker receipt.
+- Do not call real image generation, OCR, or other helpers unless the lane task explicitly needs a bounded local subtask; this repo defines the contract only.
 
 Read first:
 {read_first_text}
@@ -6653,10 +6917,152 @@ Return format:
 - evidence refs
 - QA/gate status
 - open questions
+- adoption_decision: ADOPT, PARTIAL_ADOPT, REJECT, or BLOCKED recommendation
+- rejection_reason: required when recommendation is not ADOPT
+- loop_state
+- replay_trigger
+- freeze_trigger
+- helper_mode
+- helper_invocations
+- helper_input_refs
+- helper_output_refs
+- helper_artifacts
+- helper_validation_result
+- helper_adopted_by_worker
+- helper_failure_reason
+- worker_synthesis
 - workflow issue and recurrence guard, if found
 
 Required output:
 {output}
+"""
+
+
+def threadops_receipt_template_content(
+    *,
+    spec: ThreadRoleSpec,
+    goal_id: str,
+    work_id: str,
+    lane_id: str,
+    mode: str,
+    workspace_path: str,
+    write_scope: str,
+) -> str:
+    contract = threadops_harness_contract(
+        mode=mode,
+        write_scope=write_scope,
+        validation_proof=spec.validation_proof,
+        stop_condition=spec.stop_condition,
+    )
+    helper_contract = threadops_helper_contract()
+    files_changed_rule = (
+        "files_changed: required_non_empty_for_adopt; if no file changed, set status BLOCKED and explain the blocker"
+        if mode == "execution_worker"
+        else "files_changed: forbidden_for_read_only; confirm no files changed"
+    )
+    return f"""# {lane_id} Receipt
+
+status: pending
+goal_id: {goal_id}
+work_id: {work_id}
+role_id: {spec.role_id}
+mode: {mode}
+environment: {spec.default_environment}
+workspace_path: {workspace_path}
+write_scope: {write_scope}
+thread_id: TBD
+harness_id: HARN-{safe_artifact_suffix(work_id)}-{lane_id}
+loop_mode: {THREADOPS_DEFAULT_LOOP_MODE}
+prompt_only_output: invalid
+production_receipt_rule: {THREADOPS_PROMPT_ONLY_FORBIDDEN}
+helper_mode: {helper_contract["helper_mode"]}
+helper_policy: {helper_contract["helper_policy"]}
+allowed_helper_kinds: {helper_contract["allowed_helper_kinds"]}
+helper_write_boundary: {helper_contract["helper_write_boundary"]}
+helper_evidence_required: {helper_contract["helper_evidence_required"]}
+helper_failure_policy: {helper_contract["helper_failure_policy"]}
+
+## Harness Contract
+
+```text
+{format_threadops_contract(contract)}
+```
+
+## Loop Mode Contract
+
+```text
+{threadops_loop_mode_contract()}
+```
+
+## Stateless Secondary Helper Contract
+
+```text
+{format_threadops_helper_contract(helper_contract)}
+```
+
+## Helper Invocation Evidence
+
+helper_mode: {THREADOPS_HELPER_DEFAULT_MODE}
+helper_invocations: none
+helper_input_refs: none
+helper_output_refs: none
+helper_artifacts: none
+helper_validation_result: not_applicable
+helper_adopted_by_worker: no
+helper_failure_reason: none
+worker_synthesis: none
+
+## Observation
+
+status: pending
+summary: pending
+artifacts: pending
+next_actions: pending
+evidence_refs: pending
+
+## Files Changed
+
+{files_changed_rule}
+
+pending
+
+## Validation Result
+
+pending
+
+## Dirty-State Impact
+
+pending
+
+## Manifest / Index Updates
+
+pending
+
+## QA / Gate Status
+
+pending
+
+## Open Questions
+
+pending
+
+## Recurrence Guard
+
+pending
+
+## Adoption / Rejection Recommendation
+
+adoption_decision: pending
+rejection_reason: pending_if_not_adopted
+files_merged: pending_main_control_decision
+
+## Cleanup Actions
+
+pending
+
+## Evidence
+
+pending
 """
 
 
@@ -6773,6 +7179,13 @@ def render_thread_execution_plan(
         mode = threadops_lane_mode(role, spec)
         workspace_path = threadops_workspace_path(work_id, lane_id, spec)
         write_scope = resolve_threadops_write_scope(work_id, lane_id, spec)
+        harness_contract = threadops_harness_contract(
+            mode=mode,
+            write_scope=write_scope,
+            validation_proof=spec.validation_proof,
+            stop_condition=spec.stop_condition,
+        )
+        helper_contract = threadops_helper_contract()
         run_id = f"RUN-{safe_artifact_suffix(work_id)}-{index:02d}"
         thread_title = f"ADCO 员工｜{spec.label}｜{title[:24] or work_id}"
         role_brief_path = role_dir / f"{spec.role_id}_{work_id}.md"
@@ -6817,46 +7230,15 @@ def render_thread_execution_plan(
         )
         write_text(
             receipt_path,
-            f"""# {lane_id} Receipt
-
-status: pending
-goal_id: {goal_id}
-work_id: {work_id}
-role_id: {spec.role_id}
-mode: {mode}
-environment: {spec.default_environment}
-workspace_path: {workspace_path}
-write_scope: {write_scope}
-thread_id: TBD
-
-## Summary
-
-pending
-
-## Files Changed
-
-pending
-
-## Validation Result
-
-pending
-
-## Dirty-State Impact
-
-pending
-
-## Cleanup Actions
-
-pending
-
-## Evidence
-
-pending
-
-## Open Questions
-
-pending
-""",
+            threadops_receipt_template_content(
+                spec=spec,
+                goal_id=goal_id,
+                work_id=work_id,
+                lane_id=lane_id,
+                mode=mode,
+                workspace_path=workspace_path,
+                write_scope=write_scope,
+            ),
         )
 
         lane_rows.append(
@@ -6882,6 +7264,31 @@ pending
                 "receipt_path": safe_rel(project, receipt_path),
                 "receipt_status": "missing",
                 "reconciliation_status": "pending",
+                "action_space": harness_contract["action_space"],
+                "observation_contract": harness_contract["observation_contract"],
+                "error_recovery_contract": harness_contract["error_recovery_contract"],
+                "context_budget": harness_contract["context_budget"],
+                "iteration_budget": harness_contract["iteration_budget"],
+                "eval_gate": harness_contract["eval_gate"],
+                "adoption_decision": harness_contract["adoption_decision"],
+                "rejection_reason": harness_contract["rejection_reason"],
+                "loop_state": harness_contract["loop_state"],
+                "replay_trigger": harness_contract["replay_trigger"],
+                "freeze_trigger": harness_contract["freeze_trigger"],
+                "helper_mode": helper_contract["helper_mode"],
+                "helper_policy": helper_contract["helper_policy"],
+                "allowed_helper_kinds": helper_contract["allowed_helper_kinds"],
+                "helper_write_boundary": helper_contract["helper_write_boundary"],
+                "helper_evidence_required": helper_contract["helper_evidence_required"],
+                "helper_failure_policy": helper_contract["helper_failure_policy"],
+                "helper_invocations": helper_contract["helper_invocations"],
+                "helper_input_refs": helper_contract["helper_input_refs"],
+                "helper_output_refs": helper_contract["helper_output_refs"],
+                "helper_artifacts": helper_contract["helper_artifacts"],
+                "helper_validation_result": helper_contract["helper_validation_result"],
+                "helper_adopted_by_worker": helper_contract["helper_adopted_by_worker"],
+                "helper_failure_reason": helper_contract["helper_failure_reason"],
+                "worker_synthesis": helper_contract["worker_synthesis"],
                 "stop_condition": spec.stop_condition,
                 "validation_proof": spec.validation_proof,
                 "required_output": ";".join(spec.required_output),
@@ -7001,6 +7408,56 @@ pending
             "| " + " | ".join(markdown_table_cell(row.get(column, "")) for column in lane_header) + " |"
         )
 
+    harness_header = [
+        "lane_id",
+        "action_space",
+        "observation_contract",
+        "error_recovery_contract",
+        "context_budget",
+        "iteration_budget",
+        "eval_gate",
+        "adoption_decision",
+        "rejection_reason",
+        "loop_state",
+        "replay_trigger",
+        "freeze_trigger",
+        "stop_condition",
+    ]
+    harness_table = [
+        "| " + " | ".join(harness_header) + " |",
+        "| " + " | ".join("---" for _ in harness_header) + " |",
+    ]
+    for row in lane_rows:
+        harness_table.append(
+            "| " + " | ".join(markdown_table_cell(row.get(column, "")) for column in harness_header) + " |"
+        )
+
+    helper_header = [
+        "lane_id",
+        "helper_mode",
+        "helper_policy",
+        "allowed_helper_kinds",
+        "helper_write_boundary",
+        "helper_evidence_required",
+        "helper_failure_policy",
+        "helper_invocations",
+        "helper_input_refs",
+        "helper_output_refs",
+        "helper_artifacts",
+        "helper_validation_result",
+        "helper_adopted_by_worker",
+        "helper_failure_reason",
+        "worker_synthesis",
+    ]
+    helper_table = [
+        "| " + " | ".join(helper_header) + " |",
+        "| " + " | ".join("---" for _ in helper_header) + " |",
+    ]
+    for row in lane_rows:
+        helper_table.append(
+            "| " + " | ".join(markdown_table_cell(row.get(column, "")) for column in helper_header) + " |"
+        )
+
     registry_header = [
         "thread_id",
         "title",
@@ -7038,6 +7495,7 @@ master_thread_id: {master_thread_id or 'TBD'}
 project_kind: ppt_material_project
 task_signature_id: {task_signature_id}
 current_version_id: {current_version or 'TBD'}
+loop_mode: {THREADOPS_DEFAULT_LOOP_MODE}
 
 ## Goal
 
@@ -7063,6 +7521,41 @@ freeze_trigger: user reports thread confusion / high heat / wrong thread / clean
 lane_modes: execution_worker requires exact write_scope; research/read_only_review/cold_review are read-only receipt lanes
 ```
 
+## Loop Mode Contract
+
+```text
+{threadops_loop_mode_contract()}
+```
+
+## Harness Field Contract
+
+```text
+action_space: what the lane may read, write, call, and never do
+observation_contract: required receipt observation shape with status, summary, artifacts, next_actions, and evidence_refs
+error_recovery_contract: root cause hint, safe retry instruction, and explicit stop condition for failures
+context_budget: maximum context allowed before the lane must ask main/control to add more files
+iteration_budget: bounded internal pass count before stop, replay, or freeze
+eval_gate: validation or gate evidence required before adoption
+adoption_decision: ADOPT, PARTIAL_ADOPT, REJECT, or BLOCKED recorded by main/control
+rejection_reason: required when adoption_decision is not ADOPT
+loop_state: planned, running, blocked, replay_requested, frozen, returned, reconciled, or archived
+replay_trigger: condition that forces a replay with tighter acceptance criteria
+freeze_trigger: condition that stops new workers until cleanup/audit is complete
+stop_condition: lane-specific completion boundary
+```
+
+## Stateless Secondary Helper Contract
+
+```text
+helper_mode: default none; set to stateless_secondary_helper only when a real worker invokes a bounded local helper
+helper_policy: optional stateless helper inside an L1 Codex Thread worker; never a Codex Thread or substitute worker
+allowed_helper_kinds: image_generation,ocr,layout_lint,asset_resize,reference_extraction
+helper_write_boundary: helper has no thread_id, no thread_registry.csv row, and no write_scope; worker owns any kept artifacts
+helper_evidence_required: helper_invocations, helper_input_refs, helper_output_refs, helper_artifacts, helper_validation_result, helper_adopted_by_worker, helper_failure_reason, worker_synthesis
+helper_failure_policy: helper failure is recorded by the worker and cannot bypass worker validation or main/control adoption
+worker_synthesis: L1 worker adopts/rejects helper output before returning receipt; main/control adopts through the worker receipt
+```
+
 ## Invocation
 
 1. Run `list_threads` with query `ADCO` and reuse/archive stale project worker threads before spawning.
@@ -7083,6 +7576,14 @@ lane_modes: execution_worker requires exact write_scope; research/read_only_revi
 
 {receipt_list}
 
+## Lane Harness Matrix
+
+{chr(10).join(harness_table)}
+
+## Lane Helper Matrix
+
+{chr(10).join(helper_table)}
+
 ## Lane Map
 
 {chr(10).join(lane_table)}
@@ -7102,13 +7603,18 @@ Lists existing ADCO threads before creating a new employee thread.
 Archives duplicate, stale, superseded, or reconciled employee threads.
 Uses execution_worker for scoped production/editing work; uses read_only only for explorer, reviewer, research, or cold-review lanes.
 Execution worker lanes must declare exact write_scope, files_changed, validation_result, dirty_state_impact, and cleanup_actions in the receipt.
+Production worker receipts cannot be prompt-only; execution_worker lanes must produce declared files or return BLOCKED with evidence.
+Records adoption_decision and rejection_reason before merging or discarding worker output.
+Allows stateless secondary helper invocations only inside real worker threads; helpers are not Codex Threads and have no thread_id, registry row, write_scope, or adoption authority.
+Requires helper output to be synthesized and adopted/rejected by the worker, then adopted/rejected by main/control through the worker receipt.
+Uses replay_trigger for failed eval gates and freeze_trigger for thread confusion, repeated root cause, or budget breach.
 Does not allow more than {max_active} active workers in this plan.
 Exports final PPT/PDF only from the main control thread.
 ```
 
 ## Reconciliation Log
 
-| lane_id | accepted | rejected | files_merged | gate_id | notes |
+| lane_id | adoption_decision | rejection_reason | files_merged | gate_id | notes |
 |---|---|---|---|---|---|
 
 ## Cleanup Log
@@ -7238,6 +7744,7 @@ status: active
 owner: {owner}
 created_at: {now}
 updated_at: {now}
+loop_mode: {THREADOPS_DEFAULT_LOOP_MODE}
 
 ## Objective
 
@@ -7248,6 +7755,12 @@ updated_at: {now}
 - 使用双泳道：品牌深度研究 / 图片功能。
 - 阶段完成后直接推进下一步低风险内部任务。
 - 每个 Gate 前必须有反驳性议会记录。
+
+## Loop Mode Contract
+
+```text
+{threadops_loop_mode_contract()}
+```
 
 ## Non Scope
 

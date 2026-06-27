@@ -119,9 +119,24 @@ def add_delivery_artifact(
     )
 
 
-def write_complete_creative_fixture(project: Path, *, unsupported_claim: bool = False, generic: bool = False) -> None:
+def write_complete_creative_fixture(
+    project: Path,
+    *,
+    unsupported_claim: bool = False,
+    generic: bool = False,
+    humanizer_risk: bool = False,
+) -> None:
     claim = "案例证明这个打法有效。" if unsupported_claim else "Registered REF-001 is a placeholder reference boundary, not a case-study claim."
     slogan = "unlock next level innovative breakthrough" if generic else "continue the morning trail"
+    humanizer_block = (
+        """
+## Client Copy Draft Risk Fixture
+Of course! Here is a route experts say will mark a pivotal moment in a vibrant brand landscape.
+It is not just about hydration, but about showcasing a crucial lifestyle shift -- additionally, it can enhance valuable engagement — and underscore momentum.
+"""
+        if humanizer_risk
+        else ""
+    )
     write_text(
         project / "AD-creative/creative/creative_directions.md",
         f"""# Creative Directions
@@ -163,6 +178,7 @@ visibility: internal_only
 
 ## Reference Boundary
 {claim}
+{humanizer_block}
 
 ## Confirmation Items
 - Confirm final product asset before client review.
@@ -581,6 +597,27 @@ def test_creative_quality_blocks_unsupported_case_claim() -> None:
         assert_valid(project)
 
 
+def test_creative_quality_blocks_humanizer_writing_risks() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-creative-humanizer-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_adversarial_record(project, "creative")
+        write_complete_creative_fixture(project, humanizer_risk=True)
+        status, findings, _ = review_creative_quality(project)
+        assert status == "BLOCKED", (status, findings)
+        expected_codes = {
+            "CHATBOT_RESIDUE",
+            "VAGUE_AUTHORITY_CLAIM",
+            "EXAGGERATED_SIGNIFICANCE",
+            "FORMULAIC_NOT_ONLY_BUT",
+            "GENERIC_AI_VOCABULARY",
+            "DASH_OVERUSE",
+        }
+        for code in expected_codes:
+            assert any(code in item for item in findings), (code, findings)
+        assert_valid(project)
+
+
 def test_validation_pass_is_not_creative_quality_pass() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-creative-validation-") as raw_project:
         project = Path(raw_project)
@@ -607,6 +644,7 @@ def main() -> int:
     test_creative_quality_blocks_generic_proposal()
     test_creative_quality_passes_complete_structured_fixture()
     test_creative_quality_blocks_unsupported_case_claim()
+    test_creative_quality_blocks_humanizer_writing_risks()
     test_validation_pass_is_not_creative_quality_pass()
     if OPTIONAL_SKIPS:
         print("TEST_GATES_OPTIONAL_SKIPS=" + "; ".join(OPTIONAL_SKIPS))

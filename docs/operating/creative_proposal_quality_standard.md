@@ -79,6 +79,7 @@ proposal 是否保留 story、segment summary、brand mapping、timing、key dia
 是否列出客户/导演/用户必须确认的问题
 是否区分 internal draft、client review draft、client-approved
 是否说明哪些任务应路由到其他模块
+是否规避 humanizer 写作风险：chatbot 残留、模糊权威、夸大意义、not-only/but 公式、破折号堆叠、泛化 AI 词汇
 ```
 
 通过不代表：
@@ -103,7 +104,24 @@ PPT/DOCX/XLSX 固定模板已生成
 
 adco 可以起草 brief、检查来源、登记结果和维护版本；不要把它描述成实际视频、图片或固定模板的生成引擎。
 
-## Wording Rules
+## Humanized Writing Rules
+
+Proposal、copy、客户交接和 Gate 输出要具体、短句、可追溯。优先写事实、选择理由、风险和下一步动作。
+
+避免：
+
+```text
+当然/希望这有帮助/请告诉我
+专家认为/行业报告显示/数据显示但没有 source id
+标志着/至关重要/重塑格局/关键转折
+not only...but / 不止于...更是
+连续使用 em dash / en dash / -- 造节奏
+seamless / vibrant / pivotal / underscore / showcase / 格局 / 赋能 / 焕新
+```
+
+允许保留专业术语，但每个重要判断要落到客户目标、受众阻力、产品利益、参考来源或待确认问题。
+
+## Approval Wording
 
 允许：
 

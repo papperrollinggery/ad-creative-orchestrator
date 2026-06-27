@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import csv
 import os
 import tempfile
 from pathlib import Path
@@ -58,6 +59,32 @@ def add_clean_reference(project: Path) -> None:
         do_not_copy="Do not copy visible identity.",
         live_check=False,
     )
+
+
+def mark_first_execution_receipt_received(project: Path) -> Path:
+    registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
+    with registry_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+
+    for row in rows:
+        if row.get("mode") == "execution_worker":
+            row["receipt_status"] = "received"
+            row["reconciliation_status"] = "reconciled"
+            row["lifecycle_state"] = "returned"
+            row["returned_at"] = "2026-06-27T00:00:00Z"
+            row["reconciled_at"] = "2026-06-27T00:01:00Z"
+            receipt_path = project / row["receipt_path"]
+            break
+    else:
+        raise AssertionError("expected execution_worker row")
+
+    with registry_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return receipt_path
 
 
 def test_project_agents_policy_created_and_validated() -> None:
@@ -226,6 +253,388 @@ def test_thread_plan_creates_control_plane() -> None:
         assert_valid(project)
 
 
+def test_thread_plan_includes_harness_loop_and_adoption_contracts() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-harness-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        payload = render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-HARNESS",
+            title="ThreadOps harness",
+            objective="Require typed harness, loop, and adoption contracts.",
+            roles=["copy_creative", "qa_review"],
+        )
+        plan_text = Path(payload["thread_lane_plan"]).read_text(encoding="utf-8")
+        prompt_text = (
+            project
+            / "AD-creative/agents/thread_prompts/WORK-GOAL-THREAD-HARNESS-THREADS/LANE-01-COPY_CREATIVE_prompt.md"
+        ).read_text(encoding="utf-8")
+        receipt_text = (
+            project
+            / "AD-creative/agents/receipts/WORK-GOAL-THREAD-HARNESS-THREADS/LANE-01-COPY_CREATIVE_receipt.md"
+        ).read_text(encoding="utf-8")
+        role_brief_text = (
+            project
+            / "AD-creative/agents/role_briefs/COPY_CREATIVE_WORK-GOAL-THREAD-HARNESS-THREADS.md"
+        ).read_text(encoding="utf-8")
+        generated = "\n".join([plan_text, prompt_text, receipt_text, role_brief_text])
+        for key in [
+            "action_space",
+            "observation_contract",
+            "error_recovery_contract",
+            "context_budget",
+            "iteration_budget",
+            "eval_gate",
+            "adoption_decision",
+            "rejection_reason",
+            "loop_state",
+            "replay_trigger",
+            "freeze_trigger",
+            "stop_condition",
+            "helper_mode",
+            "helper_policy",
+            "allowed_helper_kinds",
+            "helper_write_boundary",
+            "helper_evidence_required",
+            "helper_failure_policy",
+            "helper_invocations",
+            "helper_input_refs",
+            "helper_output_refs",
+            "helper_artifacts",
+            "helper_validation_result",
+            "helper_adopted_by_worker",
+            "helper_failure_reason",
+            "worker_synthesis",
+        ]:
+            assert key in generated
+        for loop_mode in ["sequential", "rfc_dag", "continuous_pr", "infinite"]:
+            assert loop_mode in generated
+        for helper_kind in ["image_generation", "ocr", "layout_lint", "asset_resize", "reference_extraction"]:
+            assert helper_kind in generated
+        assert "Lane Harness Matrix" in plan_text
+        assert "Lane Helper Matrix" in plan_text
+        assert "Codex Threads are not subagents" in prompt_text
+        assert "A helper invocation may be backed by a stateless helper/subagent-style call" in prompt_text
+        assert "has no thread_id" in generated
+        assert "TOOL_BLOCKED" in prompt_text
+        assert "prompt_only_output: invalid" in receipt_text
+        assert "helper_mode: none" in receipt_text
+        assert "Production worker receipts cannot be prompt-only" in plan_text
+        assert_valid(project)
+
+
+def test_execution_worker_receipt_cannot_be_prompt_only() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-receipt-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        payload = render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-RECEIPT",
+            title="ThreadOps receipt",
+            objective="Production receipts prove files and validation.",
+            roles=["copy_creative"],
+        )
+        receipt_text = Path(payload["receipts"][0]).read_text(encoding="utf-8")
+        assert "mode: execution_worker" in receipt_text
+        assert "files_changed: required_non_empty_for_adopt" in receipt_text
+        assert "prompt-only output is invalid for production workers" in receipt_text
+        assert "## Validation Result" in receipt_text
+        assert "## Dirty-State Impact" in receipt_text
+        assert "## Manifest / Index Updates" in receipt_text
+        assert "## QA / Gate Status" in receipt_text
+        assert "## Adoption / Rejection Recommendation" in receipt_text
+        assert "## Cleanup Actions" in receipt_text
+        assert_valid(project)
+
+
+def test_threadops_validation_allows_pending_execution_worker_receipt_template() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-pending-receipt-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        payload = render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-PENDING-RECEIPT",
+            title="ThreadOps pending receipt",
+            objective="Pending receipt placeholders must not block generated plans.",
+            roles=["copy_creative"],
+        )
+        receipt_text = Path(payload["receipts"][0]).read_text(encoding="utf-8")
+        registry_text = (project / "AD-creative/orchestrator/thread_registry.csv").read_text(encoding="utf-8")
+        assert "status: pending" in receipt_text
+        assert "receipt_status" in registry_text
+        assert "missing" in registry_text
+        assert_valid(project)
+
+
+def test_threadops_validation_rejects_prompt_only_received_execution_receipt() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-prompt-receipt-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-PROMPT-RECEIPT",
+            title="ThreadOps prompt-only receipt",
+            objective="Received production receipts must prove execution.",
+            roles=["copy_creative"],
+        )
+        receipt_path = mark_first_execution_receipt_received(project)
+        receipt_path.write_text(
+            """# LANE-01-COPY_CREATIVE Receipt
+
+status: received
+
+## Summary
+
+Completed the prompt and recommend adoption.
+""",
+            encoding="utf-8",
+        )
+        errors, _ = validate(project)
+        assert any(
+            "received execution worker receipt lacks concrete proof fields" in error
+            and "files_changed" in error
+            and "evidence_refs" in error
+            for error in errors
+        ), errors
+
+
+def test_threadops_validation_rejects_missing_helper_evidence() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-helper-missing-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-HELPER-MISSING",
+            title="ThreadOps helper evidence",
+            objective="Enabled helper mode must prove helper output and worker synthesis.",
+            roles=["copy_creative"],
+        )
+        receipt_path = mark_first_execution_receipt_received(project)
+        receipt_path.write_text(
+            """# LANE-01-COPY_CREATIVE Receipt
+
+status: received
+files_changed: AD-creative/workspaces/WORK-GOAL-THREAD-HELPER-MISSING-THREADS/LANE-01-COPY_CREATIVE/copy_drafts.md
+validation_result: PASS - PYTHONDONTWRITEBYTECODE=1 python3 tools/test_goal_workflow.py
+dirty_state_impact: only declared isolated workspace and receipt were changed
+adoption_decision: ADOPT
+loop_state: reconciled
+cleanup_actions: archived worker thread after receipt reconciliation
+evidence_refs: thread_registry.csv row LANE-01-COPY_CREATIVE; receipt path; validation command above
+helper_mode: stateless_secondary_helper
+
+## Summary
+
+Worker claims a helper was used but did not record helper evidence.
+""",
+            encoding="utf-8",
+        )
+        errors, _ = validate(project)
+        assert any(
+            "received execution worker receipt lacks concrete helper evidence fields" in error
+            and "helper_invocations" in error
+            and "helper_input_refs" in error
+            and "helper_output_refs" in error
+            and "helper_artifacts" in error
+            and "worker_synthesis" in error
+            for error in errors
+        ), errors
+        assert any(
+            "received execution worker receipt lacks recorded helper receipt fields" in error
+            and "helper_failure_reason" in error
+            for error in errors
+        ), errors
+
+
+def test_threadops_validation_rejects_helper_thread_id_claim() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-helper-thread-id-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-HELPER-THREAD-ID",
+            title="ThreadOps helper thread boundary",
+            objective="Stateless helpers must not claim Codex Thread identity.",
+            roles=["copy_creative"],
+        )
+        receipt_path = mark_first_execution_receipt_received(project)
+        receipt_path.write_text(
+            """# LANE-01-COPY_CREATIVE Receipt
+
+status: received
+files_changed: AD-creative/workspaces/WORK-GOAL-THREAD-HELPER-THREAD-ID-THREADS/LANE-01-COPY_CREATIVE/copy_drafts.md
+validation_result: PASS - PYTHONDONTWRITEBYTECODE=1 python3 tools/test_goal_workflow.py
+dirty_state_impact: only declared isolated workspace and receipt were changed
+adoption_decision: ADOPT
+loop_state: reconciled
+cleanup_actions: archived worker thread after receipt reconciliation
+evidence_refs: thread_registry.csv row LANE-01-COPY_CREATIVE; receipt path; validation command above
+helper_mode: stateless_secondary_helper
+helper_invocations: image_generation helper_thread_id: 019fake-helper-thread
+helper_output_refs: AD-creative/workspaces/WORK-GOAL-THREAD-HELPER-THREAD-ID-THREADS/LANE-01-COPY_CREATIVE/helper_outputs/image_generation_result.json
+helper_validation_result: PASS - worker checked dimensions and internal-only visibility
+helper_adopted_by_worker: yes, adopted as internal draft reference only
+worker_synthesis: Worker used the helper output as bounded reference evidence and retained adoption authority.
+""",
+            encoding="utf-8",
+        )
+        errors, _ = validate(project)
+        assert any(
+            "helper invocation claims thread_id" in error
+            for error in errors
+        ), errors
+
+
+def test_threadops_validation_rejects_observation_only_evidence_refs() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-observation-evidence-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-OBSERVATION-EVIDENCE",
+            title="ThreadOps observation evidence",
+            objective="Observation text must not prove receipt evidence refs.",
+            roles=["copy_creative"],
+        )
+        receipt_path = mark_first_execution_receipt_received(project)
+        receipt_path.write_text(
+            """# LANE-01-COPY_CREATIVE Receipt
+
+status: received
+files_changed: AD-creative/workspaces/WORK-GOAL-THREAD-OBSERVATION-EVIDENCE-THREADS/LANE-01-COPY_CREATIVE/copy_drafts.md
+validation_result: PASS - PYTHONDONTWRITEBYTECODE=1 python3 tools/test_goal_workflow.py
+dirty_state_impact: only declared isolated workspace and receipt were changed
+adoption_decision: ADOPT
+loop_state: reconciled
+cleanup_actions: archived worker thread after receipt reconciliation
+evidence_refs: pending
+
+## Observation
+
+Reviewed validator behavior and found this receipt has a non-empty observation section.
+""",
+            encoding="utf-8",
+        )
+        errors, _ = validate(project)
+        assert any(
+            "received execution worker receipt lacks concrete proof fields" in error
+            and "evidence_refs" in error
+            for error in errors
+        ), errors
+
+
+def test_threadops_validation_rejects_adopt_without_file_output() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-adopt-no-files-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-ADOPT-NO-FILES",
+            title="ThreadOps adopt no files",
+            objective="Adopted production receipts must name file output.",
+            roles=["copy_creative"],
+        )
+        receipt_path = mark_first_execution_receipt_received(project)
+        receipt_path.write_text(
+            """# LANE-01-COPY_CREATIVE Receipt
+
+status: received
+files_changed: no files changed
+validation_result: PASS - PYTHONDONTWRITEBYTECODE=1 python3 tools/test_goal_workflow.py
+dirty_state_impact: no tracked or untracked files changed
+adoption_decision: ADOPT
+loop_state: reconciled
+cleanup_actions: archived worker thread after receipt reconciliation
+evidence_refs: thread_registry.csv row LANE-01-COPY_CREATIVE; receipt path; validation command above
+
+## Summary
+
+The worker recommends adoption but did not produce file output.
+""",
+            encoding="utf-8",
+        )
+        errors, _ = validate(project)
+        assert any(
+            "received execution worker receipt adopts without file output" in error
+            for error in errors
+        ), errors
+
+
+def test_threadops_validation_accepts_received_execution_receipt_with_proof() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-proof-receipt-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-PROOF-RECEIPT",
+            title="ThreadOps proof receipt",
+            objective="Received production receipts include concrete proof.",
+            roles=["copy_creative"],
+        )
+        receipt_path = mark_first_execution_receipt_received(project)
+        receipt_path.write_text(
+            """# LANE-01-COPY_CREATIVE Receipt
+
+status: received
+files_changed: AD-creative/workspaces/WORK-GOAL-THREAD-PROOF-RECEIPT-THREADS/LANE-01-COPY_CREATIVE/copy_drafts.md
+validation_result: PASS - PYTHONDONTWRITEBYTECODE=1 python3 tools/test_goal_workflow.py
+dirty_state_impact: only declared isolated workspace and receipt were changed
+adoption_decision: ADOPT
+loop_state: reconciled
+cleanup_actions: archived worker thread after receipt reconciliation
+evidence_refs: thread_registry.csv row LANE-01-COPY_CREATIVE; receipt path; validation command above
+
+## Summary
+
+Production worker returned file-level proof and validation evidence.
+""",
+            encoding="utf-8",
+        )
+        assert_valid(project)
+
+
+def test_threadops_validation_accepts_received_execution_receipt_with_helper_proof() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-helper-proof-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-HELPER-PROOF",
+            title="ThreadOps helper proof",
+            objective="Received helper-enabled receipts include concrete helper evidence.",
+            roles=["copy_creative"],
+        )
+        receipt_path = mark_first_execution_receipt_received(project)
+        receipt_path.write_text(
+            """# LANE-01-COPY_CREATIVE Receipt
+
+status: received
+files_changed: AD-creative/workspaces/WORK-GOAL-THREAD-HELPER-PROOF-THREADS/LANE-01-COPY_CREATIVE/copy_drafts.md
+validation_result: PASS - PYTHONDONTWRITEBYTECODE=1 python3 tools/test_goal_workflow.py
+dirty_state_impact: only declared isolated workspace and receipt were changed
+adoption_decision: ADOPT
+loop_state: reconciled
+cleanup_actions: archived worker thread after receipt reconciliation
+evidence_refs: thread_registry.csv row LANE-01-COPY_CREATIVE; receipt path; validation command above
+helper_mode: stateless_secondary_helper
+helper_invocations: image_generation helper IMG-HELPER-001 for a bounded local reference draft
+helper_input_refs: AD-creative/image_jobs/image_prompt_pack.json item PROMPT-001
+helper_output_refs: AD-creative/workspaces/WORK-GOAL-THREAD-HELPER-PROOF-THREADS/LANE-01-COPY_CREATIVE/helper_outputs/image_generation_result.json
+helper_artifacts: AD-creative/workspaces/WORK-GOAL-THREAD-HELPER-PROOF-THREADS/LANE-01-COPY_CREATIVE/helper_outputs/reference_preview.png
+helper_validation_result: PASS - worker checked dimensions, prompt trace, and internal-only visibility
+helper_adopted_by_worker: yes, adopted as internal draft reference only
+helper_failure_reason: none
+worker_synthesis: Worker used the image_generation helper output as bounded reference evidence, then wrote copy_drafts.md and recommended ADOPT through this receipt.
+
+## Summary
+
+Production worker returned file-level proof, helper evidence, and validation evidence.
+""",
+            encoding="utf-8",
+        )
+        assert_valid(project)
+
+
 def test_threadops_validation_rejects_invalid_execution_worker_contract() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-contract-") as raw_project:
         project = Path(raw_project)
@@ -278,7 +687,11 @@ def test_thread_plan_production_roles_use_isolated_workspaces() -> None:
             "AD-creative/workspaces/WORK-GOAL-THREAD-PRODUCTION-THREADS/LANE-02-ART_DESIGN/art_direction_notes.md"
             in combined
         )
-        producer_lane = next(line for line in plan_text.splitlines() if line.startswith("| LANE-03-PRODUCER_RISK |"))
+        producer_lane = next(
+            line
+            for line in plan_text.splitlines()
+            if line.startswith("| LANE-03-PRODUCER_RISK |") and "read_only_review" in line
+        )
         assert "PRODUCER_RISK" in producer_lane
         assert "| read_only_review | read_only | not_applicable_for_read_only |" in producer_lane
         assert "| receipt only |" in producer_lane
@@ -520,6 +933,16 @@ def main() -> int:
     test_goal_plan_allows_clean_gate_pass()
     test_goal_run_stops_without_material()
     test_thread_plan_creates_control_plane()
+    test_thread_plan_includes_harness_loop_and_adoption_contracts()
+    test_execution_worker_receipt_cannot_be_prompt_only()
+    test_threadops_validation_allows_pending_execution_worker_receipt_template()
+    test_threadops_validation_rejects_prompt_only_received_execution_receipt()
+    test_threadops_validation_rejects_missing_helper_evidence()
+    test_threadops_validation_rejects_helper_thread_id_claim()
+    test_threadops_validation_rejects_observation_only_evidence_refs()
+    test_threadops_validation_rejects_adopt_without_file_output()
+    test_threadops_validation_accepts_received_execution_receipt_with_proof()
+    test_threadops_validation_accepts_received_execution_receipt_with_helper_proof()
     test_threadops_validation_rejects_invalid_execution_worker_contract()
     test_thread_plan_production_roles_use_isolated_workspaces()
     test_thread_plan_rejects_over_budget_before_init()

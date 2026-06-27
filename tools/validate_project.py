@@ -55,8 +55,118 @@ THREADOPS_REGISTRY_FIELDS = [
     "duplicate_of",
 ]
 THREADOPS_EXECUTION_MODE = "execution_worker"
+THREADOPS_EXECUTION_MODES = {THREADOPS_EXECUTION_MODE, "isolated_worktree_execution_worker"}
 THREADOPS_READ_ONLY_MODES = {"research", "read_only_review", "cold_review"}
 THREADOPS_RECEIPT_ONLY_SCOPES = {"", "receipt only", "receipt_only", "none", "not_applicable"}
+THREADOPS_PENDING_RECEIPT_STATUSES = {"", "missing", "pending", "planned", "todo", "tbd"}
+THREADOPS_RECEIVED_RECEIPT_STATUSES = {
+    "received",
+    "returned",
+    "complete",
+    "completed",
+    "reconciled",
+}
+THREADOPS_RECEIPT_REQUIRED_PROOF = {
+    "files_changed": ("Files Changed",),
+    "validation_result": ("Validation Result",),
+    "dirty_state_impact": ("Dirty-State Impact",),
+    "adoption_decision": ("Adoption / Rejection Recommendation",),
+    "loop_state": (),
+    "cleanup_actions": ("Cleanup Actions",),
+    "evidence_refs": ("Evidence",),
+}
+THREADOPS_HELPER_MODE = "stateless_secondary_helper"
+THREADOPS_HELPER_NONE_MODES = {"", "none", "no", "false", "n/a", "na", "not_applicable"}
+THREADOPS_HELPER_ALLOWED_MODES = {*THREADOPS_HELPER_NONE_MODES, THREADOPS_HELPER_MODE}
+THREADOPS_HELPER_REQUIRED_PROOF = {
+    "helper_invocations": (),
+    "helper_input_refs": (),
+    "helper_output_refs": (),
+    "helper_artifacts": (),
+    "helper_validation_result": (),
+    "helper_adopted_by_worker": (),
+    "worker_synthesis": ("Worker Synthesis",),
+}
+THREADOPS_HELPER_REQUIRED_RECORDED_FIELDS = {
+    "helper_failure_reason",
+}
+THREADOPS_HELPER_THREAD_SCAN_KEYS = (
+    "helper_invocations",
+    "helper_input_refs",
+    "helper_output_refs",
+    "helper_artifacts",
+    "helper_validation_result",
+    "helper_adopted_by_worker",
+    "helper_failure_reason",
+    "worker_synthesis",
+)
+THREADOPS_HELPER_THREAD_CLAIM_PATTERN = re.compile(
+    r"\b(?:helper[_ -]?)?thread[_ -]?id\s*[:=]\s*"
+    r"(?!(?:none|no|false|n/a|na|not[_ -]?applicable)\b)\S+",
+    re.IGNORECASE,
+)
+THREADOPS_ADOPTING_DECISIONS = {"ADOPT", "PARTIAL_ADOPT"}
+THREADOPS_NO_FILE_OUTPUT_VALUES = {
+    "no files changed",
+    "no file changed",
+    "no file changes",
+    "no output",
+    "no file output",
+    "no files",
+    "none",
+    "n/a",
+    "na",
+    "not_applicable",
+    "nothing changed",
+}
+THREADOPS_NO_FILE_OUTPUT_FRAGMENTS = (
+    "no files changed",
+    "no file changed",
+    "no file changes",
+    "no files were changed",
+    "no output files",
+    "no file output",
+    "nothing changed",
+    "did not change files",
+)
+THREADOPS_RECEIPT_PLACEHOLDER_VALUES = {
+    "",
+    "pending",
+    "missing",
+    "planned",
+    "todo",
+    "tbd",
+    "n/a",
+    "na",
+    "not_applicable",
+    "required",
+    "placeholder",
+    "template",
+    "none",
+    "not run",
+    "not_run",
+}
+THREADOPS_RECEIPT_PLACEHOLDER_FRAGMENTS = (
+    "required_non_empty_for_adopt",
+    "pending_if_not_adopted",
+    "pending_main_control",
+    "pending main/control",
+    "forbidden_for_read_only",
+    "confirm no files changed",
+    "prompt_only_output: invalid",
+    "prompt-only output is invalid",
+)
+THREADOPS_ADOPTION_DECISIONS = {"ADOPT", "PARTIAL_ADOPT", "REJECT", "BLOCKED"}
+THREADOPS_RECEIVED_LOOP_STATES = {
+    "returned",
+    "reconciled",
+    "blocked",
+    "replay_requested",
+    "frozen",
+    "archived",
+    "complete",
+    "completed",
+}
 THREADOPS_AGENT_RUN_FIELDS = [
     "run_id",
     "work_id",
@@ -337,7 +447,7 @@ def check_threadops_lane_contract(errors: list[str], owner: str, row: dict[str, 
     environment = row.get("environment", "").strip()
     write_scope = row.get("write_scope", "").strip()
     normalized_scope = write_scope.lower().replace("-", "_")
-    if mode == THREADOPS_EXECUTION_MODE:
+    if mode in THREADOPS_EXECUTION_MODES:
         if environment == "read_only":
             errors.append(f"{owner} execution worker uses read_only environment")
         if normalized_scope in THREADOPS_RECEIPT_ONLY_SCOPES:
@@ -347,6 +457,235 @@ def check_threadops_lane_contract(errors: list[str], owner: str, row: dict[str, 
             errors.append(f"{owner} read-only lane uses non-read_only environment {environment}")
         if normalized_scope not in THREADOPS_RECEIPT_ONLY_SCOPES:
             errors.append(f"{owner} read-only lane has writable write_scope {write_scope}")
+
+
+def normalize_threadops_status(value: str | None) -> str:
+    return (value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def threadops_receipt_is_received(row: dict[str, str]) -> bool:
+    receipt_status = normalize_threadops_status(row.get("receipt_status"))
+    reconciliation_status = normalize_threadops_status(row.get("reconciliation_status"))
+    lifecycle_state = normalize_threadops_status(row.get("lifecycle_state"))
+    if receipt_status and receipt_status not in THREADOPS_PENDING_RECEIPT_STATUSES:
+        return True
+    if reconciliation_status and reconciliation_status not in THREADOPS_PENDING_RECEIPT_STATUSES:
+        return True
+    if lifecycle_state in THREADOPS_RECEIVED_RECEIPT_STATUSES:
+        return True
+    return bool(row.get("returned_at", "").strip() or row.get("reconciled_at", "").strip())
+
+
+def markdown_section(text: str, heading: str) -> str:
+    pattern = re.compile(
+        rf"(?ims)^##[ \t]+{re.escape(heading)}[ \t]*\n(.*?)(?=^##[ \t]+|\Z)"
+    )
+    match = pattern.search(text)
+    return match.group(1).strip() if match else ""
+
+
+def key_value_blocks(text: str, key: str) -> list[str]:
+    lines = text.splitlines()
+    blocks: list[str] = []
+    key_pattern = re.compile(rf"^\s*(?:[-*]\s*)?{re.escape(key)}\s*:\s*(.*)$", re.IGNORECASE)
+    next_key_pattern = re.compile(r"^\s*(?:[-*]\s*)?[a-z][a-z0-9_ /-]{1,80}\s*:", re.IGNORECASE)
+    for index, line in enumerate(lines):
+        match = key_pattern.match(line)
+        if not match:
+            continue
+        block = [match.group(1).strip()]
+        for candidate in lines[index + 1 :]:
+            stripped = candidate.strip()
+            if stripped.startswith("#"):
+                break
+            if not stripped:
+                if any(item.strip() for item in block):
+                    break
+                continue
+            if next_key_pattern.match(stripped):
+                break
+            block.append(stripped)
+        blocks.append("\n".join(item for item in block if item.strip()))
+    return blocks
+
+
+def receipt_proof_values(text: str, key: str, headings: tuple[str, ...]) -> list[str]:
+    values = key_value_blocks(text, key)
+    values.extend(section for heading in headings if (section := markdown_section(text, heading)))
+    return values
+
+
+def normalized_receipt_lines(value: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in value.splitlines():
+        stripped = re.sub(r"^[ \t>*-]+", "", raw_line.strip())
+        stripped = stripped.strip("` ")
+        if stripped:
+            lines.append(stripped)
+    return lines
+
+
+def receipt_line_is_concrete(line: str) -> bool:
+    normalized = line.strip().lower().strip(".:;- ")
+    if normalized in THREADOPS_RECEIPT_PLACEHOLDER_VALUES:
+        return False
+    return not any(fragment in normalized for fragment in THREADOPS_RECEIPT_PLACEHOLDER_FRAGMENTS)
+
+
+def receipt_value_is_concrete(key: str, value: str) -> bool:
+    lines = normalized_receipt_lines(value)
+    if key == "adoption_decision":
+        return any(
+            re.search(rf"(?:^|[^A-Z0-9_]){re.escape(decision)}(?:$|[^A-Z0-9_])", line.upper())
+            for decision in THREADOPS_ADOPTION_DECISIONS
+            for line in lines
+        )
+    if key == "loop_state":
+        return any(
+            re.search(rf"\b{re.escape(state)}\b", line.lower())
+            for state in THREADOPS_RECEIVED_LOOP_STATES
+            for line in lines
+        )
+    return any(receipt_line_is_concrete(line) for line in lines)
+
+
+def receipt_value_is_recorded(value: str) -> bool:
+    return any(line.strip() for line in normalized_receipt_lines(value))
+
+
+def receipt_has_adopting_decision(text: str) -> bool:
+    values = receipt_proof_values(
+        text,
+        "adoption_decision",
+        THREADOPS_RECEIPT_REQUIRED_PROOF["adoption_decision"],
+    )
+    return any(
+        re.search(rf"(?:^|[^A-Z0-9_]){re.escape(decision)}(?:$|[^A-Z0-9_])", line.upper())
+        for value in values
+        for line in normalized_receipt_lines(value)
+        for decision in THREADOPS_ADOPTING_DECISIONS
+    )
+
+
+def receipt_files_changed_means_no_output(text: str) -> bool:
+    values = receipt_proof_values(
+        text,
+        "files_changed",
+        THREADOPS_RECEIPT_REQUIRED_PROOF["files_changed"],
+    )
+    for value in values:
+        for line in normalized_receipt_lines(value):
+            normalized = line.strip().lower().strip(".:;- ")
+            if normalized in THREADOPS_NO_FILE_OUTPUT_VALUES:
+                return True
+            if any(fragment in normalized for fragment in THREADOPS_NO_FILE_OUTPUT_FRAGMENTS):
+                return True
+    return False
+
+
+def normalize_helper_mode(line: str) -> str:
+    normalized = line.strip().lower().strip(".:;- ")
+    normalized = normalized.replace("-", "_").replace(" ", "_")
+    if THREADOPS_HELPER_MODE in normalized:
+        return THREADOPS_HELPER_MODE
+    if normalized in THREADOPS_HELPER_NONE_MODES:
+        return "none"
+    return normalized
+
+
+def receipt_helper_modes(text: str) -> list[str]:
+    modes: list[str] = []
+    for value in receipt_proof_values(text, "helper_mode", ()):
+        for line in normalized_receipt_lines(value):
+            mode = normalize_helper_mode(line)
+            if mode:
+                modes.append(mode)
+    return modes or ["none"]
+
+
+def receipt_has_helper_thread_claim(text: str) -> bool:
+    values: list[str] = []
+    for key in THREADOPS_HELPER_THREAD_SCAN_KEYS:
+        values.extend(receipt_proof_values(text, key, ()))
+    values.append(markdown_section(text, "Helper Invocation Evidence"))
+    for value in values:
+        for line in normalized_receipt_lines(value):
+            if THREADOPS_HELPER_THREAD_CLAIM_PATTERN.search(line):
+                return True
+    return False
+
+
+def check_threadops_helper_receipt(errors: list[str], owner: str, text: str) -> None:
+    modes = receipt_helper_modes(text)
+    unknown_modes = sorted({mode for mode in modes if mode not in THREADOPS_HELPER_ALLOWED_MODES})
+    if unknown_modes:
+        errors.append(f"{owner} received execution worker receipt has unknown helper_mode: {', '.join(unknown_modes)}")
+    if THREADOPS_HELPER_MODE not in modes:
+        return
+
+    missing: list[str] = []
+    for key, headings in THREADOPS_HELPER_REQUIRED_PROOF.items():
+        values = receipt_proof_values(text, key, headings)
+        if not any(receipt_value_is_concrete(key, value) for value in values):
+            missing.append(key)
+    if missing:
+        errors.append(
+            f"{owner} received execution worker receipt lacks concrete helper evidence fields: "
+            + ", ".join(missing)
+        )
+    missing_recorded: list[str] = []
+    for key in THREADOPS_HELPER_REQUIRED_RECORDED_FIELDS:
+        values = receipt_proof_values(text, key, ())
+        if not any(receipt_value_is_recorded(value) for value in values):
+            missing_recorded.append(key)
+    if missing_recorded:
+        errors.append(
+            f"{owner} received execution worker receipt lacks recorded helper receipt fields: "
+            + ", ".join(missing_recorded)
+        )
+    if receipt_has_helper_thread_claim(text):
+        errors.append(f"{owner} helper invocation claims thread_id; stateless helpers are not Codex Threads")
+
+
+def check_threadops_execution_receipt(
+    project: Path,
+    errors: list[str],
+    owner: str,
+    row: dict[str, str],
+) -> None:
+    if row.get("mode", "").strip() not in THREADOPS_EXECUTION_MODES:
+        return
+    if not threadops_receipt_is_received(row):
+        return
+
+    rel_path = row.get("receipt_path", "").strip()
+    if not rel_path:
+        errors.append(f"{owner} received execution worker missing receipt_path")
+        return
+    receipt_path = Path(rel_path)
+    if not receipt_path.is_absolute():
+        receipt_path = project / rel_path
+    try:
+        text = receipt_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        errors.append(f"{owner} received execution worker missing receipt file {rel_path}")
+        return
+
+    missing: list[str] = []
+    for key, headings in THREADOPS_RECEIPT_REQUIRED_PROOF.items():
+        values = receipt_proof_values(text, key, headings)
+        if not any(receipt_value_is_concrete(key, value) for value in values):
+            missing.append(key)
+    if missing:
+        errors.append(
+            f"{owner} received execution worker receipt lacks concrete proof fields: "
+            + ", ".join(missing)
+        )
+    if receipt_has_adopting_decision(text) and receipt_files_changed_means_no_output(text):
+        errors.append(
+            f"{owner} received execution worker receipt adopts without file output: files_changed"
+        )
+    check_threadops_helper_receipt(errors, owner, text)
 
 
 def id_set(rows: Iterable[dict[str, str]], key: str) -> set[str]:
@@ -607,6 +946,7 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
         for row in thread_registry_fields:
             owner = f"thread_registry {row.get('thread_id', '').strip() or '<missing thread_id>'}"
             check_threadops_lane_contract(errors, owner, row)
+            check_threadops_execution_receipt(project, errors, owner, row)
         lane_plan_path = ad_root / "orchestrator/thread_lane_plan.md"
         if lane_plan_path.exists():
             lane_rows = parse_markdown_table_after_heading(

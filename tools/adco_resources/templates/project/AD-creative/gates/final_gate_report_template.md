@@ -34,6 +34,8 @@ no_prompts_or_execution_steps:
 no_thread_lane_worker_language:
 story_segment_brand_timing_dialogue_retained:
 client_visible_copy_reads_as_proposal_not_internal_plan:
+client_visible_copy_has_no_chatbot_residue_or_vague_authority:
+client_visible_copy_avoids_exaggerated_significance_not_only_but_and_dash_rhythm:
 ```
 
 ## Feedback Closure

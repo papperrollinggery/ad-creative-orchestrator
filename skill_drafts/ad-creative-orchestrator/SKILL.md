@@ -71,6 +71,8 @@ main thread is the only integration owner
 execution workers own exact write_scope
 read-only lanes are only research/review/cold-review
 workers must not export final PPT/PDF
+default loop_mode is sequential
+allowed loop modes are sequential, rfc_dag, continuous_pr, and infinite only for bounded internal exploration
 ```
 
 If the user reports thread confusion, high heat, wrong-thread behavior, or says to clean threads:
@@ -133,6 +135,31 @@ receipt path
 stop condition
 merge owner
 validation proof
+action_space
+observation_contract
+error_recovery_contract
+context_budget
+iteration_budget
+eval_gate
+adoption_decision
+rejection_reason
+loop_state
+replay_trigger
+freeze_trigger
+helper_mode
+helper_policy
+allowed_helper_kinds
+helper_write_boundary
+helper_evidence_required
+helper_failure_policy
+helper_invocations
+helper_input_refs
+helper_output_refs
+helper_artifacts
+helper_validation_result
+helper_adopted_by_worker
+helper_failure_reason
+worker_synthesis
 ```
 
 Use these environment modes:
@@ -145,6 +172,39 @@ main_only: for integration, version_map, artifact_index, current_truth, gate_log
 ```
 
 In non-git PPT/material projects, do not pretend git worktree protection exists. Use `AD-creative/workspaces/<work_id>/` as an isolated drafting area, then let the main thread import accepted files.
+
+Use these loop modes:
+
+```text
+sequential: default; finish one bounded lane step before the next handoff
+rfc_dag: use only when an RFC-style dependency graph is written in the lane plan
+continuous_pr: use only for controlled PR/check cycles with explicit validation commands
+infinite: bounded internal exploration only; must declare iteration_budget, freeze_trigger, replay_trigger, and stop_condition
+```
+
+Safe-stop and recovery rules:
+
+```text
+safe_stop: stop before client-visible send, paid/private/upload actions, destructive edits, global install, validation failure, or missing receipt proof
+replay_trigger: validation_result FAIL, missing receipt schema, stale evidence, out-of-scope edit, or reopened feedback
+freeze_trigger: thread confusion, wrong thread, heat/cost spike, budget exceeded, repeated same root cause, or cleanup request
+stop_condition: receipt reconciled, eval_gate passed or blocker recorded, adoption_decision recorded, and cleanup action planned
+```
+
+Stateless secondary helper invocation contract:
+
+```text
+Model: CONTROL main thread -> real Codex Thread worker/reviewer -> optional stateless secondary helper invocation inside that worker.
+Default helper_mode: none.
+Allowed helper_mode: stateless_secondary_helper.
+Allowed helper kinds: image_generation, OCR, layout_lint, asset_resize, reference_extraction.
+Helpers may be stateless helper/subagent-style calls inside the worker, but they are not Codex Threads or substitute workers/reviewers.
+Helpers have no thread_id, no thread_registry.csv row, no write_scope, and no adoption authority.
+Helpers cannot touch current_truth, version_map, artifact_index, gate_log, final exports, client send, uploads, paid/login/private-account actions, or client-visible status.
+The L1 worker records helper_invocations, helper_input_refs, helper_output_refs, helper_artifacts, helper_validation_result, helper_adopted_by_worker, helper_failure_reason, and worker_synthesis in its receipt.
+The L1 worker adopts or rejects helper output first; main/control adopts or rejects only through the L1 worker receipt.
+Do not implement real imagegen/OCR/helper calls in this repo unless a separate task explicitly grants that tool action; this contract only validates evidence.
+```
 
 Workers may write only their receipt unless the lane plan grants exact writable paths. The main thread is the only default owner of:
 
@@ -230,6 +290,9 @@ thread_sprawl: no worker without lane plan, role brief, write scope, receipt, an
 static_staff_mapping: redo Agency staff selection for the actual task instead of reusing stale roles blindly
 copied_staff_prompt: synthesize a project role brief; do not paste upstream staff text wholesale
 internal_language_leak: client-visible pages must not mention prompts, execution steps, threads, lane plans, or worker roles
+prompt_only_receipt: production worker receipts must list changed files or return BLOCKED with evidence
+missing_adoption_proof: main/control must record adoption_decision and rejection_reason before merging or discarding worker output
+unbounded_loop: infinite mode is not a live infinite loop; it is bounded internal exploration only
 story_thinning: proposal pages must retain story, segment summary, brand mapping, timing, and key dialogue where relevant
 layout_regression: PDF/PPT visual QA must check overflow, cropping, busy image text, repeated stills, font legibility, timing labels, key dialogue labels, and story-beat differentiation
 external_review_reopen: if new Pro/client/reviewer feedback changes blockers, mark stage reopened/revision instead of saying the old completion still stands
@@ -420,6 +483,13 @@ Rules:
 Use the generated prompts to create or reuse Codex Threads.
 Keep at most 3 active worker/reviewer threads by default.
 Workers return receipts; the main/control thread merges only accepted results.
+Receipts must include action_space, observation_contract, error_recovery_contract, context_budget, iteration_budget, eval_gate, adoption_decision, rejection_reason, loop_state, replay_trigger, freeze_trigger, stop_condition, files_changed, validation_result, dirty_state_impact, manifest/index updates, QA/gate status, open questions, recurrence guard, and cleanup actions.
+Receipts that set helper_mode to stateless_secondary_helper must include helper_invocations, helper_input_refs, helper_output_refs, helper_artifacts, helper_validation_result, helper_adopted_by_worker, helper_failure_reason, and worker_synthesis.
+Production worker receipts cannot be prompt-only; execution workers must produce declared files or return BLOCKED with evidence.
+The lane plan defaults to loop_mode sequential. rfc_dag and continuous_pr require explicit dependency/check contracts. infinite is allowed only as bounded internal exploration.
+Replay failed lanes with tighter acceptance criteria. Freeze new worker creation on thread confusion, wrong-thread behavior, repeated same root cause, budget breach, or cleanup request.
+Live Codex Thread creation remains main/control responsibility; this repo only generates contract artifacts and prompts. If real Threads or isolated writable scope are unavailable, stop with TOOL_BLOCKED instead of falling back to subagents or role-play.
+Stateless secondary helper invocations may be used only inside a real worker for bounded local subtasks; they are not Threads, have no thread id or registry row, and cannot make adoption decisions.
 After receipt reconciliation, archive the worker and update thread_registry.csv.
 Client-visible material must not mention prompts, threads, workers, lane plans, or execution steps.
 ```
@@ -618,6 +688,18 @@ AD-creative/client_review/slide_spec.md
 ```
 
 Then run `adco creative-quality-gate <project_dir>`. This gate checks proposal completeness, evidence gaps, generic slogans, unsupported case/reference claims, product-to-benefit translation, differentiated directions, key visual/action, client choice rationale, and internal language leaks. `VALIDATION=PASS` is structural only; it is not creative quality approval.
+
+Copywriting, proposal, strategy, client handoff, and gate output should follow humanizer principles without pasting a separate writing guide into project files:
+
+```text
+prefer concrete customer moment, product benefit, evidence, risk, and next action
+remove chatbot residue such as "of course", "hope this helps", "please let me know"
+replace vague authority such as "experts say" or "industry reports show" with a source id or a question
+avoid exaggerated significance such as "pivotal", "crucial role", "marks a shift", "重塑格局"
+avoid not-only/but framing in English or Chinese
+avoid repeated em dash, en dash, or -- rhythm in proposal and client-facing text
+avoid generic AI vocabulary clusters such as "seamless", "vibrant", "showcase", "underscore", "格局", "赋能", "焕新"
+```
 
 ## Visual Rules
 

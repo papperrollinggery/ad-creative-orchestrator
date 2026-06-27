@@ -7,6 +7,8 @@ master_thread_id:
 project_kind: ppt_material_project
 task_signature_id:
 current_version_id:
+loop_mode: sequential
+helper_mode: none
 
 ## Goal
 
@@ -36,6 +38,23 @@ max_active_worker_reviewer: 3
 broad_council_requires_user_approval_over: 5
 main_thread_only_for: integration,current_truth,version_map,artifact_index,gate_log,final_export,final_status
 freeze_trigger: user reports thread confusion / high heat / wrong thread / cleanup request
+replay_trigger: validation_result FAIL / missing receipt schema / stale evidence / out-of-scope edit / reopened feedback
+stop_condition: receipt reconciled, eval_gate passed or blocker recorded, adoption_decision recorded, cleanup action planned
+```
+
+## Loop Mode Contract
+
+```text
+loop_mode: sequential
+allowed_loop_modes: sequential,rfc_dag,continuous_pr,infinite
+sequential: default; finish one bounded lane step before the next handoff
+rfc_dag: use only when an RFC-style dependency graph is written in the lane plan
+continuous_pr: use only for controlled PR/check cycles with explicit validation commands
+infinite: bounded internal exploration only; must declare iteration_budget, freeze_trigger, replay_trigger, and stop_condition
+safe_stop: stop before client-visible send, paid/private/upload actions, destructive edits, global install, validation failure, or missing receipt proof
+replay_trigger: validation_result FAIL, missing receipt schema, stale evidence, out-of-scope edit, or reopened feedback
+freeze_trigger: thread confusion, wrong thread, heat/cost spike, budget exceeded, repeated same root cause, or cleanup request
+stop_condition: receipt reconciled, eval_gate passed or blocker recorded, adoption_decision recorded, and cleanup action planned
 ```
 
 Execution layer rule:
@@ -46,6 +65,45 @@ execution_worker lanes own scoped implementation or artifact production.
 read_only_review/research/cold_review lanes are the only read-only defaults.
 execution_worker lanes must declare exact write_scope before spawn.
 ```
+
+## Harness Field Contract
+
+```text
+action_space:
+observation_contract:
+error_recovery_contract:
+context_budget:
+iteration_budget:
+eval_gate:
+adoption_decision:
+rejection_reason:
+loop_state:
+replay_trigger:
+freeze_trigger:
+stop_condition:
+```
+
+## Stateless Secondary Helper Contract
+
+```text
+helper_mode: none by default; stateless_secondary_helper only when a real worker invokes a bounded local helper
+helper_policy: optional stateless helper/subagent-style call inside L1 worker only; not a Codex Thread or substitute worker/reviewer
+allowed_helper_kinds: image_generation,ocr,layout_lint,asset_resize,reference_extraction
+helper_write_boundary: helper has no thread_id, no thread_registry.csv row, no write_scope, and no access to master truth/final export/client send
+helper_evidence_required: helper_invocations, helper_input_refs, helper_output_refs, helper_artifacts, helper_validation_result, helper_adopted_by_worker, helper_failure_reason, worker_synthesis
+helper_failure_policy: worker records helper failure and returns BLOCKED/PARTIAL or proceeds without helper only when safe
+worker_synthesis: L1 worker adopts/rejects helper output before main/control reviews the worker receipt
+```
+
+## Lane Harness Matrix
+
+| lane_id | action_space | observation_contract | error_recovery_contract | context_budget | iteration_budget | eval_gate | adoption_decision | rejection_reason | loop_state | replay_trigger | freeze_trigger | stop_condition |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+
+## Lane Helper Matrix
+
+| lane_id | helper_mode | helper_policy | allowed_helper_kinds | helper_write_boundary | helper_evidence_required | helper_failure_policy | helper_invocations | helper_input_refs | helper_output_refs | helper_artifacts | helper_validation_result | helper_adopted_by_worker | helper_failure_reason | worker_synthesis |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 
 ## Lane Map
 
@@ -91,6 +149,7 @@ Uses execution_worker for scoped production/editing work; uses read_only only fo
 Requires exact write_scope for every execution_worker before spawn.
 Does not allow more than 3 active workers without explicit user approval.
 Does not allow more than 5 broad council/reviewer threads without explicit user approval.
+Allows stateless secondary helpers only inside real worker threads; helpers are not Codex Threads and have no thread_id, registry row, write_scope, or adoption authority.
 Exports final PPT/PDF only from the main control thread.
 ```
 
@@ -99,6 +158,8 @@ Exports final PPT/PDF only from the main control thread.
 ```text
 Repo:
 Mode:
+Loop mode:
+Helper mode:
 Task signature:
 Agent role md:
 Agency selection id:
@@ -119,6 +180,22 @@ Merge owner:
 Final export allowed: no
 Completion proof:
 Return format:
+action_space:
+observation_contract:
+error_recovery_contract:
+context_budget:
+iteration_budget:
+eval_gate:
+adoption_decision:
+rejection_reason:
+loop_state:
+replay_trigger:
+freeze_trigger:
+helper_policy:
+allowed_helper_kinds:
+helper_write_boundary:
+helper_evidence_required:
+helper_failure_policy:
 ```
 
 ## Worker Handoff Checklist
@@ -126,20 +203,34 @@ Return format:
 ```text
 summary:
 files_changed:
-validation:
+validation_result:
 dirty_state_impact:
 cleanup_actions:
 manifest_updates_needed:
+manifest_index_updates:
 evidence:
-qa_status:
+qa_gate_status:
 open_questions:
 workflow_issues_found:
+recurrence_guard:
+adoption_decision:
+rejection_reason:
+helper_mode:
+helper_invocations:
+helper_input_refs:
+helper_output_refs:
+helper_artifacts:
+helper_validation_result:
+helper_adopted_by_worker:
+helper_failure_reason:
+worker_synthesis:
+prompt_only_output: invalid for production workers
 recommended_next_action:
 ```
 
 ## Reconciliation Log
 
-| lane_id | accepted | rejected | files_merged | gate_id | notes |
+| lane_id | adoption_decision | rejection_reason | files_merged | gate_id | notes |
 |---|---|---|---|---|---|
 
 ## Cleanup Log

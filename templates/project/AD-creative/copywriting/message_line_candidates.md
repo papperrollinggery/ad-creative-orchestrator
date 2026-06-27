@@ -8,6 +8,8 @@ status: internal_draft
 Do not use deprecated copy.
 Do not invent product claims.
 Bind each candidate to direction and requirement.
+Use concrete user moment, product benefit, or client decision language.
+Avoid chatbot residue, vague authority, exaggerated significance, not-only/but framing, repeated dash rhythm, and generic AI vocabulary.
 ```
 
 ## Candidates

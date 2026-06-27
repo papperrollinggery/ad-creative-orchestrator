@@ -46,11 +46,17 @@ def cleanup_python_caches(root: Path) -> None:
     pollution_dirs = ("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache")
     for path in [found for name in pollution_dirs for found in root.rglob(name)]:
         if ".git" not in path.parts and path.exists():
-            shutil.rmtree(path)
+            try:
+                shutil.rmtree(path)
+            except FileNotFoundError:
+                pass
     for pattern in ("*.pyc", "*.pyo", ".DS_Store"):
         for path in root.rglob(pattern):
             if ".git" not in path.parts and path.exists():
-                path.unlink()
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
 
 
 def main() -> int:

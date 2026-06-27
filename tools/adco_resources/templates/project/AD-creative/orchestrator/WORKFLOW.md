@@ -38,6 +38,7 @@ Goal mode flow:
 ```text
 Read dual_lane_goal_delivery_workflow.md
 → create goal_iteration_plan from template
+→ choose loop_mode, default sequential; allowed values are sequential, rfc_dag, continuous_pr, bounded-internal infinite
 → if specialist judgment is needed, run agency_staff_selection and generate project role briefs
 → create thread_lane_plan when work will be split across Codex threads
 → attach agency_selection_id, agency_role_brief, and source staff paths to every lane
@@ -56,8 +57,16 @@ Main/control thread decomposes, assigns, integrates, validates, cleans up, and r
 Execution workers own scoped implementation, document edits, artifact production, or material drafting.
 Read-only lanes are only explorer, reviewer, research, and cold-review lanes.
 Every execution worker must have exact write_scope before spawn.
-Every execution worker returns files_changed, validation, dirty-state impact, and cleanup actions.
+Every lane declares action_space, observation_contract, error_recovery_contract, context_budget, iteration_budget, eval_gate, loop_state, replay_trigger, freeze_trigger, and stop_condition.
+Every execution worker returns files_changed, validation_result, dirty_state_impact, manifest/index updates, QA/gate status, open questions, recurrence guard, adoption/rejection recommendation, and cleanup actions.
 Main/control thread archives the worker thread after consuming and reconciling the receipt.
+Main/control records adoption_decision and rejection_reason before merging or discarding worker output.
+Live Codex Thread creation remains outside this repository; prompt artifacts instruct main/control to create real Codex Threads and record thread_id/receipt. No subagent fallback.
+Optional stateless secondary helper invocations may run only inside a real worker for bounded local subtasks such as image_generation, OCR, layout_lint, asset_resize, or reference_extraction.
+Stateless helpers are not Codex Threads, not substitute workers/reviewers, have no thread_id, no thread_registry row, no write_scope, and no adoption authority.
+Helper output must be recorded as helper_invocations, helper_input_refs, helper_output_refs, helper_artifacts, helper_validation_result, helper_adopted_by_worker, helper_failure_reason, and worker_synthesis in the L1 worker receipt.
+Main/control adopts or rejects helper-derived output only through the real worker receipt.
+Replay failed lanes only with tighter acceptance criteria. Freeze new workers on thread confusion, wrong-thread behavior, repeated same root cause, budget breach, or cleanup request.
 ```
 
 Profile analysis flow:
@@ -114,6 +123,11 @@ No Gate higher than PARTIAL_PASS without adversarial council notes.
 No worker run completion without harness proof: files, evidence, QA/gate status, and affected manifest/index rows.
 No execution worker without exact write_scope and receipt path.
 No execution worker completion without files_changed, validation, dirty-state impact, and cleanup actions.
+No production worker receipt may be prompt-only; it must list changed files or return BLOCKED with evidence.
+No worker output may be adopted without adoption_decision and rejection_reason when rejected or partially adopted.
+No helper output may be adopted unless helper_mode, helper_invocations, helper_output_refs, helper_validation_result, helper_adopted_by_worker, and worker_synthesis are present in the real worker receipt.
+No helper may claim thread_id, thread_registry row, write_scope, final export, master truth ownership, or adoption authority.
+No unbounded loop: infinite mode is allowed only for bounded internal exploration with iteration_budget, freeze_trigger, replay_trigger, and stop_condition.
 No prompt-only handoff for visual work; visual workers must provide storyboard/base asset/final asset state as applicable.
 No worker thread may update master truth files unless the handoff explicitly grants that write scope.
 No worker thread may export final PPT/PDF; only the main control thread owns final export and delivery status.

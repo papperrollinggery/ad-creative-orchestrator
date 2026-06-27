@@ -12,6 +12,7 @@ Images must have asset IDs or placeholder IDs.
 No internal notes in client-visible slides.
 No fake logo or fake case evidence.
 Do not treat VALIDATION=PASS as creative quality approval.
+Client-facing copy must be concrete and sourced, without chatbot residue, vague authority, exaggerated significance, formulaic not-only/but framing, dash rhythm, or generic AI vocabulary clusters.
 ```
 
 ## Slides

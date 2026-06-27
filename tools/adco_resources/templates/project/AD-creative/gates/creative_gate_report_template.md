@@ -11,6 +11,15 @@ score:
 
 ## Copy Risks
 
+```text
+chatbot_residue:
+vague_authority_without_source:
+exaggerated_significance:
+formulaic_not_only_but:
+dash_overuse:
+generic_ai_vocabulary_cluster:
+```
+
 ## Visual Risks
 
 ## Blocking Issues
