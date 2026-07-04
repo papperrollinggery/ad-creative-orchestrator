@@ -17,6 +17,8 @@ AD-creative/
 AGENTS.md
 ```
 
+`00` 到 `05` 是给人看的项目目录。adco 会更新每个目录下的 `目录索引.md`，把 `AD-creative/` 深层控制面里的真实产物映射出来；不要让这些目录长期只剩 README。
+
 可从这里复制：
 
 ```text
@@ -182,6 +184,35 @@ creative-quality-gate
 3. PASS 只表示 ready for human creative review 或 specialist handoff。
 4. 不把 PASS 写成客户批准、审美批准、商业效果证明或最终发送许可。
 ```
+
+如果要进入 PPT builder 或客户版导出：
+
+```text
+adco client-outline-gate <项目目录>
+adco client-language-gate <项目目录>
+adco asset-current-manifest <项目目录>
+adco visual-layout-gate <项目目录>
+adco client-pack-gate <项目目录>
+```
+
+要求：
+1. `client-outline-gate` BLOCKED 时，不允许进入 PPT builder。客户详细方案可以是 22-45+ 页，但每页必须低密度、客户可读、能决策，并填写 visual_slot / visual_asset_status。
+2. `client-language-gate` 命中 prompt/thread/worker/AI/gate/内部/执行过程/需确认等词时，不允许导出客户版。
+3. 用户说 Grok/ChatGPT/ImageGen/browser 已有图时，先执行 `adco browser-asset-intake ...` 或 `adco preflight-asset ...`，不能直接判定缺图或重复生成。
+4. `visual-layout-gate` 必须检查拉伸、裁切、图片尺寸、卡片套卡片、报告感、文字过短、图文不匹配、同图重复误用、竖屏/横屏比例和客户阅读顺序。
+5. `VALIDATION=PASS` 只代表结构和追溯关系，不代表创意质量、客户语言、视觉审美、素材授权或可发送。
+
+如果要清理文件或确认最终交付：
+
+```text
+adco final-delivery-lock <项目目录>
+adco dedupe-audit <项目目录>
+adco cleanup-plan <项目目录>
+```
+
+要求：
+1. `05_最终交付_FinalDelivery` 里用户手动放入的 PPT/PDF 默认 protected，只登记 hash。
+2. `dedupe-audit` 和 `cleanup-plan` 只分类原图、重要裁切、派生图、旧导出、缓存、预览、contact sheet，不直接删除。
 
 ## 5. 状态 Prompt
 

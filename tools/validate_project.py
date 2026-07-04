@@ -53,6 +53,13 @@ THREADOPS_REGISTRY_FIELDS = [
     "cleanup_reason",
     "last_seen_at",
     "duplicate_of",
+    "planned_thread_id",
+    "dispatch_status",
+    "real_thread_id",
+    "title_action",
+    "title_verified_at",
+    "dispatch_receipt_path",
+    "dispatch_evidence",
 ]
 THREADOPS_EXECUTION_MODE = "execution_worker"
 THREADOPS_EXECUTION_MODES = {THREADOPS_EXECUTION_MODE, "isolated_worktree_execution_worker"}
@@ -185,6 +192,46 @@ THREADOPS_AGENT_RUN_FIELDS = [
     "proof_status",
     "reconciliation_status",
 ]
+CLIENT_OUTLINE_FIELDS = [
+    "slide_id",
+    "page_title",
+    "body_copy",
+    "client_confirmation_point",
+    "material_role",
+    "visual_slot",
+    "visual_asset_status",
+    "asset_ids",
+    "visibility",
+    "status",
+    "notes",
+]
+ASSET_CURRENT_FIELDS = [
+    "asset_id",
+    "source",
+    "platform",
+    "conversation",
+    "local_file",
+    "path",
+    "sha256",
+    "original_or_processed",
+    "approval",
+    "direct_client_use",
+    "used_in_slide",
+    "qa_flags",
+    "protected",
+    "status",
+    "notes",
+]
+FINAL_DELIVERY_LOCK_FIELDS = [
+    "lock_id",
+    "path",
+    "sha256",
+    "size_bytes",
+    "mtime",
+    "protected",
+    "registered_at",
+    "notes",
+]
 PROFILE_SUBJECT_FIELDS = [
     "subject_id",
     "subject_type",
@@ -311,6 +358,15 @@ REQUIRED_FILES = [
     "AD-creative/orchestrator/gate_log.csv",
     "AD-creative/orchestrator/version_map.csv",
     "AD-creative/orchestrator/thread_registry.csv",
+    "AD-creative/orchestrator/final_delivery_lock.csv",
+    "AD-creative/orchestrator/agency/skill_scout.csv",
+    "AD-creative/orchestrator/agency/agent_scout.csv",
+    "AD-creative/orchestrator/agency/specialist_preflight.csv",
+    "AD-creative/orchestrator/agency/asset_preflight.csv",
+    "AD-creative/orchestrator/agency/maintenance_heartbeat.md",
+    "AD-creative/orchestrator/agency/self_improvement_log.md",
+    "AD-creative/client_review/client_outline.csv",
+    "AD-creative/visual_assets/asset_current_manifest.csv",
     "AD-creative/feedback/feedback_map.csv",
     "AD-creative/feedback/affected_artifacts.md",
     "AD-creative/feedback/next_version_plan.md",
@@ -446,6 +502,10 @@ def check_threadops_lane_contract(errors: list[str], owner: str, row: dict[str, 
     mode = row.get("mode", "").strip()
     environment = row.get("environment", "").strip()
     write_scope = row.get("write_scope", "").strip()
+    lifecycle_state = normalize_threadops_status(row.get("lifecycle_state"))
+    dispatch_status = normalize_threadops_status(row.get("dispatch_status"))
+    thread_id = row.get("thread_id", "").strip()
+    real_thread_id = row.get("real_thread_id", "").strip()
     normalized_scope = write_scope.lower().replace("-", "_")
     if mode in THREADOPS_EXECUTION_MODES:
         if environment == "read_only":
@@ -457,6 +517,17 @@ def check_threadops_lane_contract(errors: list[str], owner: str, row: dict[str, 
             errors.append(f"{owner} read-only lane uses non-read_only environment {environment}")
         if normalized_scope not in THREADOPS_RECEIPT_ONLY_SCOPES:
             errors.append(f"{owner} read-only lane has writable write_scope {write_scope}")
+    if lifecycle_state in {"dispatched", "running", "returned", "reconciled"} or dispatch_status in {"dispatched", "running", "returned", "reconciled"}:
+        missing_dispatch = [
+            field
+            for field in ["real_thread_id", "title_verified_at", "dispatch_receipt_path", "dispatch_evidence"]
+            if not row.get(field, "").strip()
+        ]
+        if thread_id.startswith("planned:") or not real_thread_id or missing_dispatch:
+            errors.append(
+                f"{owner} claims worker execution without real thread dispatch proof: "
+                + ", ".join(missing_dispatch or ["thread_id"])
+            )
 
 
 def normalize_threadops_status(value: str | None) -> str:
@@ -884,6 +955,9 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
     )
     reference_cards = load_csv(ad_root / "references/reference_cards.csv", errors)
     asset_manifest = load_csv(ad_root / "visual_assets/asset_manifest.csv", errors)
+    client_outline = load_csv(ad_root / "client_review/client_outline.csv", errors)
+    asset_current_manifest = load_csv(ad_root / "visual_assets/asset_current_manifest.csv", errors)
+    final_delivery_lock_rows = load_csv(ad_root / "orchestrator/final_delivery_lock.csv", errors)
     feedback_rows = load_csv(ad_root / "feedback/feedback_map.csv", errors)
     profile_root = ad_root / "orchestrator/profile_knowledge"
     profile_enabled = profile_root.exists()
@@ -899,7 +973,12 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
     gate_ids = id_set(gate_log, "gate_id")
     reference_ids = id_set(reference_cards, "reference_id")
     asset_ids = id_set(asset_manifest, "asset_id")
+    current_asset_ids = id_set(asset_current_manifest, "asset_id")
     profile_subject_ids = id_set(profile_subjects, "subject_id")
+
+    check_required_columns(errors, "client_outline", ad_root / "client_review/client_outline.csv", CLIENT_OUTLINE_FIELDS)
+    check_required_columns(errors, "asset_current_manifest", ad_root / "visual_assets/asset_current_manifest.csv", ASSET_CURRENT_FIELDS)
+    check_required_columns(errors, "final_delivery_lock", ad_root / "orchestrator/final_delivery_lock.csv", FINAL_DELIVERY_LOCK_FIELDS)
 
     registry_path = ad_root / "orchestrator/thread_registry.csv"
     try:
@@ -1090,6 +1169,52 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
         must_exist = status in {"registered", "selected", "approved", "done"} and qa_status != "NOT_RUN"
         if rel_path and must_exist and not (project / rel_path).exists():
             errors.append(f"asset {asset_id} missing path {rel_path}")
+        if asset_id and asset_id not in current_asset_ids:
+            errors.append(f"asset {asset_id} missing asset_current_manifest row")
+
+    for current_asset in asset_current_manifest:
+        asset_id = current_asset.get("asset_id", "").strip()
+        if asset_id and asset_id not in asset_ids:
+            errors.append(f"asset_current_manifest {asset_id} unknown asset")
+        rel_path = current_asset.get("path", "").strip()
+        current_status = current_asset.get("status", "").strip().lower()
+        if current_status in {"registered", "selected", "approved", "done"}:
+            for field in ["source", "platform", "local_file", "original_or_processed", "qa_flags"]:
+                if not current_asset.get(field, "").strip():
+                    errors.append(f"asset_current_manifest {asset_id} active asset missing {field}")
+            if rel_path and not (project / rel_path).exists():
+                errors.append(f"asset_current_manifest {asset_id} missing path {rel_path}")
+        if current_asset.get("direct_client_use", "").strip().lower() == "yes":
+            if current_asset.get("approval", "").strip().upper() != "PASS":
+                errors.append(f"asset_current_manifest {asset_id} direct_client_use=yes without approval PASS")
+            if not current_asset.get("used_in_slide", "").strip():
+                errors.append(f"asset_current_manifest {asset_id} direct_client_use=yes missing used_in_slide")
+            if not current_asset.get("qa_flags", "").strip():
+                errors.append(f"asset_current_manifest {asset_id} direct_client_use=yes missing qa_flags")
+
+    for outline in client_outline:
+        slide_id = outline.get("slide_id", "")
+        if outline.get("visibility", "").strip().lower() in CLIENT_DELIVERY_VISIBILITIES:
+            for field in ["page_title", "body_copy", "client_confirmation_point", "material_role", "visual_slot", "visual_asset_status"]:
+                if not outline.get(field, "").strip():
+                    errors.append(f"client_outline {slide_id} client-visible row missing {field}")
+            if outline.get("visual_asset_status", "").strip().lower() in {"existing_image", "existing_asset"} and not outline.get("asset_ids", "").strip():
+                errors.append(f"client_outline {slide_id} existing image status missing asset_ids")
+        check_refs(errors, f"client_outline {slide_id}", outline.get("asset_ids"), asset_ids, "asset")
+
+    final_dir = project / "05_最终交付_FinalDelivery"
+    protected_paths = {
+        row.get("path", "").strip()
+        for row in final_delivery_lock_rows
+        if row.get("protected", "").strip().lower() == "yes"
+    }
+    if final_dir.exists():
+        for path in final_dir.rglob("*"):
+            if not path.is_file() or path.name in {"README.md", "目录索引.md"}:
+                continue
+            rel_path = str(path.relative_to(project))
+            if rel_path not in protected_paths:
+                errors.append(f"FinalDelivery file is not locked/protected: {rel_path}")
 
     if has_client_delivery_artifact(artifact_index):
         errors.extend(
@@ -1109,6 +1234,9 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
         "threads": len(thread_registry_fields),
         "references": len(reference_cards),
         "assets": len(asset_manifest),
+        "asset_current_manifest": len(asset_current_manifest),
+        "client_outline": len(client_outline),
+        "final_delivery_locks": len(final_delivery_lock_rows),
         "feedback": len(feedback_rows),
         "profile_subjects": len(profile_subjects),
         "profile_insights": len(profile_insights),
@@ -1133,6 +1261,10 @@ def main() -> int:
             print(f"- {error}")
         return 1
     print("VALIDATION=PASS")
+    print("VALIDATION_SCOPE=structure_and_traceability_only")
+    print("VALIDATION_NOT_CREATIVE_QUALITY=1")
+    print("VALIDATION_NOT_CLIENT_LANGUAGE=1")
+    print("VALIDATION_NOT_VISUAL_APPROVAL=1")
     return 0
 
 

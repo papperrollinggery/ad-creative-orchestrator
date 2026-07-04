@@ -54,6 +54,26 @@ def add_adversarial_record(project: Path, stage: str = "global") -> None:
     )
 
 
+def add_client_outline(project: Path) -> None:
+    add_row(
+        project,
+        "AD-creative/client_review/client_outline.csv",
+        {
+            "slide_id": "1",
+            "page_title": "客户可读开篇",
+            "body_copy": "这一页用完整客户可读段落说明传播问题和方案进入点。",
+            "client_confirmation_point": "确认是否作为客户审阅开篇。",
+            "material_role": "暂用可编辑文本结构，图片后续登记。",
+            "visual_slot": "横屏低密度画面占位。",
+            "visual_asset_status": "placeholder",
+            "asset_ids": "",
+            "visibility": "internal_only",
+            "status": "ready",
+            "notes": "",
+        },
+    )
+
+
 def optional_module(name: str) -> bool:
     try:
         __import__(name)
@@ -476,6 +496,7 @@ def test_client_pack_passes_editable_internal_pptx() -> None:
         project = Path(raw_project)
         ensure_project(project)
         add_adversarial_record(project)
+        add_client_outline(project)
         pptx_path = export_editable_pptx(project)
         add_current_delivery_package(project)
         status, findings, _ = review_client_pack(project, pptx_path)

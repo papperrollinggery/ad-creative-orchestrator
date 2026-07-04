@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+from ad_creative_operator import build_parser
 from runtime_paths import skill_draft_dir, source_root
 
 ROOT = source_root()
@@ -33,6 +35,17 @@ FORBIDDEN_SNIPPETS = [
     "ad_creative_operator.py",
     "ad_creative_operator.py validate",
 ]
+ADCO_COMMAND_PATTERN = re.compile(r"(?<![\w-])adco\s+([a-z][a-z0-9-]+)")
+
+
+def installed_adco_commands() -> set[str]:
+    parser = build_parser()
+    choices: dict[str, object] = {}
+    for action in getattr(parser, "_actions", []):
+        action_choices = getattr(action, "choices", None)
+        if isinstance(action_choices, dict):
+            choices.update(action_choices)
+    return set(choices)
 
 
 def iter_markdown_files(path: Path) -> list[Path]:
@@ -41,9 +54,25 @@ def iter_markdown_files(path: Path) -> list[Path]:
     return sorted(path.glob("*.md"))
 
 
+def iter_adco_command_snippets(text: str) -> list[str]:
+    snippets: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        parts = line.split("`")
+        snippets.extend(parts[index] for index in range(1, len(parts), 2))
+        if in_fence or stripped.startswith("adco "):
+            snippets.append(stripped)
+    return snippets
+
+
 def main() -> int:
     issues: list[str] = []
     files: list[Path] = []
+    available_commands = installed_adco_commands()
     for path in CHECK_PATHS:
         files.extend(iter_markdown_files(path))
     for path in files:
@@ -52,6 +81,12 @@ def main() -> int:
             if snippet in text:
                 label = str(path.relative_to(ROOT)) if ROOT else str(path)
                 issues.append(f"{label} contains forbidden command: {snippet}")
+        for snippet in iter_adco_command_snippets(text):
+            for match in ADCO_COMMAND_PATTERN.finditer(snippet):
+                command = match.group(1)
+                if command not in available_commands:
+                    label = str(path.relative_to(ROOT)) if ROOT else str(path)
+                    issues.append(f"{label} references unavailable adco command: {command}")
     if issues:
         print("DOCS_COMMANDS_CHECK=FAIL")
         for issue in issues:

@@ -9,20 +9,34 @@ import tempfile
 from pathlib import Path
 
 from ad_creative_operator import (
+    CLIENT_OUTLINE_FIELDS,
     add_reference,
+    add_visual_asset,
     analyze_profiles,
+    append_csv_row,
+    build_parser,
     command_thread_plan,
+    cleanup_plan,
     creative_doctor_report,
     ensure_project,
     ensure_profile_work,
+    final_delivery_lock,
     import_creative_production_run,
+    migrate_control_plane,
     register_materials,
     render_goal_iteration_plan,
+    render_handoff,
+    render_human_workspace_indexes,
     render_thread_execution_plan,
+    refresh_asset_current_manifest,
+    review_client_language,
+    review_client_outline,
     review_film_quality,
     review_reference_pack,
+    review_visual_layout,
     run_goal,
     workspace_hygiene_report,
+    write_csv_rows,
 )
 from init_project import AGENTS_MERGE_SUGGESTION_REL, agents_policy_status
 from run_checks import cleanup_python_caches
@@ -70,11 +84,20 @@ def mark_first_execution_receipt_received(project: Path) -> Path:
 
     for row in rows:
         if row.get("mode") == "execution_worker":
+            real_thread_id = "019f1111-2222-7333-8444-555555555555"
             row["receipt_status"] = "received"
             row["reconciliation_status"] = "reconciled"
             row["lifecycle_state"] = "returned"
             row["returned_at"] = "2026-06-27T00:00:00Z"
             row["reconciled_at"] = "2026-06-27T00:01:00Z"
+            row["planned_thread_id"] = row.get("planned_thread_id") or row.get("thread_id", "")
+            row["thread_id"] = real_thread_id
+            row["real_thread_id"] = real_thread_id
+            row["dispatch_status"] = "dispatched"
+            row["title_action"] = "dispatcher_set"
+            row["title_verified_at"] = "2026-06-27T00:00:30Z"
+            row["dispatch_receipt_path"] = "AD-creative/orchestrator/thread_dispatch_TEST.md"
+            row["dispatch_evidence"] = "read_thread title matched execution worker lane"
             receipt_path = project / row["receipt_path"]
             break
     else:
@@ -84,6 +107,11 @@ def mark_first_execution_receipt_received(project: Path) -> Path:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+    (project / "AD-creative/orchestrator/thread_dispatch_TEST.md").write_text(
+        "real_thread_id: 019f1111-2222-7333-8444-555555555555\n"
+        "title_verified_at: 2026-06-27T00:00:30Z\n",
+        encoding="utf-8",
+    )
     return receipt_path
 
 
@@ -121,6 +149,74 @@ def test_existing_agents_policy_is_not_overwritten() -> None:
         assert suggestion.exists()
         errors, _ = validate(project)
         assert any("AGENTS.md missing required policy" in error for error in errors), errors
+
+
+def test_human_workspace_indexes_mirror_control_plane() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-human-index-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        material = project / "incoming_client_brief.md"
+        material.write_text("客户希望输出一版客户审阅 PPT。", encoding="utf-8")
+        source_ids = register_materials(project, [material], "整理客户资料")
+        append_csv_row(
+            project / "AD-creative/orchestrator/artifact_index.csv",
+            {
+                "artifact_id": "ART-TEST-WIP",
+                "artifact_type": "proposal_structure",
+                "path": "AD-creative/proposal_architecture/proposal_structure.md",
+                "stage": "proposal_architecture",
+                "version": "v001",
+                "status": "draft",
+                "visibility": "internal_only",
+                "source_event_ids": ";".join(source_ids),
+                "linked_requirements": "",
+                "linked_work_items": "",
+                "linked_references": "",
+                "linked_assets": "",
+                "gate_status": "PARTIAL_PASS",
+                "supersedes_artifact_id": "",
+                "created_at": "2026-07-03T00:00:00+08:00",
+                "updated_at": "2026-07-03T00:00:00+08:00",
+            },
+        )
+        append_csv_row(
+            project / "AD-creative/orchestrator/artifact_index.csv",
+            {
+                "artifact_id": "ART-TEST-CLIENT",
+                "artifact_type": "client_review_deck",
+                "path": "AD-creative/ppt/exports/client_review_v001.pptx",
+                "stage": "ppt_gate",
+                "version": "v001",
+                "status": "draft",
+                "visibility": "client_visible_pending",
+                "source_event_ids": ";".join(source_ids),
+                "linked_requirements": "",
+                "linked_work_items": "",
+                "linked_references": "",
+                "linked_assets": "",
+                "gate_status": "PARTIAL_PASS",
+                "supersedes_artifact_id": "",
+                "created_at": "2026-07-03T00:00:00+08:00",
+                "updated_at": "2026-07-03T00:00:00+08:00",
+            },
+        )
+
+        written = render_human_workspace_indexes(project)
+        assert len(written) == 6
+        source_index_path = project / "00_项目资料_ProjectMaterials/目录索引.md"
+        wip_index_path = project / "03_阶段成果_WorkInProgress/目录索引.md"
+        client_index_path = project / "04_客户审阅_ClientReview/目录索引.md"
+        source_index = source_index_path.read_text(encoding="utf-8")
+        wip_index = wip_index_path.read_text(encoding="utf-8")
+        client_index = client_index_path.read_text(encoding="utf-8")
+        assert "incoming_client_brief.md" in source_index
+        assert "ART-TEST-WIP" in wip_index
+        assert "proposal_structure.md" in wip_index
+        assert "ART-TEST-CLIENT" in client_index
+        assert "client_review_v001.pptx" in client_index
+
+        render_handoff(project, "更新人类可读索引", source_ids)
+        assert "incoming_client_brief.md" in source_index_path.read_text(encoding="utf-8")
 
 
 def test_agents_policy_status_clears_after_manual_merge() -> None:
@@ -924,10 +1020,225 @@ def test_film_quality_gate_writes_report() -> None:
         assert_valid(project)
 
 
+def test_duffy_hardening_cli_commands_are_exposed() -> None:
+    parser = build_parser()
+    commands = parser._subparsers._group_actions[0].choices  # type: ignore[attr-defined]
+    for command in [
+        "agency-audit",
+        "migrate-control-plane",
+        "preflight-skill",
+        "preflight-asset",
+        "dispatch-record",
+        "client-outline-gate",
+        "client-language-gate",
+        "asset-current-manifest",
+        "browser-asset-intake",
+        "visual-layout-gate",
+        "dedupe-audit",
+        "cleanup-plan",
+        "final-delivery-lock",
+    ]:
+        assert command in commands
+
+
+def test_client_outline_gate_blocks_until_page_framework_exists() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-client-outline-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        status, findings, _ = review_client_outline(project)
+        assert status == "BLOCKED"
+        assert any("客户可读文本框架" in item for item in findings)
+
+        append_csv_row(
+            project / "AD-creative/client_review/client_outline.csv",
+            {
+                "slide_id": "S01",
+                "page_title": "十年友谊的第一个记忆点",
+                "body_copy": "用客户能读懂的故事段落说明这一页要解决的传播问题。",
+                "client_confirmation_point": "确认这页是否作为开篇方向。",
+                "material_role": "使用已登记主视觉作为情绪锚点。",
+                "visual_slot": "横屏主视觉占位，低密度留白。",
+                "visual_asset_status": "placeholder",
+                "asset_ids": "",
+                "visibility": "client_visible_ready",
+                "status": "ready",
+                "notes": "",
+            },
+        )
+        status, findings, _ = review_client_outline(project)
+        assert status == "PASS", findings
+
+
+def test_client_language_gate_blocks_internal_execution_terms() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-client-language-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        append_csv_row(
+            project / "AD-creative/client_review/client_outline.csv",
+            {
+                "slide_id": "S01",
+                "page_title": "客户稿标题",
+                "body_copy": "这里不能写 prompt 或 thread 执行过程。",
+                "client_confirmation_point": "确认表达。",
+                "material_role": "主图。",
+                "visual_slot": "横屏主图占位。",
+                "visual_asset_status": "placeholder",
+                "asset_ids": "",
+                "visibility": "client_visible_ready",
+                "status": "ready",
+                "notes": "",
+            },
+        )
+        status, findings, _ = review_client_language(project)
+        assert status == "BLOCKED"
+        assert any("prompt" in item or "thread" in item for item in findings)
+
+
+def test_asset_current_manifest_and_visual_layout_gate_use_real_assets() -> None:
+    if not optional_module("PIL"):
+        return
+
+    from PIL import Image
+
+    with tempfile.TemporaryDirectory(prefix="adco-asset-current-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        source = project / "source.png"
+        Image.new("RGB", (1200, 800), color=(100, 120, 160)).save(source)
+        asset_id, _ = add_visual_asset(
+            project,
+            source,
+            "KV-01",
+            "",
+            "pending",
+            "browser_download",
+            "internal_only",
+            "PASS",
+            "low",
+            "browser evidence",
+            "layout ready",
+            selected=True,
+        )
+        rows, _ = refresh_asset_current_manifest(project)
+        assert any(row.get("asset_id") == asset_id and row.get("sha256") for row in rows)
+        status, findings, _ = review_visual_layout(project)
+        assert status == "BLOCKED"
+        assert any("client_outline" in item for item in findings)
+
+
+def test_final_delivery_lock_protects_user_placed_files() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-final-lock-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        final_file = project / "05_最终交付_FinalDelivery/client_final.pdf"
+        final_file.write_bytes(b"%PDF-1.4\n")
+        errors, _ = validate(project)
+        assert any("FinalDelivery file is not locked" in error for error in errors), errors
+        locked, lock_path = final_delivery_lock(project)
+        assert lock_path.exists()
+        assert any(row.get("path", "").endswith("client_final.pdf") and row.get("protected") == "yes" for row in locked)
+        plan_path, actions = cleanup_plan(project)
+        assert plan_path.exists()
+        assert any("LOCKED_DO_NOT_MOVE_OR_DELETE" in action for action in actions)
+        assert_valid(project)
+
+
+def test_migrate_control_plane_creates_new_gate_files() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-migrate-control-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        for rel_path in [
+            "AD-creative/client_review/client_outline.csv",
+            "AD-creative/visual_assets/asset_current_manifest.csv",
+            "AD-creative/orchestrator/final_delivery_lock.csv",
+            "AD-creative/orchestrator/agency/specialist_preflight.csv",
+        ]:
+            (project / rel_path).unlink()
+        dry = migrate_control_plane(project, dry_run=True)
+        assert len(dry["changes"]) >= 4
+        result = migrate_control_plane(project, dry_run=False)
+        assert result["warnings"] == []
+        assert (project / "AD-creative/client_review/client_outline.csv").exists()
+        assert (project / "AD-creative/orchestrator/agency/specialist_preflight.csv").exists()
+        assert_valid(project)
+
+
+def test_duffy_v2_regression_allows_long_low_density_client_outline() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-duffy-v2-outline-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        rows = []
+        for index in range(1, 25):
+            rows.append(
+                {
+                    "slide_id": f"S{index:02d}",
+                    "page_title": f"十年友谊章节 {index:02d}",
+                    "body_copy": "这一页只讲一个客户能判断的故事节点：记忆、关系、画面动作和下一步确认，避免生产表和短 pitch。",
+                    "client_confirmation_point": "确认这一页是否保留为客户方案叙事页。",
+                    "material_role": "让画面辅助客户判断故事关系，不替代正文。",
+                    "visual_slot": "横屏低密度画面占位；已有图或待生成图必须在资产表登记。",
+                    "visual_asset_status": "to_generate",
+                    "asset_ids": "",
+                    "visibility": "client_visible_ready",
+                    "status": "ready",
+                    "notes": "duffy_v2_regression_low_density_page",
+                }
+            )
+        write_csv_rows(project / "AD-creative/client_review/client_outline.csv", CLIENT_OUTLINE_FIELDS, rows)
+        status, findings, _ = review_client_outline(project)
+        assert status == "PASS", findings
+
+        rows[0]["visual_slot"] = ""
+        write_csv_rows(project / "AD-creative/client_review/client_outline.csv", CLIENT_OUTLINE_FIELDS, rows)
+        status, findings, _ = review_client_outline(project)
+        assert status == "BLOCKED"
+        assert any("visual_slot" in item for item in findings)
+
+        rows[0]["visual_slot"] = "横屏低密度画面占位。"
+        rows[0]["body_copy"] = "过密内容" * 130
+        write_csv_rows(project / "AD-creative/client_review/client_outline.csv", CLIENT_OUTLINE_FIELDS, rows)
+        status, findings, _ = review_client_outline(project)
+        assert status == "BLOCKED"
+        assert any("过密" in item for item in findings)
+
+
+def test_browser_asset_current_manifest_records_platform_conversation_and_qa_flags() -> None:
+    if not optional_module("PIL"):
+        return
+
+    from PIL import Image
+
+    with tempfile.TemporaryDirectory(prefix="adco-browser-asset-current-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        source = project / "grok_candidate.png"
+        Image.new("RGB", (1600, 900), color=(180, 150, 120)).save(source)
+        asset_id, _ = add_visual_asset(
+            project,
+            source,
+            "DUFFY-KV-01",
+            "",
+            "pending",
+            "grok_browser_download",
+            "internal_only",
+            "PASS",
+            "low",
+            "Grok browser canvas evidence",
+            "candidate from existing browser project",
+            selected=True,
+        )
+        rows, _ = refresh_asset_current_manifest(project)
+        row = next(item for item in rows if item.get("asset_id") == asset_id)
+        assert row.get("platform") == "grok"
+        assert row.get("local_file")
+        assert row.get("qa_flags")
+
+
 def main() -> int:
     test_project_agents_policy_created_and_validated()
     test_validate_rejects_missing_project_agents_policy()
     test_existing_agents_policy_is_not_overwritten()
+    test_human_workspace_indexes_mirror_control_plane()
     test_agents_policy_status_clears_after_manual_merge()
     test_gate_downgrades_without_adversarial_record()
     test_goal_plan_allows_clean_gate_pass()
@@ -954,6 +1265,14 @@ def main() -> int:
     test_creative_doctor_respects_env_root()
     test_import_creative_production_run_registers_assets()
     test_film_quality_gate_writes_report()
+    test_duffy_hardening_cli_commands_are_exposed()
+    test_client_outline_gate_blocks_until_page_framework_exists()
+    test_client_language_gate_blocks_internal_execution_terms()
+    test_asset_current_manifest_and_visual_layout_gate_use_real_assets()
+    test_final_delivery_lock_protects_user_placed_files()
+    test_migrate_control_plane_creates_new_gate_files()
+    test_duffy_v2_regression_allows_long_low_density_client_outline()
+    test_browser_asset_current_manifest_records_platform_conversation_and_qa_flags()
     if OPTIONAL_SKIPS:
         print("TEST_GOAL_WORKFLOW_OPTIONAL_SKIPS=" + "; ".join(OPTIONAL_SKIPS))
     print("TEST_GOAL_WORKFLOW=PASS")

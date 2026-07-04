@@ -46,17 +46,17 @@ GOAL_ITERATIONS_REL = Path("AD-creative/orchestrator/goal_iterations")
 SUPPORT_BUNDLE_REL = Path("AD-creative/handoff/support_bundle.md")
 SAMPLE_MATERIAL_REL = Path("00_项目资料_ProjectMaterials/01_客户资料_ClientMaterials/sample_brief.md")
 DEFAULT_DEMO_PROJECT = Path(tempfile.gettempdir()) / "adco-demo"
-SAMPLE_GOAL = "用内置样例跑通品牌深度研究与图片功能双泳道，生成可审计的本地操作台。"
+SAMPLE_GOAL = "用内置样例跑通品牌深度研究与视觉资产双泳道，生成可审计的本地操作台。"
 SAMPLE_BRIEF = """# Sample Creative Brief
 
 项目：NOVA Trail 户外功能饮料新品广告创意样例
 
 客户希望输出一版广告创意提案，用于内部评审。
-品牌深度研究需要先梳理品牌主张、目标人群、竞品参考边界和不可复制项。
-图片功能需要规划关键视觉、产品露出、AI 生成图边界、asset slot 和 visual QA。
-本轮交付需要包含可编辑 PPT 结构、参考证据链、图片资产清单和客户追问。
-客户明确不要使用未经授权 logo、真实品牌包装、不可追溯参考截图或客户可见 AI 图。
-产品素材暂缺产品高清图、包装图、字体和官方视觉规范。
+品牌主张：轻负担补给，目标人群是周末轻户外和城市通勤人群，竞品参考只借鉴场景节奏，不复制画面、包装或口号。
+视觉资产计划需要规划关键视觉、产品露出、生成图边界、asset slot 和 visual QA。
+本轮交付需要包含可编辑 PPT 结构、参考证据链、图片资产清单和内部确认清单。
+客户明确不要使用未经授权 logo、真实品牌包装、不可追溯参考截图或未批准生成图。
+样例已提供产品高清图、包装方向、字体方向和官方视觉规范摘要。
 参考方向希望偏真实户外、清爽补给、清晨山路、手持产品、轻运动人群。
 PPT 需要保留文本可编辑，客户稿发送前必须经过 Gate。
 """
@@ -69,6 +69,140 @@ CLIENT_REVIEW_ASSET_STATUSES = {"selected", "approved", "done"}
 GENERATED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 ACTIVE_ASSET_STATUSES = {"registered", "selected", "approved", "done"}
 SELECTED_ASSET_STATUSES = {"selected", "approved", "done"}
+CLIENT_OUTLINE_BODY_MAX_CHARS = 420
+CLIENT_OUTLINE_VISUAL_STATUSES = {
+    "existing_image",
+    "existing_asset",
+    "to_generate",
+    "pending_generation",
+    "placeholder",
+    "text_only",
+    "no_visual",
+}
+EXISTING_IMAGE_STATUSES = {"existing_image", "existing_asset"}
+CLIENT_OUTLINE_FIELDS = [
+    "slide_id",
+    "page_title",
+    "body_copy",
+    "client_confirmation_point",
+    "material_role",
+    "visual_slot",
+    "visual_asset_status",
+    "asset_ids",
+    "visibility",
+    "status",
+    "notes",
+]
+ASSET_CURRENT_FIELDS = [
+    "asset_id",
+    "source",
+    "platform",
+    "conversation",
+    "local_file",
+    "path",
+    "sha256",
+    "original_or_processed",
+    "approval",
+    "direct_client_use",
+    "used_in_slide",
+    "qa_flags",
+    "protected",
+    "status",
+    "notes",
+]
+FINAL_DELIVERY_LOCK_FIELDS = [
+    "lock_id",
+    "path",
+    "sha256",
+    "size_bytes",
+    "mtime",
+    "protected",
+    "registered_at",
+    "notes",
+]
+CLIENT_LANGUAGE_BLOCKLIST = [
+    "prompt",
+    "thread",
+    "worker",
+    "lane",
+    "receipt",
+    "adoption",
+    "cleanup",
+    "gate",
+    "AI",
+    "ChatGPT",
+    "Grok",
+    "ImageGen",
+    "制作表",
+    "客户稿里标成",
+    "可授权",
+    "需确认",
+    "内部",
+    "执行过程",
+    "待确认",
+    "TBD",
+    "TODO",
+]
+CLIENT_LANGUAGE_ASCII_PATTERN = re.compile(
+    r"\b(prompt|thread|worker|lane|receipt|adoption|cleanup|gate|ai|chatgpt|grok|imagegen|tbd|todo)\b",
+    re.IGNORECASE,
+)
+CLIENT_LANGUAGE_CJK_PATTERN = re.compile(
+    "|".join(
+        re.escape(pattern)
+        for pattern in [
+            "制作表",
+            "客户稿里标成",
+            "可授权",
+            "需确认",
+            "内部",
+            "执行过程",
+            "待确认",
+            "提示词",
+            "线程",
+            "工作流",
+            "执行记录",
+        ]
+    )
+)
+VISUAL_LAYOUT_RISK_PATTERNS = [
+    "stretch",
+    "stretched",
+    "distorted",
+    "crop",
+    "cropped",
+    "too small",
+    "low-res",
+    "card inside card",
+    "nested card",
+    "report-like",
+    "too short",
+    "over-simplified",
+    "拉伸",
+    "变形",
+    "裁切错误",
+    "图太小",
+    "卡片套卡片",
+    "报告感",
+    "文字过短",
+    "过度简化",
+    "拥挤",
+    "阅读顺序",
+    "不匹配",
+    "mismatch",
+    "wrong image",
+    "重复误用",
+    "duplicate misuse",
+    "比例不当",
+    "aspect mismatch",
+    "竖屏误用",
+    "横屏误用",
+]
+VISUAL_LAYOUT_RISK_PATTERN = re.compile(
+    "|".join(re.escape(pattern.lower()) for pattern in sorted(VISUAL_LAYOUT_RISK_PATTERNS, key=len, reverse=True))
+)
+TEXT_CLIENT_SCAN_SUFFIXES = {".md", ".txt", ".csv", ".json", ".yaml", ".yml"}
+FINAL_DELIVERY_SUFFIXES = {".pptx", ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".txt", ".md"}
 CREATIVE_PRODUCTION_KINDS = {"moodboard", "ads", "shots"}
 GOAL_PHASES = ("P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7")
 GOAL_PHASE_NAMES = {
@@ -118,6 +252,11 @@ CREATIVE_PROPOSAL_ARTIFACTS = [
         "ART-AUTO-PROPOSAL-STRUCTURE",
         "proposal_structure",
         Path("AD-creative/proposal_architecture/proposal_structure.md"),
+    ),
+    (
+        "ART-AUTO-CLIENT-OUTLINE",
+        "client_outline",
+        Path("AD-creative/client_review/client_outline.csv"),
     ),
     (
         "ART-AUTO-SLIDE-SPEC",
@@ -651,7 +790,7 @@ def read_csv_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
 def write_csv_rows(path: Path, fieldnames: list[str], rows: Iterable[dict[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         for row in rows:
             writer.writerow({key: row.get(key, "") for key in fieldnames})
@@ -971,6 +1110,337 @@ def read_counts(project: Path) -> dict[str, int]:
 def write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content.rstrip() + "\n", encoding="utf-8")
+
+
+def md_cell(value: str | None) -> str:
+    text = re.sub(r"\s+", " ", value or "").strip()
+    return (text or "-").replace("|", "\\|")
+
+
+def markdown_rows(rows: list[tuple[str, ...]], empty: str) -> str:
+    if not rows:
+        return f"| - | {md_cell(empty)} | - |\n"
+    return "".join(f"| {md_cell(a)} | {md_cell(b)} | {md_cell(c)} |\n" for a, b, c in rows)
+
+
+def ensure_csv_file(path: Path, fields: list[str]) -> None:
+    if not path.exists():
+        write_csv_rows(path, fields, [])
+        return
+    ensure_csv_fields(path, fields)
+
+
+def normalized_bool(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"true", "yes", "y", "1", "client_visible", "approved"}
+
+
+def non_placeholder(value: str | None, *, min_chars: int = 1) -> bool:
+    text = re.sub(r"\s+", "", value or "")
+    lowered = (value or "").strip().lower()
+    if lowered in {"", "-", "tbd", "todo", "template", "pending", "open question", "n/a", "na"}:
+        return False
+    if "tbd" in lowered or "open question" in lowered or "待确认" in lowered:
+        return False
+    return len(text) >= min_chars
+
+
+def split_asset_refs(value: str | None) -> list[str]:
+    if not value:
+        return []
+    refs: list[str] = []
+    for item in re.split(r"[;,，、\s]+", value):
+        cleaned = item.strip().strip("`")
+        if not cleaned or cleaned.lower() in {"none", "placeholder", "n/a", "na", "-"}:
+            continue
+        refs.append(cleaned)
+    return refs
+
+
+def markdown_table_rows(text: str) -> list[dict[str, str]]:
+    lines = text.splitlines()
+    rows: list[dict[str, str]] = []
+    for index, line in enumerate(lines):
+        if not line.strip().startswith("|") or index + 1 >= len(lines):
+            continue
+        next_line = lines[index + 1].strip()
+        if not next_line.startswith("|") or "---" not in next_line:
+            continue
+        headers = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        for raw_row in lines[index + 2 :]:
+            stripped = raw_row.strip()
+            if not stripped.startswith("|"):
+                break
+            values = [cell.strip() for cell in stripped.strip("|").split("|")]
+            values.extend([""] * max(0, len(headers) - len(values)))
+            rows.append(dict(zip(headers, values)))
+        if rows:
+            break
+    return rows
+
+
+def infer_slide_asset_usage(project: Path) -> dict[str, list[str]]:
+    usage: dict[str, list[str]] = {}
+    client_outline = project / "AD-creative/client_review/client_outline.csv"
+    _, outline_rows = read_csv_rows(client_outline)
+    for row in outline_rows:
+        slide_id = row.get("slide_id", "").strip()
+        for asset_id in split_asset_refs(row.get("asset_ids", "")):
+            usage.setdefault(asset_id, []).append(slide_id)
+
+    slide_spec = project / "AD-creative/client_review/slide_spec.md"
+    if slide_spec.exists():
+        for row in markdown_table_rows(slide_spec.read_text(encoding="utf-8")):
+            slide_id = first_nonempty(row.get("Slide"), row.get("slide"), row.get("Page"), default="")
+            asset_cell = first_nonempty(
+                row.get("Asset Slot"),
+                row.get("Asset"),
+                row.get("asset_ids"),
+                row.get("Image"),
+                default="",
+            )
+            for asset_id in split_asset_refs(asset_cell):
+                usage.setdefault(asset_id, []).append(slide_id)
+    return usage
+
+
+def file_stat_mtime(path: Path) -> str:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat(timespec="seconds")
+    except OSError:
+        return ""
+
+
+def infer_asset_platform(source: str, rel_path: str, asset_type: str) -> str:
+    text = " ".join([source, rel_path, asset_type]).lower()
+    for platform in ["grok", "chatgpt", "imagegen", "image_gen", "creative production"]:
+        if platform in text:
+            return "ImageGen" if platform == "image_gen" else platform
+    if "download" in text:
+        return "download"
+    if rel_path:
+        return "local_file"
+    return "unknown"
+
+
+def sync_asset_current_manifest(project: Path) -> Path:
+    ensure_csv_file(project / "AD-creative/visual_assets/asset_current_manifest.csv", ASSET_CURRENT_FIELDS)
+    ensure_csv_file(project / "AD-creative/orchestrator/final_delivery_lock.csv", FINAL_DELIVERY_LOCK_FIELDS)
+    _, assets = read_csv_rows(project / "AD-creative/visual_assets/asset_manifest.csv")
+    fields, current_rows = read_csv_rows(project / "AD-creative/visual_assets/asset_current_manifest.csv")
+    by_id = {row.get("asset_id", ""): row for row in current_rows if row.get("asset_id", "")}
+    usage = infer_slide_asset_usage(project)
+    now = now_iso()
+    output_rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for asset in assets:
+        asset_id = asset.get("asset_id", "").strip()
+        if not asset_id:
+            continue
+        seen.add(asset_id)
+        existing = by_id.get(asset_id, {})
+        rel_path = asset.get("path", "").strip()
+        path = project / rel_path if rel_path else Path()
+        sha = ""
+        if rel_path and path.exists() and path.is_file():
+            sha = file_sha256(path)
+        direct_client_use = existing.get("direct_client_use") or (
+            "yes" if asset.get("visibility", "").strip().lower() in CLIENT_VISIBLE_VALUES else "no"
+        )
+        source_value = existing.get("source") or first_nonempty(
+            asset.get("prompt_or_edit_ref"),
+            asset.get("reference_id"),
+            asset.get("asset_type"),
+            default="unrecorded_source",
+        )
+        platform_value = existing.get("platform") or infer_asset_platform(source_value, rel_path, asset.get("asset_type", ""))
+        qa_items = []
+        if asset.get("qa_status", "").strip():
+            qa_items.append(f"qa_status={asset.get('qa_status', '').strip()}")
+        if asset.get("risk_level", "").strip():
+            qa_items.append(f"risk_level={asset.get('risk_level', '').strip()}")
+        qa_flags = existing.get("qa_flags") or ";".join(qa_items)
+        output_rows.append(
+            {
+                "asset_id": asset_id,
+                "source": source_value,
+                "platform": platform_value,
+                "conversation": existing.get("conversation", ""),
+                "local_file": existing.get("local_file") or rel_path,
+                "path": rel_path,
+                "sha256": sha or existing.get("sha256", ""),
+                "original_or_processed": existing.get("original_or_processed")
+                or ("processed" if "/selected/" in rel_path or "/processed/" in rel_path else "original"),
+                "approval": existing.get("approval") or (
+                    "PASS" if asset.get("visibility", "").strip().lower() in CLIENT_VISIBLE_VALUES and asset.get("qa_status", "").upper() == "PASS" else "NOT_APPROVED"
+                ),
+                "direct_client_use": direct_client_use,
+                "used_in_slide": existing.get("used_in_slide") or ";".join(sorted(set(usage.get(asset_id, [])))),
+                "qa_flags": qa_flags,
+                "protected": existing.get("protected") or "false",
+                "status": asset.get("status", "") or existing.get("status", "registered"),
+                "notes": existing.get("notes") or f"synced_from_asset_manifest_at={now}",
+            }
+        )
+    for asset_id, row in by_id.items():
+        if asset_id not in seen:
+            output_rows.append(row)
+    write_csv_rows(project / "AD-creative/visual_assets/asset_current_manifest.csv", fields or ASSET_CURRENT_FIELDS, output_rows)
+    return project / "AD-creative/visual_assets/asset_current_manifest.csv"
+
+
+def register_final_delivery_locks(project: Path) -> Path:
+    ensure_csv_file(project / "AD-creative/orchestrator/final_delivery_lock.csv", FINAL_DELIVERY_LOCK_FIELDS)
+    fields, rows = read_csv_rows(project / "AD-creative/orchestrator/final_delivery_lock.csv")
+    by_path = {row.get("path", ""): row for row in rows if row.get("path", "")}
+    final_root = project / "05_最终交付_FinalDelivery"
+    for path in sorted(final_root.rglob("*")) if final_root.exists() else []:
+        if not path.is_file() or path.name in {"README.md", "目录索引.md", ".DS_Store"}:
+            continue
+        if path.suffix.lower() not in FINAL_DELIVERY_SUFFIXES:
+            continue
+        rel_path = safe_rel(project, path)
+        by_path[rel_path] = {
+            "lock_id": by_path.get(rel_path, {}).get("lock_id") or f"LOCK-{safe_artifact_suffix(rel_path)[-12:]}",
+            "path": rel_path,
+            "sha256": file_sha256(path),
+            "size_bytes": str(path.stat().st_size),
+            "mtime": file_stat_mtime(path),
+            "protected": "true",
+            "registered_at": by_path.get(rel_path, {}).get("registered_at") or now_iso(),
+            "notes": by_path.get(rel_path, {}).get("notes") or "user_final_delivery_file_registered_only_do_not_move_or_overwrite",
+        }
+    write_csv_rows(project / "AD-creative/orchestrator/final_delivery_lock.csv", fields or FINAL_DELIVERY_LOCK_FIELDS, by_path.values())
+    return project / "AD-creative/orchestrator/final_delivery_lock.csv"
+
+
+def render_human_workspace_indexes(project: Path) -> list[Path]:
+    """Mirror the machine control plane into the six top-level user folders."""
+    _, source_events = read_csv_rows(project / "AD-creative/orchestrator/source_events.csv")
+    _, references = read_csv_rows(project / "AD-creative/references/reference_cards.csv")
+    _, assets = read_csv_rows(project / "AD-creative/visual_assets/asset_manifest.csv")
+    _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+
+    source_rows = [
+        (
+            row.get("source_event_id", ""),
+            first_nonempty(row.get("raw_summary"), row.get("source_type"), default="资料"),
+            row.get("file_paths", ""),
+        )
+        for row in source_events
+    ]
+    reference_rows = [
+        (
+            row.get("reference_id", ""),
+            first_nonempty(row.get("title"), row.get("platform"), default="参考"),
+            first_nonempty(row.get("url"), row.get("role"), default=row.get("reference_type", "")),
+        )
+        for row in references
+    ]
+    asset_rows = [
+        (
+            row.get("asset_id", ""),
+            first_nonempty(row.get("slot_id"), row.get("asset_type"), default="素材"),
+            first_nonempty(row.get("path"), row.get("status"), default=row.get("visibility", "")),
+        )
+        for row in assets
+    ]
+
+    def artifact_rows_for(kind: str) -> list[tuple[str, str, str]]:
+        selected: list[tuple[str, str, str]] = []
+        for row in artifacts:
+            path = row.get("path", "")
+            stage = row.get("stage", "")
+            visibility = row.get("visibility", "")
+            artifact_type = row.get("artifact_type", "")
+            if kind == "wip":
+                matched = (
+                    visibility not in CLIENT_VISIBLE_VALUES
+                    and stage not in {"client_review", "ppt_gate", "final_delivery"}
+                    and "/gates/" not in path
+                    and "/orchestrator/" not in path
+                )
+            elif kind == "client":
+                matched = (
+                    visibility in CLIENT_VISIBLE_VALUES
+                    or "client_visible" in visibility
+                    or stage in {"client_review", "ppt_gate"}
+                    or "/client_review/" in path
+                    or "/ppt/previews/" in path
+                )
+            else:
+                matched = stage == "final_delivery" or "/delivery/" in path
+            if matched:
+                selected.append(
+                    (
+                        row.get("artifact_id", ""),
+                        first_nonempty(artifact_type, stage, default="产物"),
+                        path,
+                    )
+                )
+        return selected
+
+    specs = [
+        (
+            project / "00_项目资料_ProjectMaterials/目录索引.md",
+            "项目资料 Project Materials",
+            "登记客户资料、会议记录、导演组资料和客户反馈。原文件可以留在原位置；这里必须能看到入口和追溯。",
+            source_rows,
+            "暂无登记资料。把资料放入本目录，或用 adco run/add-materials 登记外部资料。",
+        ),
+        (
+            project / "01_参考资料_References/目录索引.md",
+            "参考资料 References",
+            "登记官方参考、竞品案例、风格参考和视频参考。客户可见前必须确认来源和使用方式。",
+            reference_rows,
+            "暂无参考资料。",
+        ),
+        (
+            project / "02_重要素材_KeyAssets/目录索引.md",
+            "重要素材 Key Assets",
+            "登记品牌素材、产品素材、人物素材和授权可用素材。AI/生成图默认不等于客户可用素材。",
+            asset_rows,
+            "暂无关键素材。",
+        ),
+        (
+            project / "03_阶段成果_WorkInProgress/目录索引.md",
+            "阶段成果 Work In Progress",
+            "登记内部方向草案、文案草案、视觉探索和方案结构。默认内部可见。",
+            artifact_rows_for("wip"),
+            "暂无阶段成果。",
+        ),
+        (
+            project / "04_客户审阅_ClientReview/目录索引.md",
+            "客户审阅 Client Review",
+            "登记准备给客户看的版本。进入这里前必须通过对应 Gate；不要放内部提示词、线程或执行说明。",
+            artifact_rows_for("client"),
+            "暂无客户审阅稿。",
+        ),
+        (
+            project / "05_最终交付_FinalDelivery/目录索引.md",
+            "最终交付 Final Delivery",
+            "登记最终确认交付物。最终状态必须与 version_map、artifact_index、PPT/PDF/preview/text extract 一致。",
+            artifact_rows_for("final"),
+            "暂无最终交付物。",
+        ),
+    ]
+
+    written: list[Path] = []
+    for path, title, purpose, rows, empty in specs:
+        write_text(
+            path,
+            f"""# {title}
+
+用途：{purpose}
+
+真实控制面仍在 `AD-creative/`。本文件是给人看的目录索引，防止项目根目录看起来是空的，也防止重要产物藏在深层控制面里。
+
+| ID | 内容 | 路径或状态 |
+|---|---|---|
+{markdown_rows(rows, empty).rstrip()}
+""",
+        )
+        written.append(path)
+    return written
 
 
 TEXT_SUFFIXES = {".md", ".txt", ".csv", ".json", ".yml", ".yaml"}
@@ -2128,7 +2598,7 @@ def first_evidence_line(lines: list[tuple[str, str]], patterns: list[str], fallb
 
 
 def open_question(label: str) -> str:
-    return f"TBD - open question: {label}"
+    return f"待确认：{label}"
 
 
 def material_evidence_lines(source_materials: list[tuple[dict[str, str], Path, str]]) -> list[tuple[str, str]]:
@@ -2294,10 +2764,10 @@ def build_creative_direction_rows(context: dict[str, object]) -> list[dict[str, 
     return [
         {
             "direction_id": "DIR-01",
-            "name": "场景接续证明",
+            "name": "场景接续",
             "role": "把产品功能落到真实使用场景",
             "strategy_path": "product_feature_to_behavior_moment",
-            "creative_proposition": f"当{audience_phrase}在雨天通勤和周末山路之间切换时，让{feature_phrase}成为继续行动的理由。",
+            "creative_proposition": f"用{visual_phrase}说明{feature_phrase}如何进入{audience_phrase}的真实行动。",
             "core_message": f"{feature_phrase} -> {benefit}",
             "target_feeling": "真实、清爽、可信",
             "product_feature": feature,
@@ -2307,7 +2777,7 @@ def build_creative_direction_rows(context: dict[str, object]) -> list[dict[str, 
             "title_or_use_case": "清晨出发前 / 山路途中 / 手持产品的连续动作",
             "reference_ids": str(context["reference_ids"]),
             "risk": "缺少产品高清图时只能保留 internal_only placeholder。",
-            "why_choose": "适合先证明产品如何进入真实行为，不依赖竞品或案例背书。",
+            "why_choose": "适合先说明产品如何进入真实行为，不依赖竞品或案例背书。",
             "evidence_refs": ";".join(
                 filter(
                     None,
@@ -2335,7 +2805,7 @@ def build_creative_direction_rows(context: dict[str, object]) -> list[dict[str, 
             "key_visual_or_action": "一页对比矩阵 + 每条方向一张关键动作图或 placeholder slot。",
             "title_or_use_case": "内部评审会方向选择页",
             "reference_ids": str(context["reference_ids"]),
-            "risk": "如果客户目标证据不足，本方向必须降级为 open question。",
+            "risk": "如果客户目标证据不足，本方向必须保持内部待确认。",
             "why_choose": "适合客户还在内部统一意见时使用。",
             "evidence_refs": proposal_evidence_ref(str(context["objective_source"])),
             "status": "draft",
@@ -2407,7 +2877,7 @@ artifact_role: traceable_internal_creative_proposal_draft
 
 ## Evidence Boundaries
 - Do not fabricate insight, competitors, audience barriers, or case-study facts.
-- Missing facts stay as TBD/open questions and must not become client-visible claims.
+- Missing facts stay internal as unconfirmed gaps and must not become client-visible claims.
 - Video/storyboard execution goes to dircreative; image/KV/backgrounds go to imagegen or Creative Production; fixed templates go to Template Creator.
 
 ## Proposal Inputs
@@ -2485,7 +2955,7 @@ client real objective: {context['client_objective']}
 - DIR-03 barrier/action contrast: internal placeholder until asset slot is bound.
 
 ## Proposal Outline
-The PPT/proposal outline must preserve problem, objective, audience, insight, feature-to-benefit, direction choices, visual/action execution, risks, and open questions.
+The PPT/proposal outline must preserve problem, objective, audience, insight, feature-to-benefit, direction choices, visual/action execution, risks, and unconfirmed questions.
 
 ## Open Questions
 - Which TBD fields must be confirmed before client review?
@@ -2539,6 +3009,116 @@ Do not treat VALIDATION=PASS as creative quality approval.
 """
 
 
+def render_client_outline_rows(context: dict[str, object], rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    outline_rows: list[dict[str, str]] = [
+        {
+            "slide_id": "1",
+            "page_title": "客户目标与本轮问题",
+            "body_copy": f"本轮先把客户真实目标和需要解决的传播问题讲清楚：{context['client_objective']} / {context['business_problem']}",
+            "client_confirmation_point": "确认本轮客户审阅是先定方向，还是需要接近可发送版本。",
+            "material_role": "source_brief_to_decision_context",
+            "visual_slot": "文字页，保留一处客户目标或 brief 摘要占位。",
+            "visual_asset_status": "text_only",
+            "asset_ids": "",
+            "visibility": "client_visible_pending",
+            "status": "draft",
+            "notes": "must be reviewed before PPT export",
+        },
+        {
+            "slide_id": "2",
+            "page_title": "受众洞察与行为阻力",
+            "body_copy": f"把受众、阻力和洞察放在同一页，避免方案只剩口号：{context['audience']} / {context['barrier']} / {context['insight']}",
+            "client_confirmation_point": "确认目标受众和行为阻力是否符合客户内部判断。",
+            "material_role": "audience_insight",
+            "visual_slot": "受众场景图或情绪参考图；未确认前使用低保真占位。",
+            "visual_asset_status": "placeholder",
+            "asset_ids": "",
+            "visibility": "client_visible_pending",
+            "status": "draft",
+            "notes": "customer-readable story logic",
+        },
+        {
+            "slide_id": "3",
+            "page_title": "产品事实到传播利益",
+            "body_copy": f"先讲清楚产品事实怎样转成客户能判断的传播利益：{context['product_feature']}。",
+            "client_confirmation_point": "确认产品事实、卖点优先级和不可夸张边界。",
+            "material_role": "product_fact_to_benefit",
+            "visual_slot": "产品事实图、功能示意或已有产品图。",
+            "visual_asset_status": "to_generate",
+            "asset_ids": "",
+            "visibility": "client_visible_pending",
+            "status": "draft",
+            "notes": "must remain editable",
+        },
+        {
+            "slide_id": "4",
+            "page_title": "方向比较与选择理由",
+            "body_copy": "用同一套标准比较方向：策略路径、核心信息、关键画面、风险和为什么值得选，帮助客户做决策。",
+            "client_confirmation_point": "确认客户希望保留几个方向进入下一轮深化。",
+            "material_role": "decision_matrix",
+            "visual_slot": "方向矩阵，不放大图，保留小比例视觉槽位。",
+            "visual_asset_status": "text_only",
+            "asset_ids": "",
+            "visibility": "client_visible_pending",
+            "status": "draft",
+            "notes": "no production-side language",
+        },
+    ]
+    for index, row in enumerate(rows, start=5):
+        outline_rows.append(
+            {
+                "slide_id": str(index),
+                "page_title": row["name"],
+                "body_copy": f"{row['creative_proposition']} 核心信息是：{row['core_message']} 关键画面或行动：{row['key_visual_or_action']} 风险：{row['risk']}",
+                "client_confirmation_point": f"确认是否选择 {row['name']} 继续深化。",
+                "material_role": "creative_direction_story_page",
+                "visual_slot": f"{row['key_visual_or_action']}，未有原图前只做画面占位。",
+                "visual_asset_status": "to_generate",
+                "asset_ids": "",
+                "visibility": "client_visible_pending",
+                "status": "draft",
+                "notes": f"direction_id={row['direction_id']}",
+            }
+        )
+    return outline_rows
+
+
+def render_client_review_outline_content(context: dict[str, object], rows: list[dict[str, str]]) -> str:
+    outline_rows = render_client_outline_rows(context, rows)
+    page_lines = "\n".join(
+        f"{row['slide_id']}. {row['page_title']} - {row['body_copy']}"
+        for row in outline_rows
+    )
+    confirmation_lines = "\n".join(
+        f"- P{row['slide_id']}: {row['client_confirmation_point']}"
+        for row in outline_rows
+    )
+    return f"""# Client Review Outline
+
+status: draft
+visibility: internal_only
+artifact_role: client_readable_text_framework_before_ppt
+
+## Review Goal
+
+{context['client_objective']}
+
+## Content Flow
+
+{page_lines}
+
+## Client Confirmation Points
+
+{confirmation_lines}
+
+## Material Logic
+
+- 每页必须有客户可读标题、正文、客户确认点和素材角色。
+- 图片或视频素材只作为支撑客户判断的证据，不替代故事逻辑。
+- 进入 PPT builder 前先跑 `adco client-outline-gate <project_dir>`。
+"""
+
+
 def render_creative_proposal(project: Path, *, work_id: str = "") -> dict[str, object]:
     ensure_project(project)
     context = collect_proposal_evidence(project)
@@ -2552,6 +3132,8 @@ def render_creative_proposal(project: Path, *, work_id: str = "") -> dict[str, o
     creative_path = project / "AD-creative/creative/creative_directions.md"
     matrix_path = project / "AD-creative/creative/option_matrix.csv"
     structure_path = project / "AD-creative/proposal_architecture/proposal_structure.md"
+    outline_md_path = project / "AD-creative/client_review/client_review_outline.md"
+    outline_csv_path = project / "AD-creative/client_review/client_outline.csv"
     slide_path = project / "AD-creative/client_review/slide_spec.md"
     write_text(creative_path, render_creative_directions_content(context, rows))
     matrix_fields = [
@@ -2576,6 +3158,8 @@ def render_creative_proposal(project: Path, *, work_id: str = "") -> dict[str, o
     ]
     write_csv_rows(matrix_path, matrix_fields, rows)
     write_text(structure_path, render_proposal_structure_content(context, rows))
+    write_text(outline_md_path, render_client_review_outline_content(context, rows))
+    write_csv_rows(outline_csv_path, CLIENT_OUTLINE_FIELDS, render_client_outline_rows(context, rows))
     write_text(slide_path, render_slide_spec_content(rows))
     artifact_ids: list[str] = []
     for artifact_id, artifact_type, rel_path in CREATIVE_PROPOSAL_ARTIFACTS:
@@ -2865,7 +3449,7 @@ checked_at: {now_iso()}
 
 - Gate checks proposal traceability and completeness, not subjective taste.
 - PASS/PARTIAL_PASS/BLOCKED are reason-code based; score alone is never approval.
-- Missing facts stay as TBD/open questions and prevent client-ready claims.
+- Missing facts stay internal as unconfirmed gaps and prevent client-ready claims.
 - Blocks empty skeletons, generic slogans, weak insight, undifferentiated directions, missing feature-to-benefit, missing key visual/action, missing why-choose, unsupported case/reference claims, internal language leaks, and humanizer writing risks.
 - `VALIDATION=PASS` is structural only and never replaces this creative-quality-gate.
 """,
@@ -3264,6 +3848,7 @@ def add_visual_asset(
         }
     )
     write_csv_rows(project / "AD-creative/visual_assets/asset_manifest.csv", fields, assets)
+    refresh_asset_current_manifest(project)
     review_path = project / "AD-creative/visual_review/review_matrix.csv"
     review_fields, review_rows = read_csv_rows(review_path)
     if review_fields:
@@ -3969,6 +4554,7 @@ intake
 
 
 def render_handoff(project: Path, goal: str, source_ids: list[str]) -> None:
+    render_human_workspace_indexes(project)
     counts = read_counts(project)
     _, work_items = read_csv_rows(project / "AD-creative/orchestrator/work_items.csv")
     _, gap_rows = read_csv_rows(project / "AD-creative/orchestrator/gaps.csv")
@@ -4823,6 +5409,7 @@ def item_title(row: dict[str, str], *keys: str, default: str = "-") -> str:
 
 
 def render_dashboard(project: Path) -> Path:
+    render_human_workspace_indexes(project)
     counts = read_counts(project)
     _, work_items = read_csv_rows(project / "AD-creative/orchestrator/work_items.csv")
     _, gaps = read_csv_rows(project / "AD-creative/orchestrator/gaps.csv")
@@ -5872,6 +6459,184 @@ def inspect_pptx(path: Path) -> dict[str, int | bool | str]:
     }
 
 
+def pptx_text_content(path: Path) -> str:
+    if not path.exists():
+        return ""
+    chunks: list[str] = []
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for slide_name in sorted(
+                name
+                for name in archive.namelist()
+                if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+            ):
+                root = ET.fromstring(archive.read(slide_name))
+                for text_node in root.iter("{http://schemas.openxmlformats.org/drawingml/2006/main}t"):
+                    if text_node.text:
+                        chunks.append(text_node.text)
+    except Exception:
+        return ""
+    return "\n".join(chunks)
+
+
+def pptx_layout_findings(path: Path) -> list[str]:
+    findings: list[str] = []
+    if not path.exists():
+        return [f"PPTX 文件不存在: {path}"]
+    try:
+        from PIL import Image
+    except Exception:
+        return findings
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = set(archive.namelist())
+            media_sizes: dict[str, tuple[int, int]] = {}
+            for name in names:
+                if not name.startswith("ppt/media/"):
+                    continue
+                try:
+                    with archive.open(name) as handle:
+                        with Image.open(handle) as image:
+                            media_sizes[name] = (image.width, image.height)
+                except Exception:
+                    continue
+            for slide_name in sorted(
+                name for name in names if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+            ):
+                rels_name = slide_name.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels"
+                rels: dict[str, str] = {}
+                if rels_name in names:
+                    rel_root = ET.fromstring(archive.read(rels_name))
+                    for rel in rel_root:
+                        rel_id = rel.attrib.get("Id", "")
+                        target = rel.attrib.get("Target", "")
+                        if rel_id and target.startswith("../media/"):
+                            rels[rel_id] = "ppt/media/" + target.removeprefix("../media/")
+                slide_root = ET.fromstring(archive.read(slide_name))
+                for pic in slide_root.iter("{http://schemas.openxmlformats.org/presentationml/2006/main}pic"):
+                    embed = ""
+                    for blip in pic.iter("{http://schemas.openxmlformats.org/drawingml/2006/main}blip"):
+                        embed = blip.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", "")
+                    ext = next(pic.iter("{http://schemas.openxmlformats.org/drawingml/2006/main}ext"), None)
+                    media_name = rels.get(embed, "")
+                    if not media_name or media_name not in media_sizes or ext is None:
+                        continue
+                    try:
+                        box_w = int(ext.attrib.get("cx", "0"))
+                        box_h = int(ext.attrib.get("cy", "0"))
+                    except ValueError:
+                        continue
+                    img_w, img_h = media_sizes[media_name]
+                    if not box_w or not box_h or not img_w or not img_h:
+                        continue
+                    box_ratio = box_w / box_h
+                    img_ratio = img_w / img_h
+                    if abs(box_ratio - img_ratio) / img_ratio > 0.18:
+                        findings.append(
+                            f"{Path(slide_name).stem} 图片可能被拉伸: {Path(media_name).name} image_ratio={img_ratio:.2f} box_ratio={box_ratio:.2f}"
+                        )
+    except Exception as exc:  # noqa: BLE001 - layout gate should report parse failures as findings
+        findings.append(f"PPTX layout parse failed: {exc}")
+    return findings
+
+
+def client_outline_rows(project: Path) -> list[dict[str, str]]:
+    _, rows = read_csv_rows(project / "AD-creative/client_review/client_outline.csv")
+    return rows
+
+
+def find_client_language_hits(text: str) -> list[str]:
+    hits = {match.group(0) for match in CLIENT_LANGUAGE_ASCII_PATTERN.finditer(text)}
+    hits.update(match.group(0) for match in CLIENT_LANGUAGE_CJK_PATTERN.finditer(text))
+    return sorted(hits, key=lambda item: item.lower())
+
+
+def review_client_outline(project: Path) -> tuple[str, list[str], Path]:
+    ensure_csv_file(project / "AD-creative/client_review/client_outline.csv", CLIENT_OUTLINE_FIELDS)
+    rows = client_outline_rows(project)
+    issues: list[str] = []
+    warnings: list[str] = []
+    evidence: list[str] = [f"client_outline_rows={len(rows)}"]
+    if not rows:
+        issues.append("缺少客户可读文本框架：AD-creative/client_review/client_outline.csv 没有页记录。")
+    slide_ids: set[str] = set()
+    numeric_ids: list[int] = []
+    for index, row in enumerate(rows, start=2):
+        owner = row.get("slide_id", "").strip() or f"row-{index}"
+        if owner in slide_ids:
+            issues.append(f"client_outline slide_id 重复: {owner}")
+        slide_ids.add(owner)
+        if owner.isdigit():
+            numeric_ids.append(int(owner))
+        for field, min_chars, label in [
+            ("page_title", 3, "每页标题"),
+            ("body_copy", 22, "每页正文"),
+            ("client_confirmation_point", 8, "客户确认点"),
+            ("material_role", 4, "素材角色"),
+        ]:
+            if not non_placeholder(row.get(field), min_chars=min_chars):
+                issues.append(f"{owner} 缺少可客户阅读的{label}: {field}")
+        hits = find_client_language_hits(" ".join(row.get(field, "") for field in CLIENT_OUTLINE_FIELDS))
+        if hits:
+            issues.append(f"{owner} 客户文本框架含内部/执行侧词: {', '.join(hits[:8])}")
+        if row.get("visibility", "").strip().lower() == "client_visible" and row.get("status", "").strip().lower() not in {"approved", "locked", "done"}:
+            warnings.append(f"{owner} 已标客户可见但 status 未 locked/approved/done。")
+    if numeric_ids and numeric_ids != sorted(numeric_ids):
+        issues.append("client_outline slide_id 阅读顺序不是递增。")
+
+    status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
+    report_path = project / "AD-creative/gates/GATE-AUTO-CLIENT-OUTLINE-001_report.md"
+    write_text(
+        report_path,
+        f"""# Client Outline Gate
+
+status: {status}
+visibility: internal_only
+checked_at: {now_iso()}
+
+## Evidence
+
+{chr(10).join(f"- {item}" for item in evidence)}
+
+## Blocking Issues
+
+{chr(10).join(f"- {issue}" for issue in issues) or "- 无"}
+
+## Warnings
+
+{chr(10).join(f"- {warning}" for warning in warnings) or "- 无"}
+
+## Rule
+
+PPT builder 前必须有客户可读文本框架、每页标题、正文、客户确认点和素材角色。这个 Gate 不批准视觉质量或最终发送。
+""",
+    )
+    update_artifact(
+        project,
+        "ART-AUTO-CLIENT-OUTLINE-GATE",
+        "client_outline_gate_report",
+        safe_rel(project, report_path),
+        "client_outline",
+        status="done" if status != "BLOCKED" else "blocked",
+        visibility="internal_only",
+        gate_status=status,
+    )
+    append_gate(
+        project,
+        "GATE-AUTO-CLIENT-OUTLINE-001",
+        "client_outline",
+        status,
+        "92" if status == "PASS" else "65" if status == "PARTIAL_PASS" else "30",
+        "ART-AUTO-CLIENT-OUTLINE-GATE",
+        ";".join(issues[:8]),
+        ";".join(warnings[:8]) or "补齐客户可读文本框架后重跑 client-outline-gate。",
+        "",
+        "ready_for_ppt_builder" if status == "PASS" else "fix_client_outline_before_ppt",
+        "ad_creative_operator",
+    )
+    return status, issues + warnings, report_path
+
+
 def write_pptx_check(project: Path, pptx_path: Path, stats: dict[str, int | bool | str]) -> Path:
     rel_pptx = safe_rel(project, pptx_path)
     status = "PASS" if stats["editable"] else "BLOCKED"
@@ -5980,7 +6745,20 @@ def candidate_client_files(project: Path, artifacts: list[dict[str, str]]) -> li
         rel_path = artifact.get("path", "").strip()
         path = project / rel_path
         if path.is_file() and path.suffix.lower() in {".md", ".txt", ".csv"}:
-            files.append(path)
+                files.append(path)
+    return sorted(files)
+
+
+def candidate_client_language_files(project: Path, artifacts: list[dict[str, str]]) -> list[Path]:
+    files: set[Path] = set(candidate_client_files(project, artifacts))
+    for root in [project / "04_客户审阅_ClientReview", project / "05_最终交付_FinalDelivery"]:
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if path.is_file() and path.suffix.lower() in TEXT_CLIENT_SCAN_SUFFIXES | {".pptx"}:
+                if path.name in {"README.md", "目录索引.md"}:
+                    continue
+                files.add(path)
     return sorted(files)
 
 
@@ -6004,6 +6782,180 @@ def current_pptx_path(project: Path, artifacts: list[dict[str, str]]) -> tuple[P
     return artifact_path_by_id(project, artifacts, artifact_id), True
 
 
+def review_client_language(project: Path) -> tuple[str, list[str], Path]:
+    _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    files = candidate_client_language_files(project, artifacts)
+    issues: list[str] = []
+    warnings: list[str] = []
+    evidence: list[str] = [f"scanned_files={len(files)}"]
+    for path in files:
+        if path.suffix.lower() == ".pptx":
+            text = pptx_text_content(path)
+        else:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+        hits = find_client_language_hits(text)
+        if hits:
+            issues.append(f"{safe_rel(project, path)} 命中客户语言禁词: {', '.join(hits[:10])}")
+    status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
+    report_path = project / "AD-creative/gates/GATE-AUTO-CLIENT-LANGUAGE-001_report.md"
+    write_text(
+        report_path,
+        f"""# Client Language Gate
+
+status: {status}
+visibility: internal_only
+checked_at: {now_iso()}
+
+## Evidence
+
+{chr(10).join(f"- {item}" for item in evidence)}
+
+## Blocking Issues
+
+{chr(10).join(f"- {issue}" for issue in issues) or "- 无"}
+
+## Warnings
+
+{chr(10).join(f"- {warning}" for warning in warnings) or "- 无"}
+
+## Blocklist
+
+prompt / thread / worker / AI / ChatGPT / Grok / ImageGen / gate / 制作表 / 可授权 / 需确认 / 内部 / 执行过程 / TODO / TBD 等执行侧或未确认表达，不能进入客户版导出。
+""",
+    )
+    update_artifact(
+        project,
+        "ART-AUTO-CLIENT-LANGUAGE-GATE",
+        "client_language_gate_report",
+        safe_rel(project, report_path),
+        "client_language",
+        status="done" if status != "BLOCKED" else "blocked",
+        visibility="internal_only",
+        gate_status=status,
+    )
+    append_gate(
+        project,
+        "GATE-AUTO-CLIENT-LANGUAGE-001",
+        "client_language",
+        status,
+        "95" if status == "PASS" else "70" if status == "PARTIAL_PASS" else "25",
+        "ART-AUTO-CLIENT-LANGUAGE-GATE",
+        ";".join(issues[:8]),
+        ";".join(warnings[:8]) or "替换内部/执行侧词后重跑 client-language-gate。",
+        "",
+        "ready_for_client_export_language" if status != "BLOCKED" else "rewrite_client_visible_language",
+        "ad_creative_operator",
+    )
+    return status, issues + warnings, report_path
+
+
+def review_visual_layout(project: Path, pptx_path: Path | None = None) -> tuple[str, list[str], Path]:
+    manifest_path = sync_asset_current_manifest(project)
+    _, asset_rows = read_csv_rows(manifest_path)
+    outline = client_outline_rows(project)
+    _, review_rows = read_csv_rows(project / "AD-creative/visual_review/review_matrix.csv")
+    issues: list[str] = []
+    warnings: list[str] = []
+    evidence: list[str] = [f"asset_current_rows={len(asset_rows)}", f"client_outline_rows={len(outline)}"]
+
+    for row in outline:
+        slide_id = row.get("slide_id", "").strip() or "<missing slide_id>"
+        if not non_placeholder(row.get("body_copy"), min_chars=22):
+            issues.append(f"{slide_id} 客户页正文过短或未成故事。")
+        if not non_placeholder(row.get("material_role"), min_chars=4):
+            issues.append(f"{slide_id} 缺少素材角色，无法判断图片/文本服务哪段故事。")
+
+    approved_values = {"approved", "client_approved", "approved_for_client", "licensed", "cleared"}
+    for asset in asset_rows:
+        asset_id = asset.get("asset_id", "").strip() or "<missing asset_id>"
+        notes_blob = " ".join(asset.get(key, "") for key in ASSET_CURRENT_FIELDS).lower()
+        risk_match = VISUAL_LAYOUT_RISK_PATTERN.search(notes_blob)
+        if risk_match:
+            issues.append(f"{asset_id} asset_current_manifest 命中视觉版式风险词: {risk_match.group(0)}")
+        direct_client = normalized_bool(asset.get("direct_client_use"))
+        used_in_slide = asset.get("used_in_slide", "").strip()
+        approval = asset.get("approval", "").strip().lower()
+        if (direct_client or used_in_slide) and approval not in approved_values:
+            issues.append(f"{asset_id} 用于客户页但 approval={asset.get('approval') or 'missing'}。")
+        rel_path = asset.get("path", "").strip()
+        if used_in_slide and not asset.get("sha256", "").strip():
+            issues.append(f"{asset_id} 用于 slide 但缺少 sha256。")
+        if rel_path and (project / rel_path).exists() and Path(rel_path).suffix.lower() in GENERATED_IMAGE_SUFFIXES:
+            width, height, image_format = probe_image(project / rel_path)
+            evidence.append(f"{asset_id}={width}x{height} {image_format}")
+            if width and height and (max(width, height) < 1000 or min(width, height) < 650):
+                warnings.append(f"{asset_id} 图像尺寸偏小，进入 PPT 前需确认放大后不糊: {width}x{height}")
+
+    for row in review_rows:
+        blob = " ".join(row.values()).lower()
+        risk_match = VISUAL_LAYOUT_RISK_PATTERN.search(blob)
+        if risk_match:
+            issues.append(f"visual_review {row.get('review_id', '<row>')} 命中视觉版式风险词: {risk_match.group(0)}")
+
+    if pptx_path:
+        findings = pptx_layout_findings(pptx_path)
+        issues.extend(findings)
+        evidence.append(f"pptx_layout_checked={safe_rel(project, pptx_path)}")
+
+    if not outline:
+        warnings.append("未找到 client_outline.csv 页记录；visual-layout-gate 无法判断客户阅读顺序。")
+    status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
+    report_path = project / "AD-creative/gates/GATE-AUTO-VISUAL-LAYOUT-001_report.md"
+    write_text(
+        report_path,
+        f"""# Visual Layout Gate
+
+status: {status}
+visibility: internal_only
+checked_at: {now_iso()}
+
+## Evidence
+
+{chr(10).join(f"- {item}" for item in evidence)}
+
+## Blocking Issues
+
+{chr(10).join(f"- {issue}" for issue in issues) or "- 无"}
+
+## Warnings
+
+{chr(10).join(f"- {warning}" for warning in warnings) or "- 无"}
+
+## Rule
+
+检查图片拉伸、裁切错误、图像过小、页面拥挤、卡片套卡片、报告感、文字过短、过度简化和客户阅读顺序。自动检查只覆盖可解析证据，不代表审美批准。
+""",
+    )
+    update_artifact(
+        project,
+        "ART-AUTO-VISUAL-LAYOUT-GATE",
+        "visual_layout_gate_report",
+        safe_rel(project, report_path),
+        "visual_layout",
+        status="done" if status != "BLOCKED" else "blocked",
+        visibility="internal_only",
+        linked_assets=";".join(row.get("asset_id", "") for row in asset_rows if row.get("asset_id", "")),
+        gate_status=status,
+    )
+    append_gate(
+        project,
+        "GATE-AUTO-VISUAL-LAYOUT-001",
+        "visual_layout",
+        status,
+        "92" if status == "PASS" else "65" if status == "PARTIAL_PASS" else "30",
+        "ART-AUTO-VISUAL-LAYOUT-GATE",
+        ";".join(issues[:8]),
+        ";".join(warnings[:8]) or "修正版式和图片使用记录后重跑 visual-layout-gate。",
+        "",
+        "ready_for_ppt_visual_review" if status != "BLOCKED" else "fix_visual_layout",
+        "ad_creative_operator",
+    )
+    return status, issues + warnings, report_path
+
+
 def review_client_pack(project: Path, pptx_path: Path | None = None) -> tuple[str, list[str], Path]:
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
     _, version_map = read_csv_rows(project / "AD-creative/orchestrator/version_map.csv")
@@ -6013,6 +6965,27 @@ def review_client_pack(project: Path, pptx_path: Path | None = None) -> tuple[st
     issues: list[str] = []
     warnings: list[str] = []
     evidence: list[str] = []
+
+    outline_status, outline_findings, outline_report = review_client_outline(project)
+    evidence.append(f"client_outline_gate={outline_status} {safe_rel(project, outline_report)}")
+    if outline_status == "BLOCKED":
+        issues.extend(f"Client Outline Gate: {item}" for item in outline_findings[:8])
+    elif outline_findings:
+        warnings.extend(f"Client Outline Gate: {item}" for item in outline_findings[:8])
+
+    language_status, language_findings, language_report = review_client_language(project)
+    evidence.append(f"client_language_gate={language_status} {safe_rel(project, language_report)}")
+    if language_status == "BLOCKED":
+        issues.extend(f"Client Language Gate: {item}" for item in language_findings[:8])
+    elif language_findings:
+        warnings.extend(f"Client Language Gate: {item}" for item in language_findings[:8])
+
+    layout_status, layout_findings, layout_report = review_visual_layout(project)
+    evidence.append(f"visual_layout_gate={layout_status} {safe_rel(project, layout_report)}")
+    if layout_status == "BLOCKED":
+        issues.extend(f"Visual Layout Gate: {item}" for item in layout_findings[:8])
+    elif layout_findings:
+        warnings.extend(f"Visual Layout Gate: {item}" for item in layout_findings[:8])
 
     for artifact in artifacts:
         visibility = artifact.get("visibility", "").lower()
@@ -6177,12 +7150,971 @@ visibility: internal_only
     return status, issues + warnings, report_path
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def ensure_csv_file(path: Path, fields: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists() or not path.read_text(encoding="utf-8").strip():
+        write_csv_rows(path, fields, [])
+        return
+    ensure_csv_fields(path, fields)
+
+
+def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, object]:
+    if not dry_run and not (project / "AD-creative").exists():
+        ensure_project(project)
+    targets = [
+        ("AD-creative/client_review/client_outline.csv", CLIENT_OUTLINE_FIELDS),
+        ("AD-creative/visual_assets/asset_current_manifest.csv", ASSET_CURRENT_FIELDS),
+        ("AD-creative/orchestrator/final_delivery_lock.csv", FINAL_DELIVERY_LOCK_FIELDS),
+        ("AD-creative/orchestrator/agency/specialist_preflight.csv", ["preflight_id", "work_id", "requested_skill", "skill_path", "rules_read", "derived_gates", "status", "blocked_reason", "created_at"]),
+        ("AD-creative/orchestrator/agency/asset_preflight.csv", ["preflight_id", "work_id", "source_scope", "local_manifest_checked", "browser_checked", "browser_tool", "download_method", "imported_asset_ids", "replacement_generation_allowed", "status", "blocked_reason", "created_at"]),
+        ("AD-creative/orchestrator/agency/skill_scout.csv", ["scout_id", "work_id", "skill_name", "skill_path", "match_reason", "selected", "status", "created_at", "notes"]),
+        ("AD-creative/orchestrator/agency/agent_scout.csv", ["scout_id", "work_id", "agent_name", "agent_path", "match_reason", "selected", "status", "created_at", "notes"]),
+        ("AD-creative/orchestrator/thread_registry.csv", THREADOPS_REGISTRY_FIELDS),
+        ("AD-creative/orchestrator/agent_runs.csv", THREADOPS_AGENT_RUN_FIELDS),
+    ]
+    static_files = {
+        "AD-creative/orchestrator/agency/maintenance_heartbeat.md": "# Maintenance Heartbeat\n\nstatus: active\nvisibility: internal_only\n\nRecord repeated failures, cleanup freezes, and skill-hardening follow-ups here.\n",
+        "AD-creative/orchestrator/agency/self_improvement_log.md": "# Self Improvement Log\n\nstatus: active\nvisibility: internal_only\n\nUse this only for verified project failures that resulted in reusable ADCO rule or tool changes.\n",
+    }
+    changes: list[str] = []
+    for rel_path, fields in targets:
+        path = project / rel_path
+        if not path.exists() or not path.read_text(encoding="utf-8").strip():
+            changes.append(f"create_csv:{rel_path}")
+        else:
+            existing, _ = read_csv_rows(path)
+            missing = [field for field in fields if field not in existing]
+            if missing:
+                changes.append(f"add_csv_fields:{rel_path}:{','.join(missing)}")
+    for rel_path in static_files:
+        if not (project / rel_path).exists():
+            changes.append(f"create_file:{rel_path}")
+    if not dry_run:
+        for rel_path, fields in targets:
+            ensure_csv_file(project / rel_path, fields)
+        for rel_path, content in static_files.items():
+            path = project / rel_path
+            if not path.exists():
+                write_text(path, content)
+    return {"project": str(project), "dry_run": dry_run, "changes": changes, "warnings": []}
+
+
+def row_text(row: dict[str, str], keys: Iterable[str] | None = None) -> str:
+    selected = keys or row.keys()
+    return " ".join(row.get(key, "") for key in selected)
+
+
+def agency_audit_report(project: Path) -> dict[str, object]:
+    ensure_project(project)
+    issues: list[dict[str, str]] = []
+    stats: dict[str, int] = {}
+    _, work_items = read_csv_rows(project / "AD-creative/orchestrator/work_items.csv")
+    _, registry = read_csv_rows(project / "AD-creative/orchestrator/thread_registry.csv")
+    _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    _, gates = read_csv_rows(project / "AD-creative/orchestrator/gate_log.csv")
+    stats.update(
+        {
+            "work_items": len(work_items),
+            "thread_registry": len(registry),
+            "artifacts": len(artifacts),
+            "gates": len(gates),
+        }
+    )
+    for work in work_items:
+        work_id = work.get("work_id", "").strip()
+        text = row_text(work, ("title", "objective", "gate_required", "output_artifacts"))
+        named_ids = sorted(set(re.findall(r"\bWORK-\d+\b", text)))
+        if work_id.startswith("WORK-GOAL") and named_ids:
+            issues.append(
+                {
+                    "severity": "P1",
+                    "code": "goal_work_id_hides_named_work_id",
+                    "message": f"{work_id} text names {', '.join(named_ids)}",
+                    "evidence": text[:180],
+                    "fix": "Use explicit --work-id or split the goal shell from delivery work item.",
+                }
+            )
+    for row in registry:
+        thread_id = row.get("thread_id", "").strip()
+        lifecycle = row.get("lifecycle_state", "").strip().lower()
+        dispatch_status = row.get("dispatch_status", "").strip().lower()
+        real_thread_id = row.get("real_thread_id", "").strip()
+        if lifecycle in {"dispatched", "running", "returned", "reconciled"} or dispatch_status in {"dispatched", "running"}:
+            missing = [
+                name
+                for name in ["real_thread_id", "title_verified_at", "dispatch_receipt_path", "dispatch_evidence"]
+                if not row.get(name, "").strip()
+            ]
+            if thread_id.startswith("planned:") or not real_thread_id or missing:
+                issues.append(
+                    {
+                        "severity": "P1",
+                        "code": "missing_real_thread_dispatch_proof",
+                        "message": f"{row.get('lane_id') or thread_id} lacks real Thread dispatch proof",
+                        "evidence": f"thread_id={thread_id}; missing={','.join(missing)}",
+                        "fix": "Create/reuse a real Codex Thread, read back title, then run dispatch-record.",
+                    }
+                )
+    return {
+        "status": "PASS" if not issues else "CHECK",
+        "project": str(project),
+        "p1": sum(1 for issue in issues if issue["severity"] == "P1"),
+        "issues": issues,
+        "stats": stats,
+    }
+
+
+def format_agency_issue(issue: dict[str, str]) -> str:
+    return (
+        f"{issue.get('severity', '')} {issue.get('code', '')}: "
+        f"{issue.get('message', '')} | evidence={issue.get('evidence', '')} | fix={issue.get('fix', '')}"
+    )
+
+
+def write_specialist_preflight(
+    project: Path,
+    *,
+    work_id: str,
+    requested_skill: str,
+    skill_path: str,
+    rules_read: str,
+    derived_gates: str,
+    status: str,
+    blocked_reason: str,
+) -> str:
+    migrate_control_plane(project)
+    path = project / "AD-creative/orchestrator/agency/specialist_preflight.csv"
+    fields, rows = read_csv_rows(path)
+    preflight_id = next_id(rows, "preflight_id", "SPF")
+    rows.append(
+        {
+            "preflight_id": preflight_id,
+            "work_id": work_id,
+            "requested_skill": requested_skill,
+            "skill_path": skill_path,
+            "rules_read": rules_read,
+            "derived_gates": derived_gates,
+            "status": status,
+            "blocked_reason": blocked_reason,
+            "created_at": now_iso(),
+        }
+    )
+    write_csv_rows(path, fields, rows)
+    return preflight_id
+
+
+def write_asset_preflight(
+    project: Path,
+    *,
+    work_id: str,
+    source_scope: str,
+    local_manifest_checked: str,
+    browser_checked: str,
+    browser_tool: str,
+    download_method: str,
+    imported_asset_ids: str,
+    replacement_generation_allowed: str,
+    status: str,
+    blocked_reason: str,
+) -> str:
+    migrate_control_plane(project)
+    path = project / "AD-creative/orchestrator/agency/asset_preflight.csv"
+    fields, rows = read_csv_rows(path)
+    preflight_id = next_id(rows, "preflight_id", "APF")
+    rows.append(
+        {
+            "preflight_id": preflight_id,
+            "work_id": work_id,
+            "source_scope": source_scope,
+            "local_manifest_checked": local_manifest_checked,
+            "browser_checked": browser_checked,
+            "browser_tool": browser_tool,
+            "download_method": download_method,
+            "imported_asset_ids": imported_asset_ids,
+            "replacement_generation_allowed": replacement_generation_allowed,
+            "status": status,
+            "blocked_reason": blocked_reason,
+            "created_at": now_iso(),
+        }
+    )
+    write_csv_rows(path, fields, rows)
+    return preflight_id
+
+
+def record_thread_dispatch(
+    project: Path,
+    *,
+    lane_id: str,
+    real_thread_id: str,
+    title_action: str,
+    title_verified_at: str,
+    dispatch_evidence: str,
+    dispatch_status: str,
+) -> dict[str, str]:
+    migrate_control_plane(project)
+    registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
+    fields, rows = read_csv_rows(registry_path)
+    target: dict[str, str] | None = None
+    for row in rows:
+        if row.get("lane_id") == lane_id:
+            target = row
+            break
+    if target is None:
+        raise ValueError(f"lane_id not found: {lane_id}")
+    work_id = target.get("work_id", "")
+    receipt_path = project / f"AD-creative/orchestrator/thread_dispatch_{work_id or lane_id}.md"
+    target.update(
+        {
+            "thread_id": real_thread_id,
+            "planned_thread_id": target.get("planned_thread_id") or f"planned:{lane_id}",
+            "real_thread_id": real_thread_id,
+            "dispatch_status": dispatch_status,
+            "title_action": title_action,
+            "title_verified_at": title_verified_at,
+            "dispatch_receipt_path": safe_rel(project, receipt_path),
+            "dispatch_evidence": dispatch_evidence,
+            "lifecycle_state": dispatch_status,
+            "updated_at": now_iso(),
+            "last_seen_at": now_iso(),
+        }
+    )
+    write_csv_rows(registry_path, fields, rows)
+    write_text(
+        receipt_path,
+        f"""# Thread Dispatch Receipt
+
+lane_id: {lane_id}
+work_id: {work_id}
+real_thread_id: {real_thread_id}
+dispatch_status: {dispatch_status}
+title_action: {title_action}
+title_verified_at: {title_verified_at}
+
+## Evidence
+
+{dispatch_evidence}
+
+## Rule
+
+planned:* ids are placeholders only. This receipt records the real Codex Thread id and title readback evidence.
+""",
+    )
+    return {
+        "lane_id": lane_id,
+        "work_id": work_id,
+        "real_thread_id": real_thread_id,
+        "dispatch_status": dispatch_status,
+        "dispatch_receipt_path": safe_rel(project, receipt_path),
+    }
+
+
+def client_outline_rows(project: Path) -> list[dict[str, str]]:
+    _, rows = read_csv_rows(project / "AD-creative/client_review/client_outline.csv")
+    return rows
+
+
+def review_client_outline(project: Path) -> tuple[str, list[str], Path]:
+    migrate_control_plane(project)
+    rows = client_outline_rows(project)
+    issues: list[str] = []
+    evidence = [f"outline_rows={len(rows)}"]
+    if not rows:
+        issues.append("缺少客户可读文本框架：client_outline.csv 没有任何页。")
+    for row in rows:
+        slide = row.get("slide_id", "<missing>")
+        for field, min_chars in [
+            ("page_title", 3),
+            ("body_copy", 22),
+            ("client_confirmation_point", 8),
+            ("material_role", 4),
+            ("visual_slot", 4),
+            ("visual_asset_status", 4),
+        ]:
+            if not non_placeholder(row.get(field), min_chars=min_chars):
+                issues.append(f"{slide} 缺少可客户阅读的 {field}。")
+        body_copy = row.get("body_copy", "").strip()
+        if len(body_copy) > CLIENT_OUTLINE_BODY_MAX_CHARS:
+            issues.append(f"{slide} 正文过密：body_copy 超过 {CLIENT_OUTLINE_BODY_MAX_CHARS} 字，需拆页或降密度。")
+        visual_status = row.get("visual_asset_status", "").strip().lower()
+        if visual_status and visual_status not in CLIENT_OUTLINE_VISUAL_STATUSES:
+            issues.append(f"{slide} visual_asset_status 无效: {row.get('visual_asset_status')}。")
+        if visual_status in EXISTING_IMAGE_STATUSES and not row.get("asset_ids", "").strip():
+            issues.append(f"{slide} 标记已有图但 asset_ids 为空。")
+        hits = find_client_language_hits(row_text(row))
+        if hits:
+            issues.append(f"{slide} 客户文本框架含内部/执行侧词: {', '.join(hits[:8])}")
+        if row.get("visibility", "").strip().lower() in CLIENT_VISIBLE_VALUES and row.get("status", "").strip().lower() not in {"ready", "approved", "done"}:
+            issues.append(f"{slide} 客户可见但 status 不是 ready/approved/done。")
+    status = "PASS" if not issues else "BLOCKED"
+    report_path = project / "AD-creative/gates/GATE-AUTO-CLIENT-OUTLINE-001_report.md"
+    write_text(
+        report_path,
+        f"""# Client Outline Gate
+
+status: {status}
+checked_at: {now_iso()}
+visibility: internal_only
+
+## Evidence
+
+{chr(10).join(f"- {item}" for item in evidence)}
+
+## Blocking Issues
+
+{chr(10).join(f"- {issue}" for issue in issues) or "- 无"}
+
+## Rules
+
+- PPT builder 前必须有客户可读文本框架。
+- 每页必须有 page_title、body_copy、client_confirmation_point、material_role、visual_slot、visual_asset_status。
+- 详细客户方案允许 22-45+ 页；Gate 约束每页低密度，不把详细方案压成短 pitch。
+- visual_asset_status 必须说明画面是已有图、占位、待生成、无图或纯文字页。
+- 客户可见页必须显式 ready/approved/done。
+""",
+    )
+    update_artifact(project, "ART-AUTO-CLIENT-OUTLINE-GATE", "client_outline_gate_report", safe_rel(project, report_path), "client_review", status="done" if status == "PASS" else "blocked", visibility="internal_only", gate_status=status)
+    append_gate(project, "GATE-AUTO-CLIENT-OUTLINE-001", "client_review", status, "90" if status == "PASS" else "35", "ART-AUTO-CLIENT-OUTLINE-GATE", ";".join(issues[:8]), "补齐客户可读大纲后重跑 client-outline-gate。", "", "ready_for_ppt_builder" if status == "PASS" else "fix_client_outline", "ad_creative_operator")
+    return status, issues, report_path
+
+
+def text_hits_for_blocklist(label: str, text: str) -> list[str]:
+    hits = find_client_language_hits(text)
+    return [f"{label}: {hit}" for hit in hits]
+
+
+def review_client_language(project: Path, extra_paths: list[Path] | None = None) -> tuple[str, list[str], Path]:
+    migrate_control_plane(project)
+    _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    files = candidate_client_language_files(project, artifacts)
+    files.extend(extra_paths or [])
+    issues: list[str] = []
+    for row in client_outline_rows(project):
+        issues.extend(text_hits_for_blocklist(f"client_outline {row.get('slide_id')}", row_text(row)))
+    for path in sorted(set(files)):
+        if not path.exists():
+            continue
+        if path.suffix.lower() == ".pptx":
+            text = pptx_text_content(path)
+        elif path.suffix.lower() in TEXT_CLIENT_SCAN_SUFFIXES:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+        else:
+            continue
+        issues.extend(text_hits_for_blocklist(safe_rel(project, path), text))
+    status = "PASS" if not issues else "BLOCKED"
+    report_path = project / "AD-creative/gates/GATE-AUTO-CLIENT-LANGUAGE-001_report.md"
+    write_text(
+        report_path,
+        f"""# Client Language Gate
+
+status: {status}
+checked_at: {now_iso()}
+visibility: internal_only
+
+## Scanned
+
+- client_outline_rows: {len(client_outline_rows(project))}
+- text_files: {len(files)}
+
+## Blocking Issues
+
+{chr(10).join(f"- {issue}" for issue in sorted(set(issues))[:80]) or "- 无"}
+
+## Rules
+
+- 客户稿不能出现 prompt/thread/worker/AI/gate/内部/执行过程/需确认等执行侧语言。
+- 命中即阻断客户版导出。
+""",
+    )
+    update_artifact(project, "ART-AUTO-CLIENT-LANGUAGE-GATE", "client_language_gate_report", safe_rel(project, report_path), "client_review", status="done" if status == "PASS" else "blocked", visibility="internal_only", gate_status=status)
+    append_gate(project, "GATE-AUTO-CLIENT-LANGUAGE-001", "client_review", status, "90" if status == "PASS" else "30", "ART-AUTO-CLIENT-LANGUAGE-GATE", ";".join(sorted(set(issues))[:8]), "清理客户稿内部/执行侧语言后重跑 client-language-gate。", "", "ready_for_client_visual_review" if status == "PASS" else "rewrite_client_language", "ad_creative_operator")
+    return status, issues, report_path
+
+
+def refresh_asset_current_manifest(project: Path) -> tuple[list[dict[str, str]], Path]:
+    migrate_control_plane(project)
+    path = sync_asset_current_manifest(project)
+    _, refreshed = read_csv_rows(path)
+    return refreshed, path
+
+
+def update_current_asset_metadata(
+    project: Path,
+    asset_ids: list[str],
+    *,
+    source: str = "",
+    platform: str = "",
+    conversation: str = "",
+    qa_flags: str = "",
+) -> None:
+    if not asset_ids:
+        return
+    rows, path = refresh_asset_current_manifest(project)
+    wanted = set(asset_ids)
+    changed = False
+    for row in rows:
+        if row.get("asset_id", "") not in wanted:
+            continue
+        if source:
+            row["source"] = source
+        if platform:
+            row["platform"] = platform
+        if conversation:
+            row["conversation"] = conversation
+        row["local_file"] = row.get("local_file") or row.get("path", "")
+        if qa_flags:
+            row["qa_flags"] = qa_flags
+        elif not row.get("qa_flags", "").strip():
+            row["qa_flags"] = "registered_without_visual_approval"
+        changed = True
+    if changed:
+        write_csv_rows(path, ASSET_CURRENT_FIELDS, rows)
+
+
+def review_visual_layout(project: Path, *, min_long_edge: int = 900, min_short_edge: int = 600) -> tuple[str, list[str], Path]:
+    manifest, _ = refresh_asset_current_manifest(project)
+    outline = client_outline_rows(project)
+    assets_by_id = {row.get("asset_id", "").strip(): row for row in manifest if row.get("asset_id", "").strip()}
+    slide_usage: dict[str, list[str]] = {}
+    issues: list[str] = []
+    warnings: list[str] = []
+    if not outline:
+        issues.append("缺少 client_outline.csv，无法判断页面阅读顺序和素材角色。")
+    for row in outline:
+        slide = row.get("slide_id", "<missing>")
+        body = row.get("body_copy", "").strip()
+        if not non_placeholder(body, min_chars=22):
+            issues.append(f"{slide} 客户页正文过短或未成故事。")
+        if len(body) > CLIENT_OUTLINE_BODY_MAX_CHARS:
+            issues.append(f"{slide} 客户页正文过密，需拆页或降密度。")
+        if not non_placeholder(row.get("material_role"), min_chars=4):
+            issues.append(f"{slide} 缺少素材角色，无法判断素材服务哪段故事。")
+        if not non_placeholder(row.get("visual_slot"), min_chars=4):
+            issues.append(f"{slide} 缺少画面占位/已有图/待生成图说明。")
+        visual_status = row.get("visual_asset_status", "").strip().lower()
+        if visual_status not in CLIENT_OUTLINE_VISUAL_STATUSES:
+            issues.append(f"{slide} visual_asset_status 无效或缺失: {row.get('visual_asset_status') or 'missing'}。")
+        asset_ids = split_asset_refs(row.get("asset_ids"))
+        if visual_status in EXISTING_IMAGE_STATUSES and not asset_ids:
+            issues.append(f"{slide} 标记已有图但没有登记 asset_ids。")
+        for asset_id in asset_ids:
+            slide_usage.setdefault(asset_id, []).append(slide)
+            if asset_id not in assets_by_id:
+                issues.append(f"{slide} 引用了未登记资产 {asset_id}。")
+                continue
+            asset = assets_by_id[asset_id]
+            rel_path = asset.get("path", "")
+            path = project / rel_path
+            if rel_path and path.suffix.lower() in GENERATED_IMAGE_SUFFIXES and path.exists():
+                width, height, _ = probe_image(path)
+                slot_text = row.get("visual_slot", "").lower()
+                if width and height:
+                    if re.search(r"竖屏|portrait|vertical|9:16", slot_text, flags=re.IGNORECASE) and width > height:
+                        issues.append(f"{slide} 需要竖屏图但 {asset_id} 是横图: {width}x{height}。")
+                    if re.search(r"横屏|landscape|horizontal|16:9", slot_text, flags=re.IGNORECASE) and height > width:
+                        issues.append(f"{slide} 需要横屏图但 {asset_id} 是竖图: {width}x{height}。")
+            qa_blob = " ".join([asset.get("qa_flags", ""), asset.get("notes", "")]).lower()
+            if VISUAL_LAYOUT_RISK_PATTERN.search(qa_blob):
+                issues.append(f"{slide} 使用的 {asset_id} QA flags/notes 命中视觉风险。")
+        if VISUAL_LAYOUT_RISK_PATTERN.search(row_text(row).lower()):
+            issues.append(f"{slide} outline 命中视觉/版式风险词。")
+    for asset_id, slides in slide_usage.items():
+        if len(set(slides)) <= 1:
+            continue
+        asset = assets_by_id.get(asset_id, {})
+        reuse_context = " ".join(
+            [
+                asset.get("notes", ""),
+                asset.get("qa_flags", ""),
+                " ".join(row_text(row) for row in outline if row.get("slide_id") in slides),
+            ]
+        ).lower()
+        if not re.search(r"intentional_reuse|repeat_ok|系列主视觉|贯穿主视觉|重复使用已确认", reuse_context):
+            issues.append(f"{asset_id} 被多个页面使用但未标记 intentional_reuse/repeat_ok: {', '.join(sorted(set(slides)))}。")
+    for asset in manifest:
+        rel_path = asset.get("path", "")
+        if not rel_path:
+            continue
+        path = project / rel_path
+        if path.suffix.lower() in GENERATED_IMAGE_SUFFIXES and path.exists():
+            width, height, image_format = probe_image(path)
+            if width and height and (max(width, height) < min_long_edge or min(width, height) < min_short_edge):
+                issues.append(f"{asset.get('asset_id')} 图像尺寸不足用于 PPT 主视觉: {width}x{height} {image_format}")
+        if VISUAL_LAYOUT_RISK_PATTERN.search(row_text(asset).lower()):
+            issues.append(f"{asset.get('asset_id')} manifest 命中视觉/版式风险词。")
+        direct_client_use = normalized_bool(asset.get("direct_client_use"))
+        used_in_slide = bool(asset.get("used_in_slide", "").strip())
+        approval = asset.get("approval", "").strip().lower()
+        if (direct_client_use or used_in_slide) and approval not in {"pass", "approved", "client_approved", "approved_for_client", "licensed", "cleared"}:
+            issues.append(f"{asset.get('asset_id')} 用于客户页但 approval={asset.get('approval') or 'missing'}。")
+        if used_in_slide and not asset.get("sha256", "").strip():
+            issues.append(f"{asset.get('asset_id')} 用于 slide 但缺少 sha256。")
+        if (direct_client_use or used_in_slide) and not asset.get("qa_flags", "").strip():
+            issues.append(f"{asset.get('asset_id')} 用于客户页但缺少 qa_flags。")
+    status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
+    report_path = project / "AD-creative/gates/GATE-AUTO-VISUAL-LAYOUT-001_report.md"
+    write_text(
+        report_path,
+        f"""# Visual Layout Gate
+
+status: {status}
+checked_at: {now_iso()}
+visibility: internal_only
+
+## Evidence
+
+- outline_rows: {len(outline)}
+- current_manifest_assets: {len(manifest)}
+- min_long_edge: {min_long_edge}
+- min_short_edge: {min_short_edge}
+
+## Blocking Issues
+
+{chr(10).join(f"- {issue}" for issue in issues) or "- 无"}
+
+## Warnings
+
+{chr(10).join(f"- {warning}" for warning in warnings) or "- 无"}
+
+## Rules
+
+- 检查图片拉伸、裁切、图像大小、页面拥挤、卡片套卡片、报告感、文字过短、客户阅读顺序。
+- 检查图片与文案/画面槽位匹配、同图重复误用、竖屏/横屏比例不当。
+- `direct_client_use=yes` 的图片必须 approval=PASS。
+""",
+    )
+    update_artifact(project, "ART-AUTO-VISUAL-LAYOUT-GATE", "visual_layout_gate_report", safe_rel(project, report_path), "ppt_gate", status="done" if status != "BLOCKED" else "blocked", visibility="internal_only", gate_status=status)
+    append_gate(project, "GATE-AUTO-VISUAL-LAYOUT-001", "ppt_gate", status, "90" if status == "PASS" else "65" if status == "PARTIAL_PASS" else "35", "ART-AUTO-VISUAL-LAYOUT-GATE", ";".join(issues[:8]), ";".join(warnings[:8]) or "修正版式风险后重跑 visual-layout-gate。", "", "ready_for_client_pack_gate" if status != "BLOCKED" else "fix_visual_layout", "ad_creative_operator")
+    return status, issues + warnings, report_path
+
+
+def final_delivery_lock(project: Path) -> tuple[list[dict[str, str]], Path]:
+    migrate_control_plane(project)
+    lock_path = project / "AD-creative/orchestrator/final_delivery_lock.csv"
+    fields, rows = read_csv_rows(lock_path)
+    by_path = {row.get("path", ""): row for row in rows if row.get("path")}
+    final_dir = project / "05_最终交付_FinalDelivery"
+    for path in sorted(final_dir.rglob("*")) if final_dir.exists() else []:
+        if not path.is_file() or path.name == "目录索引.md" or path.name == "README.md":
+            continue
+        rel_path = safe_rel(project, path)
+        stat = path.stat()
+        row = by_path.get(rel_path, {})
+        row.update(
+            {
+                "lock_id": row.get("lock_id") or f"FDL-{len(by_path) + 1:03d}",
+                "path": rel_path,
+                "sha256": file_sha256(path),
+                "size_bytes": str(stat.st_size),
+                "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "protected": "yes",
+                "registered_at": row.get("registered_at") or now_iso(),
+                "notes": row.get("notes") or "User-placed FinalDelivery file is protected by default; register only.",
+            }
+        )
+        by_path[rel_path] = row
+    locked = list(by_path.values())
+    write_csv_rows(lock_path, fields, locked)
+    return locked, lock_path
+
+
+def cleanup_category(path: Path) -> str:
+    lower = str(path).lower()
+    if "05_最终交付_finaldelivery".lower() in lower:
+        return "protected_final_delivery"
+    if "contact" in lower and "sheet" in lower:
+        return "contact_sheet"
+    if "cache" in lower or ".pptx-cache" in lower:
+        return "cache"
+    if "preview" in lower:
+        return "preview"
+    if "download" in lower or "tmp" in lower or "temp" in lower:
+        return "temporary_download"
+    if "exports" in lower or path.suffix.lower() in {".pptx", ".pdf"}:
+        return "old_export"
+    if "selected" in lower:
+        return "important_crop_or_selected"
+    if "generated" in lower or "imagegen" in lower or "grok" in lower or "chatgpt" in lower:
+        return "generated_original"
+    if "raw" in lower or "original" in lower:
+        return "original"
+    return "derived_or_unclassified"
+
+
+def dedupe_audit(project: Path) -> tuple[list[dict[str, str]], Path, Path]:
+    migrate_control_plane(project)
+    rows: list[dict[str, str]] = []
+    seen: dict[str, str] = {}
+    roots = [
+        project / "AD-creative/visual_assets",
+        project / "AD-creative/ppt",
+        project / "03_阶段成果_WorkInProgress",
+        project / "04_客户审阅_ClientReview",
+        project / "05_最终交付_FinalDelivery",
+    ]
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            sha = file_sha256(path)
+            rel_path = safe_rel(project, path)
+            rows.append(
+                {
+                    "path": rel_path,
+                    "sha256": sha,
+                    "category": cleanup_category(path),
+                    "duplicate_of": seen.get(sha, ""),
+                    "recommended_action": "protect" if cleanup_category(path) == "protected_final_delivery" else "review",
+                }
+            )
+            seen.setdefault(sha, rel_path)
+    csv_path = project / "AD-creative/gates/dedupe_audit.csv"
+    write_csv_rows(csv_path, ["path", "sha256", "category", "duplicate_of", "recommended_action"], rows)
+    report_path = project / "AD-creative/gates/GATE-AUTO-DEDUPE-AUDIT-001_report.md"
+    duplicates = [row for row in rows if row["duplicate_of"]]
+    write_text(
+        report_path,
+        f"""# Dedupe Audit
+
+status: PASS
+checked_at: {now_iso()}
+visibility: internal_only
+
+## Evidence
+
+- files_scanned: {len(rows)}
+- duplicates_by_hash: {len(duplicates)}
+- csv: {safe_rel(project, csv_path)}
+
+## Rule
+
+This command does not delete files. It classifies originals, important crops, derived images, old exports, cache, previews, contact sheets, and protected final delivery files for human cleanup planning.
+""",
+    )
+    update_artifact(project, "ART-AUTO-DEDUPE-AUDIT", "dedupe_audit_report", safe_rel(project, report_path), "workspace_hygiene", visibility="internal_only", gate_status="PASS")
+    append_gate(project, "GATE-AUTO-DEDUPE-AUDIT-001", "workspace_hygiene", "PASS", "90", "ART-AUTO-DEDUPE-AUDIT", "", "Use cleanup-plan for non-destructive cleanup decisions.", "", "ready_for_cleanup_plan", "ad_creative_operator")
+    return rows, csv_path, report_path
+
+
+def cleanup_plan(project: Path) -> tuple[Path, list[str]]:
+    locked, lock_path = final_delivery_lock(project)
+    audit_rows, audit_csv, _ = dedupe_audit(project)
+    actions: list[str] = []
+    for row in audit_rows:
+        category = row["category"]
+        if category == "protected_final_delivery":
+            action = "LOCKED_DO_NOT_MOVE_OR_DELETE"
+        elif row["duplicate_of"]:
+            action = "REVIEW_DUPLICATE_KEEP_BEST_SOURCE"
+        elif category in {"cache", "preview", "contact_sheet"}:
+            action = "REVIEW_CAN_ARCHIVE_AFTER_CONFIRMATION"
+        else:
+            action = "KEEP_OR_REVIEW"
+        actions.append(f"{row['path']} => {action}")
+    plan_path = project / "AD-creative/gates/CLEANUP-PLAN.md"
+    write_text(
+        plan_path,
+        f"""# Cleanup Plan
+
+status: REVIEW_ONLY
+checked_at: {now_iso()}
+visibility: internal_only
+
+## Inputs
+
+- dedupe_audit: {safe_rel(project, audit_csv)}
+- final_delivery_lock: {safe_rel(project, lock_path)}
+- protected_final_delivery_files: {len(locked)}
+
+## Proposed Actions
+
+{chr(10).join(f"- {action}" for action in actions[:200]) or "- 无文件需要分类。"}
+
+## Rule
+
+This plan never deletes, moves, or overwrites files. `05_最终交付_FinalDelivery` files are protected by default and only hash-registered.
+""",
+    )
+    update_artifact(project, "ART-AUTO-CLEANUP-PLAN", "cleanup_plan", safe_rel(project, plan_path), "workspace_hygiene", visibility="internal_only", gate_status="PASS")
+    return plan_path, actions
+
+
 def latest_gate_status(project: Path, gate_id: str) -> str:
     _, gates = read_csv_rows(project / "AD-creative/orchestrator/gate_log.csv")
     for row in reversed(gates):
         if row.get("gate_id") == gate_id:
             return row.get("status", "").strip().upper()
     return ""
+
+
+def classify_cleanup_path(project: Path, path: Path) -> str:
+    rel = safe_rel(project, path)
+    lowered = rel.lower()
+    suffix = path.suffix.lower()
+    if "/05_" in f"/{rel}" or rel.startswith("05_最终交付_FinalDelivery/"):
+        return "protected_final_delivery"
+    if any(part in path.parts for part in ("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache")) or suffix in {".pyc", ".pyo"}:
+        return "cache"
+    if "contact" in lowered and suffix in GENERATED_IMAGE_SUFFIXES:
+        return "contact_sheet"
+    if "preview" in lowered and suffix in GENERATED_IMAGE_SUFFIXES:
+        return "preview"
+    if "version_archive" in lowered or re.search(r"(old|backup|archive|v\d{1,3})", lowered) and suffix in {".pptx", ".pdf"}:
+        return "old_export"
+    if "/visual_assets/raw/" in lowered:
+        return "original_image"
+    if "/visual_assets/selected/" in lowered or "crop" in lowered or "裁切" in rel:
+        return "important_crop_or_selected"
+    if suffix in GENERATED_IMAGE_SUFFIXES:
+        return "derived_image"
+    return "other"
+
+
+def cleanup_file_inventory(project: Path) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for path in sorted(project.rglob("*")):
+        if ".git" in path.parts or not path.is_file():
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        category = classify_cleanup_path(project, path)
+        sha = ""
+        if size <= 80 * 1024 * 1024 and category != "cache":
+            try:
+                sha = file_sha256(path)
+            except OSError:
+                sha = ""
+        rows.append(
+            {
+                "path": safe_rel(project, path),
+                "category": category,
+                "sha256": sha,
+                "size_bytes": str(size),
+                "protected": "true" if category == "protected_final_delivery" else "false",
+            }
+        )
+    return rows
+
+
+def write_dedupe_audit(project: Path) -> tuple[str, list[str], Path]:
+    register_final_delivery_locks(project)
+    inventory = cleanup_file_inventory(project)
+    by_hash: dict[str, list[dict[str, str]]] = {}
+    for row in inventory:
+        sha = row.get("sha256", "")
+        if sha:
+            by_hash.setdefault(sha, []).append(row)
+    duplicate_groups = [rows for rows in by_hash.values() if len(rows) > 1]
+    issues = [
+        "duplicate group includes protected final delivery file; review manually only"
+        for rows in duplicate_groups
+        if any(row.get("protected") == "true" for row in rows)
+    ]
+    category_counts: dict[str, int] = {}
+    for row in inventory:
+        category_counts[row["category"]] = category_counts.get(row["category"], 0) + 1
+    duplicate_text = []
+    for index, rows in enumerate(duplicate_groups[:40], start=1):
+        duplicate_text.append(f"### DUP-{index:03d}")
+        duplicate_text.extend(
+            f"- {row['category']} | protected={row['protected']} | {row['path']}"
+            for row in rows
+        )
+        duplicate_text.append("")
+    report_path = project / "AD-creative/orchestrator/dedupe_audit.md"
+    write_text(
+        report_path,
+        f"""# Dedupe Audit
+
+status: {"CHECK" if issues else "PASS"}
+visibility: internal_only
+checked_at: {now_iso()}
+delete_action: none
+
+## Category Counts
+
+{chr(10).join(f"- {key}: {value}" for key, value in sorted(category_counts.items())) or "- none"}
+
+## Duplicate Hash Groups
+
+{chr(10).join(duplicate_text).rstrip() or "- none"}
+
+## Issues
+
+{chr(10).join(f"- {issue}" for issue in issues) or "- 无"}
+
+## Rule
+
+本报告只分类和估算重复，不删除文件。清理必须通过 cleanup-plan，且 `05_最终交付_FinalDelivery` 下用户手动放入的 PPT/PDF 默认 protected。
+""",
+    )
+    update_artifact(
+        project,
+        "ART-AUTO-DEDUPE-AUDIT",
+        "dedupe_audit_report",
+        safe_rel(project, report_path),
+        "workspace_hygiene",
+        visibility="internal_only",
+        gate_status="CHECK" if issues else "PASS",
+    )
+    return ("CHECK" if issues else "PASS"), issues, report_path
+
+
+def write_cleanup_plan(project: Path) -> tuple[str, list[str], Path]:
+    lock_path = register_final_delivery_locks(project)
+    inventory = cleanup_file_inventory(project)
+    recommendations: list[str] = []
+    for category, action in [
+        ("protected_final_delivery", "register only; do not move, overwrite, or delete"),
+        ("original_image", "keep as source of truth unless manually superseded"),
+        ("important_crop_or_selected", "keep if referenced by slide/client outline; otherwise mark for manual review"),
+        ("derived_image", "keep if selected or referenced; otherwise candidate for archive"),
+        ("old_export", "keep in version_archive or move only after hash registration"),
+        ("cache", "safe candidate for automated cleanup after confirmation"),
+        ("preview", "regenerate only after current PPT/PDF hash is registered"),
+        ("contact_sheet", "archive separately; never use as client-visible image"),
+    ]:
+        count = sum(1 for row in inventory if row["category"] == category)
+        recommendations.append(f"- {category}: {count} files -> {action}")
+    report_path = project / "AD-creative/orchestrator/cleanup_plan.md"
+    write_text(
+        report_path,
+        f"""# Cleanup Plan
+
+status: planned
+visibility: internal_only
+created_at: {now_iso()}
+delete_action: none
+final_delivery_lock: {safe_rel(project, lock_path)}
+
+## Recommendations
+
+{chr(10).join(recommendations)}
+
+## Protected Files
+
+{chr(10).join(f"- {row['path']}" for row in inventory if row['protected'] == 'true') or "- none"}
+
+## Rule
+
+不要按 hash duplicate 直接删除。先按原图、重要裁切、派生图、旧导出、缓存、预览、contact sheet 分层；最终交付目录只登记 hash，不移动、不覆盖。
+""",
+    )
+    update_artifact(
+        project,
+        "ART-AUTO-CLEANUP-PLAN",
+        "cleanup_plan",
+        safe_rel(project, report_path),
+        "workspace_hygiene",
+        visibility="internal_only",
+        gate_status="PASS",
+    )
+    return "PASS", [], report_path
+
+
+def normalize_thread_status(value: str | None) -> str:
+    return (value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def review_thread_discipline(project: Path) -> tuple[str, list[str], Path]:
+    _, rows = read_csv_rows(project / "AD-creative/orchestrator/thread_registry.csv")
+    issues: list[str] = []
+    warnings: list[str] = []
+    evidence: list[str] = [f"thread_rows={len(rows)}"]
+    for row in rows:
+        thread_id = row.get("thread_id", "").strip()
+        owner = thread_id or row.get("lane_id", "") or "<missing thread>"
+        receipt_received = normalize_thread_status(row.get("receipt_status")) not in {"", "missing", "pending", "planned", "todo", "tbd"}
+        lifecycle = normalize_thread_status(row.get("lifecycle_state"))
+        adopted_or_consumed = receipt_received or lifecycle in {"returned", "reconciled", "archived", "complete", "completed"}
+        if not adopted_or_consumed:
+            continue
+        if not thread_id or thread_id.startswith("planned:"):
+            issues.append(f"{owner} 被当作已用 worker 但没有真实 thread_id。")
+        receipt_path = row.get("receipt_path", "").strip()
+        receipt_text = ""
+        if not receipt_path:
+            issues.append(f"{owner} 缺少 receipt_path。")
+        else:
+            path = project / receipt_path if not Path(receipt_path).is_absolute() else Path(receipt_path)
+            if not path.exists():
+                issues.append(f"{owner} receipt 文件不存在: {receipt_path}")
+            else:
+                receipt_text = path.read_text(encoding="utf-8", errors="ignore")
+        if receipt_text and "adoption_decision" not in receipt_text and "Adoption / Rejection" not in receipt_text:
+            issues.append(f"{owner} receipt 缺少 adoption/rejection 记录。")
+        cleanup_values = " ".join(
+            row.get(key, "")
+            for key in ["cleanup_action", "cleanup_reason", "archived_at", "notes"]
+        ).strip()
+        if not cleanup_values:
+            issues.append(f"{owner} 缺少 cleanup 记录。")
+    if not rows:
+        warnings.append("thread_registry 为空；本项目未声称使用 Codex Threads 时可接受。")
+    status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
+    report_path = project / "AD-creative/gates/GATE-AUTO-THREAD-DISCIPLINE-001_report.md"
+    write_text(
+        report_path,
+        f"""# Thread Discipline Gate
+
+status: {status}
+visibility: internal_only
+checked_at: {now_iso()}
+
+## Evidence
+
+{chr(10).join(f"- {item}" for item in evidence)}
+
+## Blocking Issues
+
+{chr(10).join(f"- {issue}" for issue in issues) or "- 无"}
+
+## Warnings
+
+{chr(10).join(f"- {warning}" for warning in warnings) or "- 无"}
+
+## Rule
+
+没有真实 thread_id、dispatch record、receipt、adoption/rejection 和 cleanup 的 worker，不得被主线程声称采用。`planned:*`、标题创建和空 receipt 都不是执行证明。
+""",
+    )
+    update_artifact(
+        project,
+        "ART-AUTO-THREAD-DISCIPLINE-GATE",
+        "thread_discipline_gate_report",
+        safe_rel(project, report_path),
+        "threadops",
+        visibility="internal_only",
+        gate_status=status,
+    )
+    append_gate(
+        project,
+        "GATE-AUTO-THREAD-DISCIPLINE-001",
+        "threadops",
+        status,
+        "90" if status == "PASS" else "65" if status == "PARTIAL_PASS" else "30",
+        "ART-AUTO-THREAD-DISCIPLINE-GATE",
+        ";".join(issues[:8]),
+        ";".join(warnings[:8]) or "补齐真实 worker receipt 与 cleanup 后重跑。",
+        "",
+        "thread_evidence_ready" if status != "BLOCKED" else "fix_thread_evidence",
+        "ad_creative_operator",
+    )
+    return status, issues + warnings, report_path
 
 
 def normalize_stage(value: str) -> str:
@@ -6348,6 +8280,13 @@ THREADOPS_REGISTRY_FIELDS = [
     "cleanup_reason",
     "last_seen_at",
     "duplicate_of",
+    "planned_thread_id",
+    "dispatch_status",
+    "real_thread_id",
+    "title_action",
+    "title_verified_at",
+    "dispatch_receipt_path",
+    "dispatch_evidence",
 ]
 THREADOPS_AGENT_RUN_FIELDS = [
     "run_id",
@@ -7378,6 +9317,13 @@ def render_thread_execution_plan(
                 "cleanup_reason": "",
                 "last_seen_at": now,
                 "duplicate_of": "",
+                "planned_thread_id": f"planned:{lane_id}",
+                "dispatch_status": "planned",
+                "real_thread_id": "",
+                "title_action": "",
+                "title_verified_at": "",
+                "dispatch_receipt_path": "",
+                "dispatch_evidence": "",
             }
         )
         update_or_append_csv_row(
@@ -8100,6 +10046,13 @@ def export_editable_pptx(project: Path, output: Path | None = None) -> Path:
         from pptx.util import Inches, Pt
     except Exception as exc:  # noqa: BLE001 - actionable dependency error
         raise RuntimeError(f"python-pptx unavailable: {exc}") from exc
+
+    outline_status, outline_findings, outline_report = review_client_outline(project)
+    if outline_status == "BLOCKED":
+        raise RuntimeError(
+            "client-outline-gate BLOCKED; fix the customer-readable text framework before PPT builder. "
+            f"report={safe_rel(project, outline_report)} findings={'; '.join(outline_findings[:5])}"
+        )
 
     _, requirements = read_csv_rows(project / "AD-creative/orchestrator/requirements.csv")
     _, gaps = read_csv_rows(project / "AD-creative/orchestrator/gaps.csv")
@@ -8954,6 +10907,10 @@ def command_validate(args: argparse.Namespace) -> int:
                 {
                     "project": str(project),
                     "validation": status,
+                    "validation_scope": "structure_and_traceability_only",
+                    "validation_not_creative_quality": True,
+                    "validation_not_client_language": True,
+                    "validation_not_visual_approval": True,
                     "stats": stats,
                     "errors": errors,
                 },
@@ -8966,6 +10923,10 @@ def command_validate(args: argparse.Namespace) -> int:
         for key, value in stats.items():
             print(f"{key.upper()}={value}")
         print(f"VALIDATION={status}")
+        print("VALIDATION_SCOPE=structure_and_traceability_only")
+        print("VALIDATION_NOT_CREATIVE_QUALITY=1")
+        print("VALIDATION_NOT_CLIENT_LANGUAGE=1")
+        print("VALIDATION_NOT_VISUAL_APPROVAL=1")
     if errors:
         if not args.json:
             print("ERRORS:")
@@ -9436,11 +11397,262 @@ def command_check_pptx(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_agency_audit(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    report = agency_audit_report(project)
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"AGENCY_AUDIT={report['status']}")
+        print(f"PROJECT={report['project']}")
+        print(f"P1={report['p1']}")
+        print(f"ISSUES={len(report['issues'])}")
+        if report["issues"]:
+            print("AGENCY_ISSUES:")
+            for issue in report["issues"]:
+                print(f"- {format_agency_issue(issue)}")
+        for key, value in report["stats"].items():
+            print(f"{key.upper()}={value}")
+    return 1 if args.strict and report["status"] != "PASS" else 0
+
+
+def command_migrate_control_plane(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    result = migrate_control_plane(project, dry_run=args.dry_run)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"MIGRATE_CONTROL_PLANE={'DRY_RUN' if args.dry_run else 'PASS'}")
+        print(f"PROJECT={result['project']}")
+        print(f"CHANGES={len(result['changes'])}")
+        for change in result["changes"]:
+            print(f"- {change}")
+    return 0
+
+
+def command_preflight_skill(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    preflight_id = write_specialist_preflight(
+        project,
+        work_id=args.work_id,
+        requested_skill=args.requested_skill,
+        skill_path=args.skill_path,
+        rules_read=args.rules_read,
+        derived_gates=args.derived_gates,
+        status=args.status,
+        blocked_reason=args.blocked_reason,
+    )
+    errors, stats = validate(project)
+    print(f"SPECIALIST_PREFLIGHT={preflight_id}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    print("VALIDATION_SCOPE=structure_and_traceability_only")
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    if errors:
+        print("ERRORS:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    return 0
+
+
+def command_preflight_asset(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    preflight_id = write_asset_preflight(
+        project,
+        work_id=args.work_id,
+        source_scope=args.source_scope,
+        local_manifest_checked=args.local_manifest_checked,
+        browser_checked=args.browser_checked,
+        browser_tool=args.browser_tool,
+        download_method=args.download_method,
+        imported_asset_ids=args.imported_asset_ids,
+        replacement_generation_allowed=args.replacement_generation_allowed,
+        status=args.status,
+        blocked_reason=args.blocked_reason,
+    )
+    errors, stats = validate(project)
+    print(f"ASSET_PREFLIGHT={preflight_id}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    print("VALIDATION_SCOPE=structure_and_traceability_only")
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    if errors:
+        print("ERRORS:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    return 0
+
+
+def command_dispatch_record(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    result = record_thread_dispatch(
+        project,
+        lane_id=args.lane_id,
+        real_thread_id=args.real_thread_id,
+        title_action=args.title_action,
+        title_verified_at=args.title_verified_at,
+        dispatch_evidence=args.dispatch_evidence,
+        dispatch_status=args.dispatch_status,
+    )
+    errors, stats = validate(project)
+    print(f"DISPATCH_RECORD={result['dispatch_status']}")
+    print(f"LANE_ID={result['lane_id']}")
+    print(f"REAL_THREAD_ID={result['real_thread_id']}")
+    print(f"DISPATCH_RECEIPT={result['dispatch_receipt_path']}")
+    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    print("VALIDATION_SCOPE=structure_and_traceability_only")
+    for key, value in stats.items():
+        print(f"{key.upper()}={value}")
+    if errors:
+        print("ERRORS:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    return 0
+
+
+def command_client_outline_gate(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    ensure_project(project)
+    status, issues, report = review_client_outline(project)
+    print(f"CLIENT_OUTLINE_GATE={status}")
+    print(f"REPORT={report}")
+    print(f"ISSUES={len(issues)}")
+    if status != "PASS":
+        for issue in issues:
+            print(f"- {issue}")
+        return 1
+    return 0
+
+
+def command_client_language_gate(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    extra_paths = [Path(item).expanduser().resolve() for item in args.file]
+    status, issues, report = review_client_language(project, extra_paths)
+    print(f"CLIENT_LANGUAGE_GATE={status}")
+    print(f"REPORT={report}")
+    print(f"ISSUES={len(issues)}")
+    if status != "PASS":
+        for issue in sorted(set(issues))[:80]:
+            print(f"- {issue}")
+        return 1
+    return 0
+
+
+def command_asset_current_manifest(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    rows, path = refresh_asset_current_manifest(project)
+    print("ASSET_CURRENT_MANIFEST=PASS")
+    print(f"PATH={path}")
+    print(f"ASSETS={len(rows)}")
+    return 0
+
+
+def command_browser_asset_intake(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    if not args.browser_evidence:
+        print("BROWSER_ASSET_INTAKE=BLOCKED")
+        print("ERROR=--browser-evidence is required when user says browser-held images exist")
+        return 1
+    asset_ids: list[str] = []
+    for file_item in args.asset_file:
+        asset_id, _ = add_visual_asset(
+            project,
+            Path(file_item).expanduser().resolve(),
+            args.slot_id,
+            args.requirement_id,
+            args.reference_id,
+            args.asset_type,
+            "internal_only",
+            "PARTIAL_PASS",
+            "medium",
+            args.browser_evidence,
+            f"browser_asset_intake source={args.source}; direct client use requires visual gates",
+            selected=False,
+        )
+        asset_ids.append(asset_id)
+    preflight_id = write_asset_preflight(
+        project,
+        work_id=args.work_id,
+        source_scope=args.source,
+        local_manifest_checked="yes",
+        browser_checked="yes",
+        browser_tool=args.browser_tool,
+        download_method=args.download_method,
+        imported_asset_ids=";".join(asset_ids),
+        replacement_generation_allowed="no",
+        status="PASS",
+        blocked_reason="",
+    )
+    update_current_asset_metadata(
+        project,
+        asset_ids,
+        source=f"{args.source}: {args.browser_evidence}",
+        platform=args.source,
+        conversation=args.conversation or args.browser_evidence,
+        qa_flags=args.qa_flags or "browser_asset_registered;replacement_generation_blocked;needs_visual_layout_gate",
+    )
+    print("BROWSER_ASSET_INTAKE=PASS")
+    print(f"ASSET_PREFLIGHT={preflight_id}")
+    print("ASSET_IDS=" + ";".join(asset_ids))
+    return 0
+
+
+def command_visual_layout_gate(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    status, issues, report = review_visual_layout(
+        project,
+        min_long_edge=args.min_long_edge,
+        min_short_edge=args.min_short_edge,
+    )
+    print(f"VISUAL_LAYOUT_GATE={status}")
+    print(f"REPORT={report}")
+    print(f"ISSUES={len(issues)}")
+    if status == "BLOCKED":
+        for issue in issues:
+            print(f"- {issue}")
+        return 1
+    return 0
+
+
+def command_dedupe_audit(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    rows, csv_path, report = dedupe_audit(project)
+    print("DEDUPE_AUDIT=PASS")
+    print(f"CSV={csv_path}")
+    print(f"REPORT={report}")
+    print(f"FILES={len(rows)}")
+    print(f"DUPLICATES={sum(1 for row in rows if row.get('duplicate_of'))}")
+    return 0
+
+
+def command_cleanup_plan(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    plan_path, actions = cleanup_plan(project)
+    print("CLEANUP_PLAN=PASS")
+    print(f"PLAN={plan_path}")
+    print(f"ACTIONS={len(actions)}")
+    print("NO_DELETE=1")
+    return 0
+
+
+def command_final_delivery_lock(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    locked, lock_path = final_delivery_lock(project)
+    print("FINAL_DELIVERY_LOCK=PASS")
+    print(f"LOCK={lock_path}")
+    print(f"PROTECTED_FILES={len(locked)}")
+    return 0
+
+
 def command_client_pack_gate(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     ensure_project(project)
     pptx_path = Path(args.pptx).expanduser().resolve() if args.pptx else None
     status, issues, report = review_client_pack(project, pptx_path)
+    final_delivery_lock(project)
     dashboard = render_dashboard(project)
     errors, validate_stats = validate(project)
     print(f"CLIENT_PACK_GATE={status}")
@@ -9708,6 +11920,24 @@ def build_parser() -> argparse.ArgumentParser:
     hygiene_parser.add_argument("--strict", action="store_true", help="Return non-zero when hygiene status is CHECK.")
     hygiene_parser.set_defaults(func=command_hygiene)
 
+    agency_audit_parser = subparsers.add_parser(
+        "agency-audit",
+        help="Audit Agency control-plane, ThreadOps dispatch proof, and open blockers.",
+    )
+    agency_audit_parser.add_argument("project", help="Project directory.")
+    agency_audit_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    agency_audit_parser.add_argument("--strict", action="store_true", help="Return non-zero when audit status is CHECK.")
+    agency_audit_parser.set_defaults(func=command_agency_audit)
+
+    migrate_parser = subparsers.add_parser(
+        "migrate-control-plane",
+        help="Add missing Agency/ThreadOps/client gate control-plane files and CSV columns.",
+    )
+    migrate_parser.add_argument("project", help="Project directory.")
+    migrate_parser.add_argument("--dry-run", action="store_true", help="Report changes without writing files.")
+    migrate_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    migrate_parser.set_defaults(func=command_migrate_control_plane)
+
     audit_parser = subparsers.add_parser("audit-dashboard", help="Audit dashboard usability markers.")
     audit_parser.add_argument("project", help="Project directory.")
     audit_parser.add_argument("--render", action="store_true", help="Render dashboard before auditing.")
@@ -9748,6 +11978,121 @@ def build_parser() -> argparse.ArgumentParser:
     )
     creative_quality_parser.add_argument("project", help="Project directory.")
     creative_quality_parser.set_defaults(func=command_creative_quality_gate)
+
+    preflight_skill_parser = subparsers.add_parser(
+        "preflight-skill",
+        help="Record specialist skill selection, rules read, and derived gates.",
+    )
+    preflight_skill_parser.add_argument("project", help="Project directory.")
+    preflight_skill_parser.add_argument("--work-id", required=True)
+    preflight_skill_parser.add_argument("--requested-skill", required=True)
+    preflight_skill_parser.add_argument("--skill-path", required=True)
+    preflight_skill_parser.add_argument("--rules-read", required=True)
+    preflight_skill_parser.add_argument("--derived-gates", default="")
+    preflight_skill_parser.add_argument("--status", default="PASS")
+    preflight_skill_parser.add_argument("--blocked-reason", default="")
+    preflight_skill_parser.set_defaults(func=command_preflight_skill)
+
+    preflight_asset_parser = subparsers.add_parser(
+        "preflight-asset",
+        help="Record local/browser/download/generated asset inventory before replacement generation.",
+    )
+    preflight_asset_parser.add_argument("project", help="Project directory.")
+    preflight_asset_parser.add_argument("--work-id", required=True)
+    preflight_asset_parser.add_argument("--source-scope", required=True)
+    preflight_asset_parser.add_argument("--local-manifest-checked", default="yes")
+    preflight_asset_parser.add_argument("--browser-checked", default="no")
+    preflight_asset_parser.add_argument("--browser-tool", default="")
+    preflight_asset_parser.add_argument("--download-method", default="")
+    preflight_asset_parser.add_argument("--imported-asset-ids", default="")
+    preflight_asset_parser.add_argument("--replacement-generation-allowed", default="no")
+    preflight_asset_parser.add_argument("--status", default="PASS")
+    preflight_asset_parser.add_argument("--blocked-reason", default="")
+    preflight_asset_parser.set_defaults(func=command_preflight_asset)
+
+    client_outline_parser = subparsers.add_parser(
+        "client-outline-gate",
+        help="Block PPT builder until client-readable page outline is complete.",
+    )
+    client_outline_parser.add_argument("project", help="Project directory.")
+    client_outline_parser.set_defaults(func=command_client_outline_gate)
+
+    client_language_parser = subparsers.add_parser(
+        "client-language-gate",
+        help="Block client export when client-visible copy leaks internal execution language.",
+    )
+    client_language_parser.add_argument("project", help="Project directory.")
+    client_language_parser.add_argument("--file", action="append", default=[], help="Extra text file to scan. Repeatable.")
+    client_language_parser.set_defaults(func=command_client_language_gate)
+
+    asset_current_parser = subparsers.add_parser(
+        "asset-current-manifest",
+        help="Refresh the unique current asset manifest with source/hash/approval/use columns.",
+    )
+    asset_current_parser.add_argument("project", help="Project directory.")
+    asset_current_parser.set_defaults(func=command_asset_current_manifest)
+
+    browser_intake_parser = subparsers.add_parser(
+        "browser-asset-intake",
+        help="Register browser-held Grok/ChatGPT/ImageGen assets before replacement generation.",
+    )
+    browser_intake_parser.add_argument("project", help="Project directory.")
+    browser_intake_parser.add_argument("--work-id", required=True)
+    browser_intake_parser.add_argument("--source", required=True, help="Browser asset source, e.g. Grok or ChatGPT.")
+    browser_intake_parser.add_argument("--browser-evidence", required=True)
+    browser_intake_parser.add_argument("--conversation", default="", help="Browser conversation/project/canvas identifier or URL.")
+    browser_intake_parser.add_argument("--qa-flags", default="", help="Initial QA flags for imported browser assets.")
+    browser_intake_parser.add_argument("--browser-tool", default="browser")
+    browser_intake_parser.add_argument("--download-method", default="manual_supported_download")
+    browser_intake_parser.add_argument("--asset-file", action="append", default=[], help="Downloaded asset file to import. Repeatable.")
+    browser_intake_parser.add_argument("--slot-id", default="BROWSER-ASSET")
+    browser_intake_parser.add_argument("--requirement-id", default="")
+    browser_intake_parser.add_argument("--reference-id", default="pending")
+    browser_intake_parser.add_argument("--asset-type", default="browser_download")
+    browser_intake_parser.set_defaults(func=command_browser_asset_intake)
+
+    visual_layout_parser = subparsers.add_parser(
+        "visual-layout-gate",
+        help="Audit actual client deck layout risks before client packaging.",
+    )
+    visual_layout_parser.add_argument("project", help="Project directory.")
+    visual_layout_parser.add_argument("--min-long-edge", type=int, default=900)
+    visual_layout_parser.add_argument("--min-short-edge", type=int, default=600)
+    visual_layout_parser.set_defaults(func=command_visual_layout_gate)
+
+    dedupe_parser = subparsers.add_parser(
+        "dedupe-audit",
+        help="Classify duplicate/cache/preview/final files without deleting anything.",
+    )
+    dedupe_parser.add_argument("project", help="Project directory.")
+    dedupe_parser.set_defaults(func=command_dedupe_audit)
+
+    cleanup_parser = subparsers.add_parser(
+        "cleanup-plan",
+        help="Write a non-destructive cleanup plan with FinalDelivery lock evidence.",
+    )
+    cleanup_parser.add_argument("project", help="Project directory.")
+    cleanup_parser.set_defaults(func=command_cleanup_plan)
+
+    final_lock_parser = subparsers.add_parser(
+        "final-delivery-lock",
+        help="Hash-register user-placed FinalDelivery files as protected.",
+    )
+    final_lock_parser.add_argument("project", help="Project directory.")
+    final_lock_parser.set_defaults(func=command_final_delivery_lock)
+
+    dispatch_record_parser = subparsers.add_parser(
+        "dispatch-record",
+        help="Backfill real Codex Thread dispatch proof into thread_registry.csv and dispatch receipt.",
+    )
+    dispatch_record_parser.add_argument("project", help="Project directory.")
+    dispatch_record_parser.add_argument("--lane-id", required=True)
+    dispatch_record_parser.add_argument("--real-thread-id", required=True)
+    dispatch_record_parser.add_argument("--title-action", default="dispatcher_set")
+    dispatch_record_parser.add_argument("--title-verified-at", required=True)
+    dispatch_record_parser.add_argument("--dispatch-evidence", required=True)
+    dispatch_record_parser.add_argument("--dispatch-status", default="dispatched")
+    dispatch_record_parser.set_defaults(func=command_dispatch_record)
 
     asset_parser = subparsers.add_parser("add-asset", help="Register a real/generated visual asset file.")
     asset_parser.add_argument("project", help="Project directory.")

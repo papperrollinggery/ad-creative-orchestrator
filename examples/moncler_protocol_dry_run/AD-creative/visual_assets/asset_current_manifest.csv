@@ -1,0 +1,2 @@
+asset_id,source,path,sha256,original_or_processed,approval,direct_client_use,used_in_slide,protected,status,notes,platform,conversation,local_file,qa_flags
+IMG-MON-PLACEHOLDER-001,AD-creative/image_jobs/IMGJOB-MON-001.md,AD-creative/visual_assets/raw/pending,,original,NOT_APPROVED,no,,false,blocked,synced_from_asset_manifest_at=2026-07-04T21:01:20+08:00,local_file,,AD-creative/visual_assets/raw/pending,qa_status=NOT_RUN;risk_level=high

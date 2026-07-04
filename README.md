@@ -58,6 +58,7 @@ Every initialized project gets a root `AGENTS.md`. If the directory already has 
 
 - `AD-creative/orchestrator/`: structured source of truth for requirements, gaps, work, artifacts, Gates, versions.
 - `AD-creative/handoff/`: non-developer dashboard, project board, pending decisions, client question script.
+- `00_项目资料_ProjectMaterials/` through `05_最终交付_FinalDelivery/`: human-facing folders with auto-updated `目录索引.md` files that point to the current materials, references, assets, WIP, client review drafts, and final delivery artifacts.
 - Project-root `AGENTS.md`: project-local Codex rules for new threads, safety stops, handoff files, and required Gates.
 - `adco creative-proposal`: internal strategy/proposal draft control for challenge, insight, creative idea, evidence mapping, and client questions.
 - `adco creative-quality-gate`: proposal quality checks for structure, traceability, evidence, and professional readiness, separate from human/client approval.
@@ -141,8 +142,22 @@ adco thread-plan <项目目录> --title "<目标标题>" --objective "<目标内
 adco profile-analyze <项目目录> --source-id <SRC-ID> --brand "<品牌>" --company "<公司>"
 adco hygiene <项目目录>
 adco goal-run <项目目录> --goal-id latest --max-steps 3
+adco migrate-control-plane <项目目录> --dry-run
+adco migrate-control-plane <项目目录>
+adco agency-audit <项目目录>
 adco creative-proposal <项目目录> [--work-id <id>] [--json]
 adco creative-quality-gate <项目目录>
+adco preflight-skill <项目目录> --work-id <WORK-ID> --requested-skill <skill> --skill-path <SKILL.md> --rules-read "<规则>" --derived-gates "<gate>"
+adco preflight-asset <项目目录> --work-id <WORK-ID> --source-scope "<本地/browser/download/generated 范围>"
+adco client-outline-gate <项目目录>
+adco client-language-gate <项目目录>
+adco asset-current-manifest <项目目录>
+adco browser-asset-intake <项目目录> --work-id <WORK-ID> --source Grok --browser-evidence "<证据>"
+adco visual-layout-gate <项目目录>
+adco final-delivery-lock <项目目录>
+adco dedupe-audit <项目目录>
+adco cleanup-plan <项目目录>
+adco dispatch-record <项目目录> --lane-id <LANE-ID> --real-thread-id <thread_id> --title-verified-at <iso_time> --dispatch-evidence "<readback evidence>"
 adco creative-doctor
 adco creative-run <项目目录> --kind ads --work-id <工作ID> --brief-file <brief.md>
 adco import-creative-production <项目目录> --run-dir <run目录> --kind ads --slot-prefix CP
@@ -307,6 +322,15 @@ adco hygiene <项目目录>
 adco intake <项目目录>
 adco creative-proposal <项目目录> [--work-id <id>] [--json]
 adco creative-quality-gate <项目目录>
+adco migrate-control-plane <项目目录> --dry-run
+adco migrate-control-plane <项目目录>
+adco agency-audit <项目目录>
+adco preflight-skill <项目目录> --work-id <WORK-ID> --requested-skill <skill> --skill-path <SKILL.md> --rules-read "<规则>" --derived-gates "<gate>"
+adco preflight-asset <项目目录> --work-id <WORK-ID> --source-scope "<本地/browser/download/generated 范围>"
+adco client-outline-gate <项目目录>
+adco client-language-gate <项目目录>
+adco asset-current-manifest <项目目录>
+adco browser-asset-intake <项目目录> --work-id <WORK-ID> --source Grok --browser-evidence "<证据>"
 adco add-reference <项目目录> --url <https链接> --title <标题>
 adco search-quality-gate <项目目录>
 adco reference-pack-gate <项目目录>
@@ -316,10 +340,14 @@ adco creative-doctor
 adco creative-run <项目目录> --kind moodboard|ads|shots --work-id <工作ID> --brief-file <brief.md>
 adco import-creative-production <项目目录> --run-dir <run目录> --kind moodboard|ads|shots --slot-prefix CP
 adco visual-quality-gate <项目目录>
+adco visual-layout-gate <项目目录>
 adco film-quality-gate <项目目录>
 adco export-pptx <项目目录>
 adco check-pptx <项目目录> --file <PPTX文件>
 adco client-pack-gate <项目目录>
+adco final-delivery-lock <项目目录>
+adco dedupe-audit <项目目录>
+adco cleanup-plan <项目目录>
 adco handoff-readiness-gate <项目目录>
 adco install-skill
 adco audit-dashboard <项目目录> --render
@@ -367,6 +395,7 @@ adco thread-plan <项目目录> --title <目标标题> --objective <目标内容
 ```
 
 `thread-plan` 只生成内部控制面：`thread_lane_plan.md`、role briefs、worker prompts、receipt 占位、`thread_registry.csv` 计划行和 cleanup 计划。主控线程先用这些 prompt 创建/复用 Codex Threads，收到 receipt 后再合并、验证、归档；客户可见 PPT/PDF/HTML 不得出现 prompt、thread、worker、lane plan 或执行步骤语言。
+真实 worker 被采用前必须有 `real_thread_id`、dispatch receipt、title readback evidence、worker receipt、adoption/rejection 和 cleanup 记录；`planned:*` 只是计划占位。
 
 ThreadOps 分工规则：
 
@@ -378,6 +407,20 @@ execution_worker 必须先写清 exact write_scope。
 每个 execution_worker 返回 files_changed、validation、dirty-state impact、cleanup actions。
 主控消费 receipt 并合并后，归档对应 worker thread。
 ```
+
+客户版 PPT builder / 导出前置 Gate：
+
+```text
+client-outline-gate: 没有客户可读文本框架、每页标题、正文、客户确认点、素材角色、visual_slot、visual_asset_status，不进 PPT builder。Duffy V2 类客户方案允许 22-45+ 页，但每页必须低密度、客户可读、能决策。
+client-language-gate: 客户稿命中 prompt/thread/worker/AI/gate/内部/执行过程/需确认等词，阻断客户版导出。
+asset-current-manifest: 所有 PPT 图片登记 source、platform、conversation、local_file、hash、original_or_processed、approval、direct_client_use、used_in_slide、qa_flags。
+browser-asset-intake: 用户说 Grok/ChatGPT/ImageGen 已有图时，先查浏览器/画布并登记，不能直接判定缺图或重生图。
+visual-layout-gate: 检查图片拉伸、裁切、尺寸、卡片套卡片、报告感、文字过短、图文不匹配、同图重复误用、竖屏/横屏比例和客户阅读顺序。
+final-delivery-lock: `05_最终交付_FinalDelivery` 内用户手动放入文件默认 protected，只登记 hash，不移动、不覆盖、不删除。
+dedupe-audit / cleanup-plan: 只分类原图、重要裁切、派生图、旧导出、缓存、预览、contact sheet，不直接删除。
+```
+
+`VALIDATION=PASS` 只代表结构和追溯关系成立，不能代表创意质量、客户语言、视觉审美、素材授权或可客户发送。
 
 会议 / 客户画像分析：
 

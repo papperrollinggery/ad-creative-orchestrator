@@ -289,9 +289,19 @@ version_overwrite: never overwrite a client-visible version as the only copy
 thread_sprawl: no worker without lane plan, role brief, write scope, receipt, and cleanup
 static_staff_mapping: redo Agency staff selection for the actual task instead of reusing stale roles blindly
 copied_staff_prompt: synthesize a project role brief; do not paste upstream staff text wholesale
+human_workspace_drift: do not let the six top-level human folders stay empty while real work is buried in AD-creative; update `目录索引.md` or place approved copies in the matching 00-05 folder
 internal_language_leak: client-visible pages must not mention prompts, execution steps, threads, lane plans, or worker roles
 prompt_only_receipt: production worker receipts must list changed files or return BLOCKED with evidence
 missing_adoption_proof: main/control must record adoption_decision and rejection_reason before merging or discarding worker output
+named_skill_skip: when the user names a local skill or specialist skill, read that SKILL.md before production and convert its rules into current-task gates with `adco preflight-skill`
+browser_asset_skip: before declaring images missing or generating replacements, inspect both local files and browser-held Grok/ChatGPT/ImageGen assets and record with `adco preflight-asset` or `adco browser-asset-intake`
+fake_thread_dispatch: planned:* thread ids are placeholders only; real execution requires real_thread_id, title verification, dispatch receipt, worker receipt, adoption/rejection, and cleanup evidence
+missing_client_outline: no PPT builder before `adco client-outline-gate <project>` passes
+client_language_leak: client export is blocked by `adco client-language-gate <project>` if prompt/thread/worker/AI/gate/internal execution language appears
+asset_source_drift: PPT images must appear in `asset_current_manifest.csv` with source, platform, conversation, local_file, hash, original_or_processed, approval, direct_client_use, used_in_slide, and qa_flags
+Duffy_v2_regression: customer decks may be 22-45+ low-density decision pages; never collapse them into short pitch cards or production tables
+validation_scope_misuse: `VALIDATION=PASS` means structure and traceability only; it is not creative quality, client language, visual taste, asset authorization, or send approval
+final_delivery_overwrite: user-placed files in `05_最终交付_FinalDelivery` are protected by default; only hash-register with `adco final-delivery-lock <project>`
 unbounded_loop: infinite mode is not a live infinite loop; it is bounded internal exploration only
 story_thinning: proposal pages must retain story, segment summary, brand mapping, timing, and key dialogue where relevant
 layout_regression: PDF/PPT visual QA must check overflow, cropping, busy image text, repeated stills, font legibility, timing labels, key dialogue labels, and story-beat differentiation
@@ -334,11 +344,21 @@ adco audit-dashboard <project_dir> --render --json
 adco validate <project_dir>
 adco check
 adco run <project_dir> --material <materials_path>
+adco migrate-control-plane <project_dir> --dry-run
+adco migrate-control-plane <project_dir>
+adco agency-audit <project_dir>
 adco creative-proposal <project_dir> --work-id <WORK-ID>
 adco creative-proposal <project_dir> --json
 adco creative-quality-gate <project_dir>
+adco preflight-skill <project_dir> --work-id <WORK-ID> --requested-skill <skill> --skill-path <SKILL.md> --rules-read "<rules>" --derived-gates "<gates>"
+adco preflight-asset <project_dir> --work-id <WORK-ID> --source-scope "<local/browser/download/generated scope>"
+adco client-outline-gate <project_dir>
+adco client-language-gate <project_dir>
+adco asset-current-manifest <project_dir>
+adco browser-asset-intake <project_dir> --work-id <WORK-ID> --source Grok --browser-evidence "<evidence>"
 adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
 adco thread-plan <project_dir> --title <goal_title> --objective <goal_objective> --roles brand_client,copy_creative,qa_review
+adco dispatch-record <project_dir> --lane-id <LANE-ID> --real-thread-id <thread_id> --title-verified-at <iso_time> --dispatch-evidence "<readback evidence>"
 adco profile-analyze <project_dir> --source-id <SRC-ID> --brand <brand> --company <company>
 adco hygiene <project_dir>
 adco intake <project_dir>
@@ -348,9 +368,13 @@ adco reference-pack-gate <project_dir>
 adco add-asset <project_dir> --file <image_file> --slot-id <slot_id> --requirement-id <requirement_id>
 adco import-imagegen <project_dir> --slot-id <slot_id> --selected
 adco visual-quality-gate <project_dir>
+adco visual-layout-gate <project_dir>
 adco export-pptx <project_dir>
 adco check-pptx <project_dir> --file <pptx_file>
 adco client-pack-gate <project_dir>
+adco final-delivery-lock <project_dir>
+adco dedupe-audit <project_dir>
+adco cleanup-plan <project_dir>
 adco handoff-readiness-gate <project_dir>
 adco audit-dashboard <project_dir> --render
 adco install-skill
@@ -387,6 +411,20 @@ adco creative-proposal <project_dir> --json
 adco creative-quality-gate <project_dir>
 adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
 adco thread-plan <project_dir> --title <goal_title> --objective <goal_objective> --roles brand_client,copy_creative,qa_review
+adco migrate-control-plane <project_dir> --dry-run
+adco migrate-control-plane <project_dir>
+adco agency-audit <project_dir>
+adco preflight-skill <project_dir> --work-id <WORK-ID> --requested-skill <skill> --skill-path <SKILL.md> --rules-read "<rules>" --derived-gates "<gate>"
+adco preflight-asset <project_dir> --work-id <WORK-ID> --source-scope "<local/browser/download/generated scope>"
+adco client-outline-gate <project_dir>
+adco client-language-gate <project_dir>
+adco asset-current-manifest <project_dir>
+adco browser-asset-intake <project_dir> --work-id <WORK-ID> --source Grok --browser-evidence "<evidence>"
+adco visual-layout-gate <project_dir>
+adco final-delivery-lock <project_dir>
+adco dedupe-audit <project_dir>
+adco cleanup-plan <project_dir>
+adco dispatch-record <project_dir> --lane-id <LANE-ID> --real-thread-id <thread_id> --title-verified-at <iso_time> --dispatch-evidence "<readback evidence>"
 adco profile-analyze <project_dir> --source-id <SRC-ID> --brand <brand> --company <company>
 adco hygiene <project_dir>
 adco-check
@@ -395,15 +433,28 @@ make dist-check
 make release-check
 ```
 
-Gate commands enforce adversarial council:
+Gate commands:
 
 ```text
-creative-quality-gate / reference-pack-gate / search-quality-gate / visual-quality-gate / client-pack-gate / handoff-readiness-gate
+creative-quality-gate / client-outline-gate / client-language-gate / reference-pack-gate / search-quality-gate / visual-quality-gate / visual-layout-gate / client-pack-gate / handoff-readiness-gate
 ```
 
-If no valid adversarial council note exists for the stage, a clean PASS is downgraded to PARTIAL_PASS.
+Creative/reference/search/visual/client-pack/handoff stage gates downgrade clean PASS to PARTIAL_PASS when the adversarial council note is missing. Client outline, client language, visual layout, asset manifest, dedupe, cleanup, and final delivery lock gates hard-block on their own evidence rules.
 
 Use `sample` when a new user needs a runnable local project without real client materials.
+
+Before PPT builder or client export:
+
+```text
+client-outline-gate must PASS before PPT builder; every row needs page_title, body_copy, client_confirmation_point, material_role, visual_slot, and visual_asset_status. Detailed Duffy V2-style customer decks may be 22-45+ pages, but every page must stay low-density and decision-readable.
+client-language-gate must PASS before client-visible export.
+asset-current-manifest must list source, platform, conversation, local_file, hash, original_or_processed, approval, direct_client_use, used_in_slide, and qa_flags for PPT images.
+browser-asset-intake or preflight-asset must run before replacement generation when the user says Grok/ChatGPT/ImageGen/browser assets exist.
+visual-layout-gate must run before client-pack-gate and must check distortion/crop/small image/crowding/nested-card/report-feel/short copy/image-copy mismatch/repeated-image misuse/portrait-landscape mismatch.
+final-delivery-lock must hash-register user-placed `05_最终交付_FinalDelivery` files before cleanup/final status.
+dedupe-audit and cleanup-plan are review-only; they never delete, move, or overwrite files.
+VALIDATION=PASS is structure/traceability only, not creative quality, client language, visual approval, asset authorization, or send approval.
+```
 
 Then use:
 
@@ -413,6 +464,12 @@ AD-creative/handoff/项目看板.md
 AD-creative/handoff/待你确认.md
 AD-creative/handoff/客户追问话术.md
 AD-creative/gates/THREE-COUNCIL-READINESS_report.md
+00_项目资料_ProjectMaterials/目录索引.md
+01_参考资料_References/目录索引.md
+02_重要素材_KeyAssets/目录索引.md
+03_阶段成果_WorkInProgress/目录索引.md
+04_客户审阅_ClientReview/目录索引.md
+05_最终交付_FinalDelivery/目录索引.md
 ```
 
 ### ad-creative:run
@@ -428,11 +485,12 @@ Steps:
 2. Register provided materials as source events.
 3. Classify each source as initial, supplement, change, feedback, approval, rejection, director_note, or unknown.
 4. Update current_truth, requirements, gaps, work_items, artifact_index, gate_log, and handoff files.
-5. Decide whether search is needed and write search_plan if needed.
-6. Continue through the next safe internal stage only if no human decision is blocking.
-7. Stop at any required user decision and update 待你确认.md.
-8. Before any client-visible version change, archive the previous version and update version_map.csv.
-9. Run `adco validate` before reporting status.
+5. Update the six top-level `目录索引.md` files so Project Materials, References, Key Assets, Work In Progress, Client Review, and Final Delivery show where the current files live.
+6. Decide whether search is needed and write search_plan if needed.
+7. Continue through the next safe internal stage only if no human decision is blocking.
+8. Stop at any required user decision and update 待你确认.md.
+9. Before any client-visible version change, archive the previous version and update version_map.csv.
+10. Run `adco validate` before reporting status.
 ```
 
 User only needs to provide:
@@ -570,7 +628,8 @@ Steps:
 3. Update requirements, gaps, current truth, decisions, and resolutions.
 4. Mark conflicts and deprecated requirements.
 5. Write client question script if needed.
-6. Update 项目看板.md and 待你确认.md.
+6. Update the relevant top-level `目录索引.md` files.
+7. Update 项目看板.md and 待你确认.md.
 ```
 
 ### ad-creative:next
@@ -587,7 +646,8 @@ Steps:
 5. If specialist work is needed, generate handoff packet.
 6. Run required gate before moving stage.
 7. If threads were used, run a thread cleanup / active-thread audit before final status.
-8. Update project board.
+8. Update the relevant top-level `目录索引.md` files.
+9. Update project board.
 ```
 
 ### ad-creative:status

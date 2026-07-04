@@ -7,6 +7,7 @@ These rules apply to this project root and every subdirectory.
 - Use `ad-creative-orchestrator` for this project.
 - Work through `AD-creative/orchestrator/` and `AD-creative/handoff/`.
 - Do not rely on chat memory as the operating record. Durable decisions, gaps, gates, artifacts, and handoff state must be written into project files.
+- Keep the six top-level human folders (`00_项目资料_ProjectMaterials/` through `05_最终交付_FinalDelivery/`) useful. If source files or artifacts live under `AD-creative/`, update the matching `目录索引.md` so a human can find the current material, WIP, client-review, and final-delivery entries without digging through the control plane.
 
 ## Source Of Truth
 
