@@ -74,6 +74,31 @@ def add_client_outline(project: Path) -> None:
     )
 
 
+def write_safe_client_review_files(project: Path) -> None:
+    write_text(
+        project / "AD-creative/client_review/client_review_outline.md",
+        """# Client Review Outline
+
+status: ready
+visibility: client_visible_ready
+
+Morning trail opening page with a clear product benefit and reviewable story flow.
+""",
+    )
+    write_text(
+        project / "AD-creative/client_review/slide_spec.md",
+        """# Slide Story Notes
+
+status: ready
+visibility: client_visible_ready
+
+| Slide | Purpose | Content | Asset Slot | Visibility |
+|---|---|---|---|---|
+| 1 | Opening story | Morning trail product benefit | none | client_visible_ready |
+""",
+    )
+
+
 def optional_module(name: str) -> bool:
     try:
         __import__(name)
@@ -497,6 +522,7 @@ def test_client_pack_passes_editable_internal_pptx() -> None:
         ensure_project(project)
         add_adversarial_record(project)
         add_client_outline(project)
+        write_safe_client_review_files(project)
         pptx_path = export_editable_pptx(project)
         add_current_delivery_package(project)
         status, findings, _ = review_client_pack(project, pptx_path)

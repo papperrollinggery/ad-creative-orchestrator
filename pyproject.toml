@@ -54,6 +54,7 @@ packages = ["adco_resources"]
 py-modules = [
   "ad_creative_operator",
   "check_docs_commands",
+  "check_gate_fixtures",
   "check_packaged_assets",
   "init_project",
   "validate_project",

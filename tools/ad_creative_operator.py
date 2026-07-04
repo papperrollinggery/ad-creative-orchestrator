@@ -69,6 +69,35 @@ CLIENT_REVIEW_ASSET_STATUSES = {"selected", "approved", "done"}
 GENERATED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 ACTIVE_ASSET_STATUSES = {"registered", "selected", "approved", "done"}
 SELECTED_ASSET_STATUSES = {"selected", "approved", "done"}
+UNAVAILABLE_ASSET_STATUSES = {
+    "superseded",
+    "deprecated",
+    "archived",
+    "rejected",
+    "old",
+    "obsolete",
+    "removed",
+}
+CLIENT_ASSET_APPROVAL_VALUES = {
+    "pass",
+    "approved",
+    "client_approved",
+    "approved_for_client",
+    "licensed",
+    "cleared",
+}
+BROWSER_HELD_ASSET_MARKERS = (
+    "browser",
+    "浏览器",
+    "grok",
+    "chatgpt",
+    "imagegen",
+    "image_gen",
+)
+CLIENT_LANGUAGE_RELIABLE_NAME_PATTERN = re.compile(
+    r"client[-_\s]?(copy|draft|visible|review)|客户稿|客户文案|客户审阅|审阅稿|final[-_\s]?(copy|delivery)|最终交付",
+    re.IGNORECASE,
+)
 CLIENT_OUTLINE_BODY_MAX_CHARS = 420
 CLIENT_OUTLINE_VISUAL_STATUSES = {
     "existing_image",
@@ -1156,6 +1185,57 @@ def split_asset_refs(value: str | None) -> list[str]:
     return refs
 
 
+def indicates_browser_held_assets(*values: str | None) -> bool:
+    text = " ".join(value or "" for value in values).lower()
+    return any(marker in text for marker in BROWSER_HELD_ASSET_MARKERS)
+
+
+def row_is_client_visible(row: dict[str, str]) -> bool:
+    return row.get("visibility", "").strip().lower() in CLIENT_VISIBLE_VALUES
+
+
+def text_visibility_value(text: str) -> str:
+    match = re.search(r"(?im)^\s*visibility\s*:\s*([^\n#]+)", text)
+    return match.group(1).strip().lower() if match else ""
+
+
+def client_language_text_for_path(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".pptx":
+        return pptx_text_content(path)
+    if suffix == ".csv":
+        fields, rows = read_csv_rows(path)
+        if "visibility" in fields:
+            return "\n".join(row_text(row) for row in rows if row_is_client_visible(row))
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="utf-8", errors="ignore")
+
+
+def is_reliably_client_language_file(project: Path, path: Path) -> bool:
+    suffix = path.suffix.lower()
+    if suffix not in TEXT_CLIENT_SCAN_SUFFIXES | {".pptx"}:
+        return False
+    rel_path = safe_rel(project, path)
+    if path.name in {"README.md", "目录索引.md"}:
+        return False
+    if suffix in TEXT_CLIENT_SCAN_SUFFIXES:
+        text = client_language_text_for_path(path)
+        visibility = text_visibility_value(text)
+        if visibility == "internal_only":
+            return False
+        if visibility in CLIENT_VISIBLE_VALUES:
+            return True
+        if suffix == ".csv":
+            fields, rows = read_csv_rows(path)
+            if "visibility" in fields:
+                return any(row_is_client_visible(row) for row in rows)
+    if "05_最终交付_FinalDelivery/" in rel_path or "04_客户审阅_ClientReview/" in rel_path:
+        return True
+    return bool(CLIENT_LANGUAGE_RELIABLE_NAME_PATTERN.search(path.name))
+
+
 def markdown_table_rows(text: str) -> list[dict[str, str]]:
     lines = text.splitlines()
     rows: list[dict[str, str]] = []
@@ -1270,9 +1350,7 @@ def sync_asset_current_manifest(project: Path) -> Path:
                 "sha256": sha or existing.get("sha256", ""),
                 "original_or_processed": existing.get("original_or_processed")
                 or ("processed" if "/selected/" in rel_path or "/processed/" in rel_path else "original"),
-                "approval": existing.get("approval") or (
-                    "PASS" if asset.get("visibility", "").strip().lower() in CLIENT_VISIBLE_VALUES and asset.get("qa_status", "").upper() == "PASS" else "NOT_APPROVED"
-                ),
+                "approval": existing.get("approval", ""),
                 "direct_client_use": direct_client_use,
                 "used_in_slide": existing.get("used_in_slide") or ";".join(sorted(set(usage.get(asset_id, [])))),
                 "qa_flags": qa_flags,
@@ -6745,19 +6823,21 @@ def candidate_client_files(project: Path, artifacts: list[dict[str, str]]) -> li
         rel_path = artifact.get("path", "").strip()
         path = project / rel_path
         if path.is_file() and path.suffix.lower() in {".md", ".txt", ".csv"}:
-                files.append(path)
+            files.append(path)
     return sorted(files)
 
 
 def candidate_client_language_files(project: Path, artifacts: list[dict[str, str]]) -> list[Path]:
     files: set[Path] = set(candidate_client_files(project, artifacts))
-    for root in [project / "04_客户审阅_ClientReview", project / "05_最终交付_FinalDelivery"]:
+    for root in [
+        project / "AD-creative/client_review",
+        project / "04_客户审阅_ClientReview",
+        project / "05_最终交付_FinalDelivery",
+    ]:
         if not root.exists():
             continue
         for path in root.rglob("*"):
-            if path.is_file() and path.suffix.lower() in TEXT_CLIENT_SCAN_SUFFIXES | {".pptx"}:
-                if path.name in {"README.md", "目录索引.md"}:
-                    continue
+            if path.is_file() and is_reliably_client_language_file(project, path):
                 files.add(path)
     return sorted(files)
 
@@ -7493,12 +7573,20 @@ def text_hits_for_blocklist(label: str, text: str) -> list[str]:
 def review_client_language(project: Path, extra_paths: list[Path] | None = None) -> tuple[str, list[str], Path]:
     migrate_control_plane(project)
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
-    files = candidate_client_language_files(project, artifacts)
-    files.extend(extra_paths or [])
+    candidate_files = set(candidate_client_language_files(project, artifacts))
+    forced_files = set(extra_paths or [])
     issues: list[str] = []
     for row in client_outline_rows(project):
-        issues.extend(text_hits_for_blocklist(f"client_outline {row.get('slide_id')}", row_text(row)))
-    for path in sorted(set(files)):
+        if row_is_client_visible(row):
+            issues.extend(text_hits_for_blocklist(f"client_outline {row.get('slide_id')}", row_text(row)))
+    for path in sorted(candidate_files):
+        if not path.exists():
+            continue
+        text = client_language_text_for_path(path)
+        if not text.strip():
+            continue
+        issues.extend(text_hits_for_blocklist(safe_rel(project, path), text))
+    for path in sorted(forced_files - candidate_files):
         if not path.exists():
             continue
         if path.suffix.lower() == ".pptx":
@@ -7523,8 +7611,8 @@ visibility: internal_only
 
 ## Scanned
 
-- client_outline_rows: {len(client_outline_rows(project))}
-- text_files: {len(files)}
+- client_outline_rows: {sum(1 for row in client_outline_rows(project) if row_is_client_visible(row))}
+- text_files: {len(candidate_files) + len(forced_files - candidate_files)}
 
 ## Blocking Issues
 
@@ -7582,6 +7670,13 @@ def update_current_asset_metadata(
 
 
 def review_visual_layout(project: Path, *, min_long_edge: int = 900, min_short_edge: int = 600) -> tuple[str, list[str], Path]:
+    current_manifest_path = project / "AD-creative/visual_assets/asset_current_manifest.csv"
+    _, previous_current_rows = read_csv_rows(current_manifest_path)
+    previous_current_by_id = {
+        row.get("asset_id", "").strip(): row
+        for row in previous_current_rows
+        if row.get("asset_id", "").strip()
+    }
     manifest, _ = refresh_asset_current_manifest(project)
     outline = client_outline_rows(project)
     assets_by_id = {row.get("asset_id", "").strip(): row for row in manifest if row.get("asset_id", "").strip()}
@@ -7642,25 +7737,46 @@ def review_visual_layout(project: Path, *, min_long_edge: int = 900, min_short_e
         if not re.search(r"intentional_reuse|repeat_ok|系列主视觉|贯穿主视觉|重复使用已确认", reuse_context):
             issues.append(f"{asset_id} 被多个页面使用但未标记 intentional_reuse/repeat_ok: {', '.join(sorted(set(slides)))}。")
     for asset in manifest:
+        asset_id = asset.get("asset_id", "").strip() or "<missing asset_id>"
         rel_path = asset.get("path", "")
-        if not rel_path:
-            continue
-        path = project / rel_path
+        path = project / rel_path if rel_path else Path()
+        direct_client_use = normalized_bool(asset.get("direct_client_use"))
+        usage_slides = sorted(
+            set(split_asset_refs(asset.get("used_in_slide")) + slide_usage.get(asset_id, []))
+        )
+        client_used = direct_client_use or bool(usage_slides)
+        if client_used:
+            status_value = asset.get("status", "").strip().lower()
+            if status_value in UNAVAILABLE_ASSET_STATUSES:
+                issues.append(f"{asset_id} 用于客户页但 status={asset.get('status') or 'missing'} 不可用。")
+            if not rel_path:
+                issues.append(f"{asset_id} 用于客户页但缺少 asset path。")
+            elif not path.exists():
+                issues.append(f"{asset_id} 用于客户页但文件不存在: {rel_path}。")
+            elif not path.is_file():
+                issues.append(f"{asset_id} 用于客户页但 path 不是文件: {rel_path}。")
+            else:
+                actual_sha = file_sha256(path)
+                recorded_sha = asset.get("sha256", "").strip()
+                previous_sha = previous_current_by_id.get(asset_id, {}).get("sha256", "").strip()
+                if not recorded_sha:
+                    issues.append(f"{asset_id} 用于客户页但缺少 sha256。")
+                elif recorded_sha != actual_sha:
+                    issues.append(f"{asset_id} 用于客户页但 sha256 过期: manifest={recorded_sha} actual={actual_sha}。")
+                elif previous_sha and previous_sha != actual_sha:
+                    issues.append(f"{asset_id} 用于客户页但运行前 sha256 过期: manifest={previous_sha} actual={actual_sha}。")
+            approval = asset.get("approval", "").strip().lower()
+            if approval not in CLIENT_ASSET_APPROVAL_VALUES:
+                slides = ",".join(usage_slides) or "direct_client_use"
+                issues.append(f"{asset_id} 用于客户页但 approval={asset.get('approval') or 'missing'}: {slides}。")
         if path.suffix.lower() in GENERATED_IMAGE_SUFFIXES and path.exists():
             width, height, image_format = probe_image(path)
             if width and height and (max(width, height) < min_long_edge or min(width, height) < min_short_edge):
-                issues.append(f"{asset.get('asset_id')} 图像尺寸不足用于 PPT 主视觉: {width}x{height} {image_format}")
+                issues.append(f"{asset_id} 图像尺寸不足用于 PPT 主视觉: {width}x{height} {image_format}")
         if VISUAL_LAYOUT_RISK_PATTERN.search(row_text(asset).lower()):
-            issues.append(f"{asset.get('asset_id')} manifest 命中视觉/版式风险词。")
-        direct_client_use = normalized_bool(asset.get("direct_client_use"))
-        used_in_slide = bool(asset.get("used_in_slide", "").strip())
-        approval = asset.get("approval", "").strip().lower()
-        if (direct_client_use or used_in_slide) and approval not in {"pass", "approved", "client_approved", "approved_for_client", "licensed", "cleared"}:
-            issues.append(f"{asset.get('asset_id')} 用于客户页但 approval={asset.get('approval') or 'missing'}。")
-        if used_in_slide and not asset.get("sha256", "").strip():
-            issues.append(f"{asset.get('asset_id')} 用于 slide 但缺少 sha256。")
-        if (direct_client_use or used_in_slide) and not asset.get("qa_flags", "").strip():
-            issues.append(f"{asset.get('asset_id')} 用于客户页但缺少 qa_flags。")
+            issues.append(f"{asset_id} manifest 命中视觉/版式风险词。")
+        if client_used and not asset.get("qa_flags", "").strip():
+            issues.append(f"{asset_id} 用于客户页但缺少 qa_flags。")
     status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
     report_path = project / "AD-creative/gates/GATE-AUTO-VISUAL-LAYOUT-001_report.md"
     write_text(
@@ -11458,6 +11574,21 @@ def command_preflight_skill(args: argparse.Namespace) -> int:
 
 def command_preflight_asset(args: argparse.Namespace) -> int:
     project = Path(args.project).expanduser().resolve()
+    browser_assets_exist = normalized_bool(args.browser_checked) or indicates_browser_held_assets(
+        args.source_scope,
+        args.browser_tool,
+        args.download_method,
+    )
+    imported_asset_ids = split_asset_refs(args.imported_asset_ids)
+    status = args.status.strip().upper()
+    if browser_assets_exist and not imported_asset_ids:
+        if status != "BLOCKED" or not args.blocked_reason.strip():
+            print("ASSET_PREFLIGHT=BLOCKED")
+            print(
+                "ERROR=browser-held assets without imports must use --status BLOCKED "
+                "and provide --blocked-reason"
+            )
+            return 1
     preflight_id = write_asset_preflight(
         project,
         work_id=args.work_id,
@@ -11555,6 +11686,10 @@ def command_browser_asset_intake(args: argparse.Namespace) -> int:
     if not args.browser_evidence:
         print("BROWSER_ASSET_INTAKE=BLOCKED")
         print("ERROR=--browser-evidence is required when user says browser-held images exist")
+        return 1
+    if not args.asset_file:
+        print("BROWSER_ASSET_INTAKE=BLOCKED")
+        print("ERROR=at least one --asset-file is required to register browser-held images")
         return 1
     asset_ids: list[str] = []
     for file_item in args.asset_file:
