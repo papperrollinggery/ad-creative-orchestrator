@@ -99,6 +99,12 @@ def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
             writer.writerow({field: row.get(field, "") for field in fieldnames})
 
 
+def append_csv_row(path: Path, row: dict[str, str]) -> None:
+    rows = read_csv(path)
+    rows.append(row)
+    write_csv(path, rows)
+
+
 def update_csv_row(path: Path, key: str, value: str, updates: dict[str, str]) -> dict[str, str]:
     rows = read_csv(path)
     original: dict[str, str] | None = None
@@ -366,6 +372,128 @@ def visual_layout_asset_fixture(project: Path, asset_id: str) -> None:
     run_cli(["visual-layout-gate", str(project)], expect_code=0, must_contain="VISUAL_LAYOUT_GATE=PASS")
 
 
+def threadops_receipt_fixture(project: Path) -> None:
+    receipt_rel = "AD-creative/agents/receipts/WORK-THREADOPS-FIXTURE/LANE-01-DEV_receipt.md"
+    receipt_path = project / receipt_rel
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt_path.write_text(
+        """# LANE-01-DEV Receipt
+
+status: returned
+loop_state: returned
+
+## Files Changed
+
+pending
+
+## Validation Result
+
+pending
+
+## Dirty-State Impact
+
+pending
+
+## Adoption / Rejection Recommendation
+
+adoption_decision: pending
+rejection_reason: pending_if_not_adopted
+
+## Cleanup Actions
+
+pending
+
+## Evidence
+
+pending
+""",
+        encoding="utf-8",
+    )
+    append_csv_row(
+        project / "AD-creative/orchestrator/thread_registry.csv",
+        {
+            "thread_id": "019f-fixture-thread",
+            "title": "Fixture execution worker",
+            "role": "DEV",
+            "lane_id": "LANE-01-DEV",
+            "work_id": "WORK-THREADOPS-FIXTURE",
+            "lifecycle_state": "returned",
+            "pinned": "false",
+            "archived": "false",
+            "created_at": "2026-07-05T00:00:00Z",
+            "updated_at": "2026-07-05T00:01:00Z",
+            "cleanup_action": "archive_after_receipt_reconcile",
+            "notes": "fixture: received receipt with placeholder evidence must be blocked",
+            "goal_id": "GOAL-THREADOPS-FIXTURE",
+            "mode": "execution_worker",
+            "environment": "isolated_worktree",
+            "workspace_path": "/tmp/adco-threadops-fixture",
+            "write_scope": "tools/ad_creative_operator.py",
+            "professional_identity": "development worker",
+            "receipt_path": receipt_rel,
+            "receipt_status": "received",
+            "reconciliation_status": "returned",
+            "assigned_at": "2026-07-05T00:00:00Z",
+            "returned_at": "2026-07-05T00:01:00Z",
+            "reconciled_at": "",
+            "archived_at": "",
+            "cleanup_reason": "",
+            "last_seen_at": "2026-07-05T00:01:00Z",
+            "duplicate_of": "",
+            "planned_thread_id": "planned:LANE-01-DEV",
+            "dispatch_status": "dispatched",
+            "real_thread_id": "019f-fixture-thread",
+            "title_action": "dispatcher_set",
+            "title_verified_at": "2026-07-05T00:00:10Z",
+            "dispatch_receipt_path": "AD-creative/orchestrator/thread_dispatch_WORK-THREADOPS-FIXTURE.md",
+            "dispatch_evidence": "read_thread fixture evidence",
+        },
+    )
+    run_cli(
+        ["validate", str(project)],
+        expect_code=1,
+        must_contain="received execution worker receipt lacks concrete proof fields",
+    )
+
+    receipt_path.write_text(
+        """# LANE-01-DEV Receipt
+
+status: returned
+loop_state: returned
+helper_mode: none
+helper_failure_reason: none
+
+## Files Changed
+
+tools/ad_creative_operator.py
+
+## Validation Result
+
+python3 tools/check_gate_fixtures.py PASS
+
+## Dirty-State Impact
+
+isolated worktree only; no user files touched
+
+## Adoption / Rejection Recommendation
+
+adoption_decision: PARTIAL_ADOPT
+rejection_reason: not_applicable
+files_merged: pending_main_control_decision
+
+## Cleanup Actions
+
+archive_after_receipt; cleanup_status=ready
+
+## Evidence
+
+real_thread_id=019f-fixture-thread; dispatch_evidence=read_thread fixture evidence
+""",
+        encoding="utf-8",
+    )
+    run_cli(["validate", str(project)], expect_code=0, must_contain="VALIDATION=PASS")
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="adco-gate-fixture-") as raw_tmp:
         project = Path(raw_tmp) / "project"
@@ -435,6 +563,7 @@ visibility: client_visible_ready
             must_contain="VALIDATION=PASS",
         )
         visual_layout_asset_fixture(project, asset_id)
+        threadops_receipt_fixture(project)
 
     print("GATE_FIXTURES=PASS")
     print("CLIENT_OUTLINE_GATE_FIXTURE=BLOCKED_THEN_PASS")
@@ -442,6 +571,7 @@ visibility: client_visible_ready
     print("PREFLIGHT_ASSET_FIXTURE=BROWSER_EMPTY_ONLY_BLOCKED_WITH_REASON")
     print("BROWSER_ASSET_INTAKE_FIXTURE=BLOCKED_THEN_REGISTERED_WITH_PROVENANCE")
     print("VISUAL_LAYOUT_GATE_FIXTURE=CLIENT_ASSET_TRACEABILITY_AND_EXPLICIT_APPROVAL")
+    print("THREADOPS_RECEIPT_FIXTURE=BLOCKED_THEN_PASS")
     return 0
 
 
