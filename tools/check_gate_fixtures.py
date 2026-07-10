@@ -20,6 +20,14 @@ SOURCE_ROOT = source_root()
 ROOT = SOURCE_ROOT or Path(__file__).resolve().parent
 
 
+def optional_module_available(name: str) -> bool:
+    try:
+        __import__(name)
+    except Exception:
+        return False
+    return True
+
+
 def operator_command() -> list[str]:
     if SOURCE_ROOT is not None:
         return [sys.executable, "tools/ad_creative_operator.py"]
@@ -65,6 +73,23 @@ def write_client_outline_row(project: Path) -> None:
     with outline.open("a", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=CLIENT_OUTLINE_FIELDS)
         writer.writerow(row)
+
+
+def confirm_client_outline(project: Path, evidence_id: str) -> None:
+    run_cli(
+        [
+            "confirm-client-outline",
+            str(project),
+            "--confirmed-by",
+            "fixture-project-owner",
+            "--confirmed-at",
+            "2026-07-05T00:00:00Z",
+            "--evidence-ref",
+            f"user_confirmation:{evidence_id}",
+        ],
+        expect_code=0,
+        must_contain="CLIENT_OUTLINE_CONFIRMATION=PASS",
+    )
 
 
 def write_png(path: Path, *, width: int = 1600, height: int = 900) -> None:
@@ -256,6 +281,7 @@ def browser_asset_intake_fixture(project: Path) -> str:
         raise AssertionError("browser-asset-intake did not return an asset id")
 
     write_client_outline_asset_row(project, asset_ids=asset_id)
+    confirm_client_outline(project, "browser-asset-outline")
     run_cli(["client-outline-gate", str(project)], expect_code=0, must_contain="CLIENT_OUTLINE_GATE=PASS")
     run_cli(["asset-current-manifest", str(project)], expect_code=0, must_contain="ASSET_CURRENT_MANIFEST=PASS")
 
@@ -323,25 +349,32 @@ def visual_layout_asset_fixture(project: Path, asset_id: str) -> None:
         "asset_id",
         asset_id,
         {
-            "approval": "",
+            "approval": "PASS",
             "direct_client_use": "yes",
             "used_in_slide": "S-BROWSER-01",
             "qa_flags": "browser_asset_registered;visual_layout_fixture_ready",
             "sha256": actual_hash,
         },
     )
-    run_cli(["visual-layout-gate", str(project)], expect_code=1, must_contain="approval=missing")
+    run_cli(
+        ["visual-layout-gate", str(project)],
+        expect_code=1,
+        must_contain="授权 receipt",
+    )
 
-    update_csv_row(
-        current_path,
-        "asset_id",
-        asset_id,
+    append_csv_row(
+        project / "AD-creative/visual_assets/asset_authorizations.csv",
         {
-            "approval": "PASS",
-            "direct_client_use": "yes",
-            "used_in_slide": "S-BROWSER-01",
-            "qa_flags": "browser_asset_registered;visual_layout_fixture_ready",
-            "sha256": actual_hash,
+            "authorization_id": "AUTH-BROWSER-001",
+            "asset_id": asset_id,
+            "asset_sha256": actual_hash,
+            "approval_scope": "client_review",
+            "approved_by": "fixture_human_reviewer",
+            "approved_at": "2026-07-05T00:00:00Z",
+            "evidence_ref": "user_confirmation:fixture-001",
+            "status": "approved",
+            "revoked_at": "",
+            "notes": "hash-bound authorization fixture",
         },
     )
 
@@ -366,13 +399,55 @@ def visual_layout_asset_fixture(project: Path, asset_id: str) -> None:
     run_cli(["asset-current-manifest", str(project)], expect_code=0, must_contain="ASSET_CURRENT_MANIFEST=PASS")
 
     update_csv_row(current_path, "asset_id", asset_id, {"approval": "NOT_APPROVED"})
-    run_cli(["visual-layout-gate", str(project)], expect_code=1, must_contain="approval=NOT_APPROVED")
+    run_cli(["visual-layout-gate", str(project)], expect_code=0, must_contain="VISUAL_LAYOUT_GATE=PASS")
     update_csv_row(current_path, "asset_id", asset_id, {"approval": "PASS", "sha256": actual_hash})
 
     run_cli(["visual-layout-gate", str(project)], expect_code=0, must_contain="VISUAL_LAYOUT_GATE=PASS")
 
 
+def prepare_visual_package(project: Path) -> None:
+    run_cli(["export-pptx", str(project)], expect_code=0, must_contain="PPTX_EDITABLE=PASS")
+    artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+    artifacts = read_csv(artifact_path)
+    pptx = next(row for row in artifacts if row.get("artifact_id") == "ART-PPTX-001")
+    preview_path = project / "AD-creative/ppt/exports/client_review_v001_preview.png"
+    write_png(preview_path)
+    append_csv_row(
+        artifact_path,
+        {
+            "artifact_id": "ART-PREVIEW-001",
+            "artifact_type": "preview",
+            "path": str(preview_path.relative_to(project)),
+            "stage": "ppt_gate",
+            "version": "v001",
+            "status": "done",
+            "visibility": "internal_only",
+            "source_event_ids": "",
+            "linked_requirements": "",
+            "linked_work_items": "",
+            "linked_references": "",
+            "linked_assets": "",
+            "gate_status": "PASS",
+            "supersedes_artifact_id": "",
+            "created_at": "2026-07-05T00:00:00Z",
+            "updated_at": "2026-07-05T00:00:00Z",
+            "sha256": file_sha256(preview_path),
+            "size_bytes": str(preview_path.stat().st_size),
+            "derived_from_artifact_id": "ART-PPTX-001",
+            "derived_from_sha256": pptx["sha256"],
+        },
+    )
+    truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    truth = truth_path.read_text(encoding="utf-8")
+    truth = truth.replace(
+        "current_preview_artifact_id:",
+        "current_preview_artifact_id: ART-PREVIEW-001",
+    )
+    truth_path.write_text(truth, encoding="utf-8")
+
+
 def threadops_receipt_fixture(project: Path) -> None:
+    real_thread_id = "019f2222-3333-7444-8555-666666666666"
     receipt_rel = "AD-creative/agents/receipts/WORK-THREADOPS-FIXTURE/LANE-01-DEV_receipt.md"
     receipt_path = project / receipt_rel
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -380,6 +455,7 @@ def threadops_receipt_fixture(project: Path) -> None:
         """# LANE-01-DEV Receipt
 
 status: returned
+thread_id: 019f2222-3333-7444-8555-666666666666
 loop_state: returned
 
 ## Files Changed
@@ -396,8 +472,8 @@ pending
 
 ## Adoption / Rejection Recommendation
 
-adoption_decision: pending
-rejection_reason: pending_if_not_adopted
+worker_recommendation: pending
+worker_rejection_reason: pending_if_not_adopted
 
 ## Cleanup Actions
 
@@ -412,14 +488,15 @@ pending
     append_csv_row(
         project / "AD-creative/orchestrator/thread_registry.csv",
         {
-            "thread_id": "019f-fixture-thread",
+            "thread_id": real_thread_id,
             "title": "Fixture execution worker",
             "role": "DEV",
             "lane_id": "LANE-01-DEV",
+            "lane_run_id": "WORK-THREADOPS-FIXTURE:LANE-01-DEV",
             "work_id": "WORK-THREADOPS-FIXTURE",
             "lifecycle_state": "returned",
             "pinned": "false",
-            "archived": "false",
+            "archived": "true",
             "created_at": "2026-07-05T00:00:00Z",
             "updated_at": "2026-07-05T00:01:00Z",
             "cleanup_action": "archive_after_receipt_reconcile",
@@ -436,17 +513,79 @@ pending
             "assigned_at": "2026-07-05T00:00:00Z",
             "returned_at": "2026-07-05T00:01:00Z",
             "reconciled_at": "",
-            "archived_at": "",
+            "archived_at": "2026-07-05T00:02:00Z",
             "cleanup_reason": "",
             "last_seen_at": "2026-07-05T00:01:00Z",
             "duplicate_of": "",
-            "planned_thread_id": "planned:LANE-01-DEV",
+            "planned_thread_id": "planned:WORK-THREADOPS-FIXTURE:LANE-01-DEV",
             "dispatch_status": "dispatched",
-            "real_thread_id": "019f-fixture-thread",
+            "real_thread_id": real_thread_id,
             "title_action": "dispatcher_set",
             "title_verified_at": "2026-07-05T00:00:10Z",
             "dispatch_receipt_path": "AD-creative/orchestrator/thread_dispatch_WORK-THREADOPS-FIXTURE.md",
             "dispatch_evidence": "read_thread fixture evidence",
+            "convergence_state": "receipt_received",
+            "last_progress_at": "2026-07-05T00:00:50Z",
+            "absolute_deadline_at": "2026-07-05T00:05:00Z",
+            "bounded_extension_used": "false",
+            "extension_reason": "",
+            "convergence_reminder_at": "",
+            "convergence_reason": "",
+            "rescue_count": "0",
+            "rescue_thread_id": "",
+            "receipt_thread_id": real_thread_id,
+            "adoption_decision": "ADOPT",
+            "rejection_reason": "",
+        },
+    )
+    (project / "AD-creative/orchestrator/thread_dispatch_WORK-THREADOPS-FIXTURE.md").write_text(
+        f"real_thread_id: {real_thread_id}\nabsolute_deadline_at: 2026-07-05T00:05:00Z\n",
+        encoding="utf-8",
+    )
+    append_csv_row(
+        project / "AD-creative/orchestrator/work_items.csv",
+        {
+            "work_id": "WORK-THREADOPS-FIXTURE",
+            "stage": "threadops",
+            "title": "ThreadOps fixture",
+            "objective": "Validate worker receipt identity and proof.",
+            "owner_agent": "DEV",
+            "status": "done",
+            "priority": "P1",
+            "input_refs": "fixture",
+            "output_artifacts": "",
+            "linked_requirements": "",
+            "linked_source_events": "",
+            "linked_references": "",
+            "linked_assets": "",
+            "linked_slides": "",
+            "blocked_by": "",
+            "gate_required": "thread_discipline",
+            "client_visibility": "internal_only",
+            "created_at": "2026-07-05T00:00:00Z",
+            "updated_at": "2026-07-05T00:02:00Z",
+            "supersedes_work_id": "",
+        },
+    )
+    append_csv_row(
+        project / "AD-creative/orchestrator/agent_runs.csv",
+        {
+            "run_id": "RUN-THREADOPS-FIXTURE",
+            "work_id": "WORK-THREADOPS-FIXTURE",
+            "agent_role": "DEV",
+            "status": "reconciled",
+            "started_at": "2026-07-05T00:00:00Z",
+            "completed_at": "2026-07-05T00:01:00Z",
+            "input_files": "fixture",
+            "output_files": receipt_rel,
+            "gate_id": "",
+            "summary": "fixture",
+            "next_action": "archive",
+            "thread_id": real_thread_id,
+            "lane_id": "LANE-01-DEV",
+            "receipt_path": receipt_rel,
+            "proof_status": "receipt_identity_verified",
+            "reconciliation_status": "returned",
         },
     )
     run_cli(
@@ -459,6 +598,7 @@ pending
         """# LANE-01-DEV Receipt
 
 status: returned
+thread_id: 019f2222-3333-7444-8555-666666666666
 loop_state: returned
 helper_mode: none
 helper_failure_reason: none
@@ -477,8 +617,8 @@ isolated worktree only; no user files touched
 
 ## Adoption / Rejection Recommendation
 
-adoption_decision: PARTIAL_ADOPT
-rejection_reason: not_applicable
+worker_recommendation: PARTIAL_ADOPT
+worker_rejection_reason: not_applicable
 files_merged: pending_main_control_decision
 
 ## Cleanup Actions
@@ -487,9 +627,316 @@ archive_after_receipt; cleanup_status=ready
 
 ## Evidence
 
-real_thread_id=019f-fixture-thread; dispatch_evidence=read_thread fixture evidence
+real_thread_id=019f2222-3333-7444-8555-666666666666; dispatch_evidence=read_thread fixture evidence
 """,
         encoding="utf-8",
+    )
+    run_cli(
+        ["validate", str(project)],
+        expect_code=1,
+        must_contain="adopted receipt missing host scope proof",
+    )
+    update_csv_row(
+        project / "AD-creative/orchestrator/thread_registry.csv",
+        "lane_run_id",
+        "WORK-THREADOPS-FIXTURE:LANE-01-DEV",
+        {
+            "lifecycle_state": "rejected_evidence",
+            "dispatch_status": "rejected_evidence",
+            "receipt_status": "rejected",
+            "reconciliation_status": "rejected_evidence",
+            "convergence_state": "receipt_rejected",
+            "adoption_decision": "REJECT",
+            "rejection_reason": "missing_host_scope_proof",
+        },
+    )
+    update_csv_row(
+        project / "AD-creative/orchestrator/agent_runs.csv",
+        "run_id",
+        "RUN-THREADOPS-FIXTURE",
+        {
+            "status": "rejected_evidence",
+            "proof_status": "missing_host_scope_proof",
+            "reconciliation_status": "rejected_evidence",
+        },
+    )
+    run_cli(["validate", str(project)], expect_code=0, must_contain="VALIDATION=PASS")
+
+
+def thread_convergence_fixture(project: Path) -> None:
+    work_id = "WORK-THREAD-CONVERGENCE"
+    lane_id = "LANE-01-COPY_CREATIVE"
+    real_thread_id = "019f3333-4444-7555-8666-777777777777"
+    rescue_thread_id = "019f4444-5555-7666-8777-888888888888"
+    wrong_thread_id = "019f5555-6666-7777-8888-999999999999"
+    run_cli(
+        [
+            "thread-plan",
+            str(project),
+            "--goal-id",
+            "GOAL-THREAD-CONVERGENCE",
+            "--work-id",
+            work_id,
+            "--roles",
+            "copy_creative",
+            "--title",
+            "Bounded convergence fixture",
+            "--objective",
+            "Progress must not be killed by poll count and rescue must stay bounded.",
+        ],
+        expect_code=0,
+        must_contain="THREAD_PLAN=PASS",
+    )
+    run_cli(
+        [
+            "dispatch-record",
+            str(project),
+            "--work-id",
+            work_id,
+            "--lane-id",
+            lane_id,
+            "--real-thread-id",
+            real_thread_id,
+            "--title-verified-at",
+            "2026-07-05T00:00:00Z",
+            "--absolute-deadline-at",
+            "2026-07-05T00:01:00Z",
+            "--dispatch-evidence",
+            "read_thread title and id matched fixture worker",
+        ],
+        expect_code=0,
+        must_contain="DISPATCH_RECORD=dispatched",
+    )
+    run_cli(
+        [
+            "thread-observe",
+            str(project),
+            "--work-id",
+            work_id,
+            "--lane-id",
+            lane_id,
+            "--state",
+            "active_with_progress",
+            "--observed-at",
+            "2026-07-05T00:00:20Z",
+            "--evidence",
+            "worker produced new analysis",
+        ],
+        expect_code=0,
+        must_contain="THREAD_OBSERVE=active_with_progress",
+    )
+    run_cli(
+        [
+            "thread-observe",
+            str(project),
+            "--work-id",
+            work_id,
+            "--lane-id",
+            lane_id,
+            "--state",
+            "finalizing_receipt",
+            "--observed-at",
+            "2026-07-05T00:00:50Z",
+            "--absolute-deadline-at",
+            "2026-07-05T00:02:00Z",
+            "--extension-reason",
+            "visible receipt assembly in progress",
+            "--evidence",
+            "worker is organizing final receipt",
+        ],
+        expect_code=0,
+        must_contain="BOUNDED_EXTENSION_USED=true",
+    )
+    run_cli(
+        [
+            "thread-observe",
+            str(project),
+            "--work-id",
+            work_id,
+            "--lane-id",
+            lane_id,
+            "--state",
+            "active_with_progress",
+            "--observed-at",
+            "2026-07-05T00:01:00Z",
+            "--absolute-deadline-at",
+            "2026-07-05T00:03:00Z",
+            "--extension-reason",
+            "second extension must be blocked",
+            "--evidence",
+            "new activity",
+        ],
+        expect_code=1,
+        must_contain="bounded_extension_already_used",
+    )
+    run_cli(
+        [
+            "thread-observe",
+            str(project),
+            "--work-id",
+            work_id,
+            "--lane-id",
+            lane_id,
+            "--state",
+            "silent",
+            "--observed-at",
+            "2026-07-05T00:02:01Z",
+            "--convergence-reminder-sent",
+            "--evidence",
+            "no new activity after absolute deadline",
+        ],
+        expect_code=0,
+        must_contain="THREAD_OBSERVE=silent",
+    )
+    run_cli(
+        [
+            "thread-observe",
+            str(project),
+            "--work-id",
+            work_id,
+            "--lane-id",
+            lane_id,
+            "--state",
+            "thread_not_converged",
+            "--observed-at",
+            "2026-07-05T00:02:02Z",
+            "--evidence",
+            "reminder produced no receipt",
+        ],
+        expect_code=0,
+        must_contain="THREAD_OBSERVE=thread_not_converged",
+    )
+    run_cli(
+        [
+            "thread-observe",
+            str(project),
+            "--work-id",
+            work_id,
+            "--lane-id",
+            lane_id,
+            "--state",
+            "rescue_dispatched",
+            "--observed-at",
+            "2026-07-05T00:02:03Z",
+            "--absolute-deadline-at",
+            "2026-07-05T00:03:00Z",
+            "--rescue-thread-id",
+            rescue_thread_id,
+            "--evidence",
+            "single bounded rescue dispatched",
+        ],
+        expect_code=0,
+        must_contain="RESCUE_COUNT=1",
+    )
+    run_cli(
+        [
+            "thread-observe",
+            str(project),
+            "--work-id",
+            work_id,
+            "--lane-id",
+            lane_id,
+            "--state",
+            "rescue_dispatched",
+            "--observed-at",
+            "2026-07-05T00:02:04Z",
+            "--absolute-deadline-at",
+            "2026-07-05T00:04:00Z",
+            "--rescue-thread-id",
+            wrong_thread_id,
+            "--evidence",
+            "second rescue attempt",
+        ],
+        expect_code=1,
+        must_contain="rescue_limit_exceeded",
+    )
+
+    receipt_rel = f"AD-creative/agents/receipts/{work_id}/{lane_id}_receipt.md"
+    receipt_path = project / receipt_rel
+    rescue_receipt_rel = (
+        f"AD-creative/agents/receipts/{work_id}/{lane_id}_receipt_rescue.md"
+    )
+    rescue_receipt_path = project / rescue_receipt_rel
+    rescue_receipt_path.write_text(
+        f"""# {lane_id} Receipt
+
+status: returned
+thread_id: {wrong_thread_id}
+worker_recommendation: ADOPT
+files_changed: AD-creative/workspaces/{work_id}/{lane_id}/copy_drafts.md
+validation_result: PASS - fixture
+dirty_state_impact: isolated workspace only
+loop_state: returned
+cleanup_actions: archive after reconciliation
+evidence_refs: fixture evidence
+""",
+        encoding="utf-8",
+    )
+    run_cli(
+        [
+            "thread-reconcile",
+            str(project),
+            "--work-id",
+            work_id,
+            "--lane-id",
+            lane_id,
+            "--receipt-path",
+            rescue_receipt_rel,
+            "--adoption-decision",
+            "ADOPT",
+            "--reconciled-at",
+            "2026-07-05T00:02:30Z",
+            "--cleanup-action",
+            "archive_after_receipt_reconcile",
+        ],
+        expect_code=1,
+        must_contain="invalid_worker_thread_id",
+    )
+    output_path = (
+        project
+        / "AD-creative/workspaces"
+        / work_id
+        / lane_id
+        / "copy_drafts.md"
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("# Verified worker output\n", encoding="utf-8")
+    rescue_receipt_path.write_text(
+        f"""# {lane_id} Receipt
+
+status: returned
+thread_id: {rescue_thread_id}
+worker_recommendation: ADOPT
+files_changed: AD-creative/workspaces/{work_id}/{lane_id}/copy_drafts.md
+validation_result: PASS - fixture
+dirty_state_impact: isolated workspace only
+loop_state: returned
+cleanup_actions: archived worker after reconciliation
+evidence_refs: fixture evidence and matching rescue thread identity
+""",
+        encoding="utf-8",
+    )
+    run_cli(
+        [
+            "thread-reconcile",
+            str(project),
+            "--work-id",
+            work_id,
+            "--lane-id",
+            lane_id,
+            "--receipt-path",
+            rescue_receipt_rel,
+            "--adoption-decision",
+            "ADOPT",
+            "--reconciled-at",
+            "2026-07-05T00:02:40Z",
+            "--cleanup-action",
+            "archived_after_receipt_reconcile",
+            "--archived-at",
+            "2026-07-05T00:02:45Z",
+        ],
+        expect_code=0,
+        must_contain="THREAD_RECONCILE=reconciled",
     )
     run_cli(["validate", str(project)], expect_code=0, must_contain="VALIDATION=PASS")
 
@@ -501,6 +948,7 @@ def main() -> int:
 
         run_cli(["client-outline-gate", str(project)], expect_code=1, must_contain="CLIENT_OUTLINE_GATE=BLOCKED")
         write_client_outline_row(project)
+        confirm_client_outline(project, "base-outline")
         run_cli(["client-outline-gate", str(project)], expect_code=0, must_contain="CLIENT_OUTLINE_GATE=PASS")
 
         write_safe_client_review_files(project)
@@ -562,16 +1010,28 @@ visibility: client_visible_ready
             expect_code=0,
             must_contain="VALIDATION=PASS",
         )
-        visual_layout_asset_fixture(project, asset_id)
+        visual_layout_exercised = optional_module_available("pptx")
+        if visual_layout_exercised:
+            prepare_visual_package(project)
+            visual_layout_asset_fixture(project, asset_id)
         threadops_receipt_fixture(project)
+        thread_convergence_fixture(project)
 
     print("GATE_FIXTURES=PASS")
     print("CLIENT_OUTLINE_GATE_FIXTURE=BLOCKED_THEN_PASS")
     print("CLIENT_LANGUAGE_GATE_FIXTURE=INTERNAL_ONLY_SKIPPED_AND_CLIENT_VISIBLE_BLOCKED")
     print("PREFLIGHT_ASSET_FIXTURE=BROWSER_EMPTY_ONLY_BLOCKED_WITH_REASON")
     print("BROWSER_ASSET_INTAKE_FIXTURE=BLOCKED_THEN_REGISTERED_WITH_PROVENANCE")
-    print("VISUAL_LAYOUT_GATE_FIXTURE=CLIENT_ASSET_TRACEABILITY_AND_EXPLICIT_APPROVAL")
-    print("THREADOPS_RECEIPT_FIXTURE=BLOCKED_THEN_PASS")
+    print(
+        "VISUAL_LAYOUT_GATE_FIXTURE="
+        + (
+            "REAL_DECK_PREVIEW_AND_HASH_BOUND_AUTHORIZATION"
+            if visual_layout_exercised
+            else "SKIPPED_OPTIONAL_DEPENDENCY_MISSING:python-pptx"
+        )
+    )
+    print("THREADOPS_RECEIPT_FIXTURE=PLACEHOLDER_AND_MISSING_HOST_PROOF_REJECTED")
+    print("THREAD_CONVERGENCE_FIXTURE=PROGRESS_EXTENSION_TIMEOUT_ONE_RESCUE_IDENTITY")
     return 0
 
 

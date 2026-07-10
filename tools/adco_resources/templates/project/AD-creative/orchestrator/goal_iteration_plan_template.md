@@ -58,11 +58,19 @@ worker_synthesis: worker adopts/rejects helper output before main/control adopts
 |---|---|---|---|---|---|---|---|
 | B1 |  |  |  |  |  |  |  |
 
-## Dual Lane Mapping
+## Text-First Delivery Mapping
 
-| phase | brand_research_lane | image_function_lane | dependency | exit_condition | next_phase |
+| phase | primary_work | optional_specialist_or_asset_lane | dependency | exit_condition | next_phase |
 |---|---|---|---|---|---|
-| P0 |  |  |  |  |  |
+| P0 | truth / gaps / FinalDelivery lock | asset inventory | source events | structure verified without mutating final files | P1 |
+| P1 | client-readable page outline | research / material gaps | P0 truth | outline complete and client-safe | P2 |
+| P2 | hash-bound human/client outline confirmation | none | P1 outline | confirmation receipt valid | P3 |
+| P3 | creative / references / proposal | neutral specialist exchange / internal-only assets | P2 confirmation | quality gates have evidence | P4 |
+| P4 | immutable versioned PPT export | exact-current asset binding | P2-P3 | version chain and editability proof valid | P5 |
+| P5 | language / visual / authorization / PPT gates | independent review | P4 package | corresponding gates have fresh evidence | P6 |
+| P6 | fresh client-pack manifest and binding | none | P5 | package digest current and Client Pack PASS | P7 |
+| P7 | independent human review and send authorization | none | P6 | send-readiness PASS; no send performed | P8 |
+| P8 | feedback merge and next-version plan | revalidate adopted specialist/asset outputs | feedback | supersede chain recorded | next goal |
 
 ## Adversarial Council
 

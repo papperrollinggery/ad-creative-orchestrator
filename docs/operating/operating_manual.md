@@ -15,6 +15,8 @@ handoff 文件负责给用户看
 
 ## 用户入口
 
+运行时阶段固定为：`P0 truth/lock → P1 client outline → P2 hash confirmation → P3 creative/reference/neutral specialist → P4 immutable PPT → P5 language/visual/authorization/editability → P6 fresh Client Pack binding → P7 independent review/send readiness（不发送）→ P8 feedback/next version`。P4/P6/P7 不得合并。
+
 ### 启动广告创意项目.command
 
 完全不懂命令行时，双击：
@@ -44,8 +46,9 @@ AD-creative/handoff/操作台.html
 AD-creative/handoff/项目看板.md
 AD-creative/handoff/待你确认.md
 AD-creative/handoff/客户追问话术.md
-AD-creative/ppt/client_review_draft.pptx
-AD-creative/ppt/ppt_editability_check.md
+AD-creative/client_review/client_review_outline.md
+AD-creative/client_review/client_outline.csv
+AD-creative/proposal_architecture/proposal_structure.md
 AD-creative/gates/THREE-COUNCIL-READINESS_report.md
 AGENTS.md
 ```
@@ -62,7 +65,7 @@ adco status <项目目录>
 adco goal-plan <项目目录> --title <目标标题> --objective <目标内容>
 ```
 
-该命令会写入：
+`goal-plan` 会写入：
 
 ```text
 AD-creative/orchestrator/goal_iterations/<goal_id>.md
@@ -73,6 +76,8 @@ AD-creative/orchestrator/goal_iterations/<goal_id>.md
 ```text
 adco thread-plan <项目目录> --title <目标标题> --objective <目标内容> --roles brand_client,copy_creative,qa_review
 ```
+
+Threads 默认不启用。只有有界隔离、真实并行或独立审阅确有必要时才运行 `thread-plan`。
 
 生成内部创意 proposal 草稿：
 
@@ -86,7 +91,9 @@ adco creative-proposal <项目目录> [--work-id <id>] [--json]
 adco creative-quality-gate <项目目录>
 ```
 
-该命令会写入：
+双击 launcher 会在 `run` 后生成上述客户可读文本框架，然后停在人工确认前。此时 `client-outline-gate` 会因缺少 hash-bound confirmation 保持 BLOCKED；人工确认并重跑 Gate 前不会自动生成 PPT。
+
+`thread-plan` 会写入：
 
 ```text
 AD-creative/orchestrator/thread_lane_plan.md
@@ -106,8 +113,10 @@ read_only 只用于 explorer / reviewer / research / cold-review。
 execution_worker 必须先写清 exact write_scope。
 默认最多 3 个 active worker/reviewer。
 每个 execution_worker 返回 files_changed、validation、dirty-state impact、cleanup actions。
-主控读取 receipt 后再合并。
+主控 dispatch 后保存 host scope baseline；reconcile 时用实际文件 diff 对照 receipt 与 exact write_scope，生成 hash-bound host scope proof。worker 自报不能代替 host proof。
+主控读取 receipt 和 host proof 后再决定 adoption/rejection。
 合并后归档已消费 worker，并把真实 thread_id / cleanup_action 写回 thread_registry.csv。
+固定轮询次数只是检查预算；区分 active_with_progress / silent / finalizing_receipt，最多一次带绝对截止时间的 extension 和一次带独立 dispatch proof/receipt path 的 rescue。
 客户可见稿不得出现 prompt、thread、worker、lane plan、执行步骤等内部语言。
 ```
 
@@ -136,7 +145,8 @@ Gate 规则：
 ```text
 adco validate
 search-quality-gate / reference-pack-gate / visual-quality-gate / client-pack-gate / handoff-readiness-gate
-若缺少有效反驳性议会记录，PASS 会自动降级为 PARTIAL_PASS。
+需要反驳性证据的内容 Gate，若缺少独立 reviewer 对 exact stage target path/hash 的新鲜记录，PASS 会自动降级为 PARTIAL_PASS。`global`、无关目标、BLOCKED、旧 hash 或主线程/goal plan 自审均无效。handoff-readiness 只检查内部运营连续性，不沿用客户交付 Gate 的阻断语义。
+每次 Gate 运行追加新的 `gate_run_id` 并引用被替代记录，不覆盖旧结论。
 ```
 
 创意 proposal 和质量 Gate：
@@ -155,7 +165,7 @@ creative-quality-gate 通过也不代表创意品味、客户偏好、商业效�
 
 ```text
 策略方向、创意 proposal、option matrix、message line、proposal structure：留在 adco。
-视频脚本、分镜、导演阐述、video prompt：交给 dircreative 或专门 film workflow。
+视频脚本、分镜、导演阐述、video prompt：通过 `adco.specialist-exchange` 的 `dircreative.film-preproduction` profile 交接；ADCO 不依赖 DIR 仓库路径、包版本或内部 validator。
 image / KV / 背景图 / moodboard / visual asset：交给 imagegen 或 Creative Production，回到 adco 登记和 visual-quality-gate。
 固定 PPT / DOCX / XLSX 模板和版式系统：交给 Template Creator 或专门文档模板流程，adco 只维护内容结构、字段、追溯和 Gate。
 ```
@@ -246,7 +256,7 @@ adco import-imagegen <项目目录> --slot-id <槽位> --selected
 只读取 CODEX_HOME/generated_images。
 导入后复制到 AD-creative/visual_assets/。
 默认 internal_only。
-客户可见前仍需视觉 Gate 和明确确认。
+客户可见前仍需视觉 Gate，以及绑定 exact asset hash/use scope/确认者/时间/evidence 的独立授权 receipt。
 ```
 
 视觉质量 Gate：
@@ -262,16 +272,27 @@ adco visual-quality-gate <项目目录>
 图片尺寸过低
 selected/approved/done 但 QA 未 PASS
 生成图缺少 prompt_or_edit_ref
-客户可见生成图缺少 client_visibility_approved 记录
+客户可见生成图缺少 `asset_authorizations.csv` 的 hash/scope/approver/time/evidence receipt；`approval=PASS` 或 notes token 不算授权
 客户可见图仍是 contact sheet / placeholder-only / 假 logo / 低质拼贴
 ```
 
-生成并检查可编辑 PPTX：
+人工确认客户可读文本框架：
+
+```text
+adco confirm-client-outline <项目目录> --confirmed-by "<人工确认者>" --confirmed-at <iso_time> --evidence-ref "<user_confirmation:id|client_confirmation:id>"
+adco client-outline-gate <项目目录>
+```
+
+先审阅文本，再记录 hash-bound confirmation。Receipt 同时保存确认前 exact 文件 hash、排除宿主 `visibility/status` 状态字段的 canonical 内容 digest，以及确认后当前文件 hash；这样宿主落章不会冒充人工已见内容，而任何客户文本变化仍会让确认失效。Gate PASS 前不能进入 PPT builder。
+
+生成并检查不可变可编辑 PPTX：
 
 ```text
 adco export-pptx <项目目录>
 adco check-pptx <项目目录> --file <PPTX文件>
 ```
+
+`export-pptx` 每次生成新的 `AD-creative/ppt/exports/client_review_vNNN.pptx`，同步 exact current version/artifact/editability hash，并拒绝覆盖已有版本。`check-pptx` 只生成 hash 绑定的诊断报告，不会把任意文件改成 current。
 
 客户稿风险 Gate：
 
@@ -284,7 +305,7 @@ adco client-pack-gate <项目目录>
 ```text
 PPTX 有可编辑文本层
 客户可见产物都过 Gate
-客户可见图片都 QA PASS
+客户可见图片都 QA PASS 且有匹配 asset hash/scope 的独立授权 receipt
 客户可见参考都是 https 且有 do_not_copy
 客户可见文本候选不含内部注释、模拟标记、TODO/TBD、假 logo
 ```
@@ -293,9 +314,26 @@ PPTX 有可编辑文本层
 
 ```text
 可以自动发送客户稿
-已经完成最终人工审稿
+已经完成独立人工审稿
 已经确认 AI 图客户可见
 ```
+
+`client-pack-gate` 最多表示 ready for independent human review。它生成 immutable input manifest 与 `client_pack_binding.json`；任一 exact-current 输入变化都会让旧 package digest 过期。发送准备必须另跑：
+
+```text
+adco client-send-readiness-gate <项目目录>
+```
+
+它要求 `manual_review_receipt.json` 和 `send_authorization.json` 都绑定 exact current version、PPTX hash 和同一个 fresh package digest，并且只输出 `SEND_EXECUTED=0`，不会发送。
+
+影视专项交接使用中立协议，不直接依赖 DIR 仓库路径：
+
+```text
+adco specialist-handoff <项目目录> --work-id <WORK-ID> --profile-id dircreative.film-preproduction --objective "<目标>" --input-artifact <ART-ID> --expected-output film.story_package --descriptor <descriptor.json>
+adco specialist-adopt <项目目录> --handoff <handoff.json> --receipt <receipt.json> --decision partial_adopt --reason "<理由>" --map-output <DIR-ID=AD-creative/film/output.md>
+```
+
+默认 `inline`，不会自动创建 Thread。兼容 descriptor 可在 `1.x` 独立演进，但必须显式支持 base contract `1.0`；若 profile 声明 required receipt extension，ADCO 会把 exact id/version 写进 handoff acceptance，缺失即拒收。DIRcreative 只给 specialist recommendation/QA；ADCO 独立记录 adoption，且仍独占 current truth、version、PPT、FinalDelivery 和 send readiness。
 
 非开发者交接 Gate：
 
@@ -308,15 +346,14 @@ adco handoff-readiness-gate <项目目录>
 ```text
 adco validate 通过
 操作台可生成且通过审计
-三方议会 PASS
-搜索/参考/视觉/客户包 Gate 不阻塞内部交接
-PPTX 可编辑
 双击启动脚本可执行
-全局 Skill 已安装且和项目草稿哈希一致
-生成 manual_review_checklist.md 供真实客户稿发送前人工复核
+全局 Skill 安装状态只作为 warning，不影响项目证据质量
+生成 pending 的 manual_review_checklist.md；未勾选清单不得登记 PASS
 ```
 
-安装全局 Skill：
+搜索/参考/视觉/客户包 Gate 的缺失或阻塞在这里是内部交接 warning；如果已经声明 exact-current PPTX，则文件必须存在且可编辑。该 Gate 不要求已有 PPT、Client Pack、manual review receipt 或 send authorization，也绝不代表 FinalDelivery/发送就绪。
+
+显式获批后才可安装全局 Skill（这不是 canonical/package parity 的一部分，也不能据此推断当前已同步）：
 
 ```text
 adco install-skill
@@ -348,6 +385,7 @@ Codex 自动：
 抽取需求和缺口
 更新项目看板和待确认
 生成客户追问话术
+生成客户可读文本框架并停在 hash-bound 人工确认前；不自动生成 PPT
 判断是否需要搜索
 推进到安全的下一步
 遇到必须人工决策就停

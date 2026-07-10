@@ -121,21 +121,19 @@ if [[ "$STATUS" -ne 0 ]]; then
 fi
 
 print -r -- ""
-print -r -- "正在生成可编辑 PPTX 草稿..."
-"$PYTHON_BIN" "$SCRIPT_DIR/tools/ad_creative_operator.py" export-pptx "$PROJECT_PATH" 2>&1 | tee -a "$LOG_PATH"
-PPT_STATUS=${pipestatus[1]}
-if [[ "$PPT_STATUS" -ne 0 ]]; then
-  fail_dialog "PPTX 草稿生成或可编辑性检查未通过。日志：$LOG_PATH"
-  exit "$PPT_STATUS"
+print -r -- "正在生成客户可读文本框架与提案骨架..."
+"$PYTHON_BIN" "$SCRIPT_DIR/tools/ad_creative_operator.py" creative-proposal "$PROJECT_PATH" 2>&1 | tee -a "$LOG_PATH"
+TEXT_STATUS=${pipestatus[1]}
+if [[ "$TEXT_STATUS" -ne 0 ]]; then
+  fail_dialog "文本框架生成未通过。日志：$LOG_PATH"
+  exit "$TEXT_STATUS"
 fi
 
-print -r -- ""
-print -r -- "正在运行客户稿风险 Gate..."
-"$PYTHON_BIN" "$SCRIPT_DIR/tools/ad_creative_operator.py" client-pack-gate "$PROJECT_PATH" 2>&1 | tee -a "$LOG_PATH"
-CLIENT_GATE_STATUS=${pipestatus[1]}
-if [[ "$CLIENT_GATE_STATUS" -ne 0 ]]; then
-  fail_dialog "客户稿风险 Gate 未通过。日志：$LOG_PATH"
-  exit "$CLIENT_GATE_STATUS"
+"$PYTHON_BIN" "$SCRIPT_DIR/tools/ad_creative_operator.py" client-outline-gate "$PROJECT_PATH" 2>&1 | tee -a "$LOG_PATH"
+OUTLINE_STATUS=${pipestatus[1]}
+if [[ "$OUTLINE_STATUS" -ne 0 ]]; then
+  fail_dialog "客户可读文本框架仍需补充；尚未进入 PPT。日志：$LOG_PATH"
+  exit "$OUTLINE_STATUS"
 fi
 
 if [[ -z "${AD_CREATIVE_NO_OPEN:-}" && -f "$DASHBOARD_PATH" ]]; then
@@ -149,3 +147,4 @@ fi
 print -r -- ""
 print -r -- "DONE"
 print -r -- "DASHBOARD=$DASHBOARD_PATH"
+print -r -- "NEXT=文本框架已生成；人工确认后再单独运行 export-pptx。PPT 未自动生成。"

@@ -37,6 +37,8 @@ adco init <真实项目路径>
 
 ## 1. 放入资料
 
+运行时按 P0-P8 推进：P0 truth/lock，P1 client outline，P2 hash confirmation，P3 creative/reference/neutral specialist，P4 immutable PPT，P5 language/visual/authorization/editability，P6 fresh Client Pack binding，P7 independent review/send readiness（不发送），P8 feedback/next version。
+
 把资料放入：
 
 ```text
@@ -152,6 +154,8 @@ ad-creative:next
 
 ## 4.2 Creative Proposal Prompt
 
+Goal 模式默认仍由单一主控 inline 推进，不因“复杂”自动开 Threads。只有有界隔离、真实并行或独立 cold review 有明确收益时才生成 Thread lane。真实 worker 必须绑定真实 thread id；主控保存 host scope baseline，并在 reconcile 时用实际 diff 生成 host scope proof。轮询次数只是检查预算，最多一次有绝对截止时间的 extension 和一次独立证明的 rescue。
+
 命令：
 
 ```text
@@ -168,7 +172,7 @@ creative-proposal
 3. 每个 claim 必须绑定 requirement、source_event、reference 或明确标成 assumption / gap。
 4. 使用 docs/operating/creative_proposal_quality_standard.md 的 source mapping 做本地检查。
 5. 不复制 Cannes / Effie / System1 / Google / TikTok / WARC / Ipsos 案例措辞。
-6. 视频脚本、分镜、video prompt 只写 handoff 给 dircreative。
+6. 视频脚本、分镜、video prompt 使用 `adco specialist-handoff` 的 `dircreative.film-preproduction` profile；不读取或写死 DIR 仓库内部路径。接受兼容 descriptor `1.x` 时仍要求它显式支持 base contract `1.0`，并按 exact id/version 协商 profile receipt extension。
 7. image / KV / 背景图只写 image job spec，交给 imagegen 或 Creative Production。
 8. 固定 PPT / DOCX / XLSX 模板只写结构和字段，交给 Template Creator。
 ```
@@ -188,19 +192,25 @@ creative-quality-gate
 如果要进入 PPT builder 或客户版导出：
 
 ```text
+adco confirm-client-outline <项目目录> --confirmed-by "<人工确认者>" --confirmed-at <iso_time> --evidence-ref "<user_confirmation:id|client_confirmation:id>"
 adco client-outline-gate <项目目录>
+adco export-pptx <项目目录>
+adco check-pptx <项目目录> --file <项目目录>/AD-creative/ppt/exports/client_review_vNNN.pptx
 adco client-language-gate <项目目录>
 adco asset-current-manifest <项目目录>
 adco visual-layout-gate <项目目录>
 adco client-pack-gate <项目目录>
+adco client-send-readiness-gate <项目目录>
 ```
 
 要求：
-1. `client-outline-gate` BLOCKED 时，不允许进入 PPT builder。客户详细方案可以是 22-45+ 页，但每页必须低密度、客户可读、能决策，并填写 visual_slot / visual_asset_status。
+1. 先由人工/客户审阅文本，再用 `confirm-client-outline` 把确认绑定到 exact outline hash；`client-outline-gate` BLOCKED 时不允许进入 PPT builder。文本变更会让确认失效。客户详细方案可以是 22-45+ 页，但每页必须低密度、客户可读、能决策，并填写 visual_slot / visual_asset_status。
 2. `client-language-gate` 命中 prompt/thread/worker/AI/gate/内部/执行过程/需确认等词时，不允许导出客户版。
 3. 用户说 Grok/ChatGPT/ImageGen/browser 已有图时，先执行 `adco browser-asset-intake ...` 或 `adco preflight-asset ...`，不能直接判定缺图或重复生成。
-4. `visual-layout-gate` 必须检查拉伸、裁切、图片尺寸、卡片套卡片、报告感、文字过短、图文不匹配、同图重复误用、竖屏/横屏比例和客户阅读顺序。
-5. `VALIDATION=PASS` 只代表结构和追溯关系，不代表创意质量、客户语言、视觉审美、素材授权或可发送。
+4. `visual-layout-gate` 没有 exact current PPTX 和真实 preview 时必须 BLOCKED；有真实页面后再检查拉伸、裁切、图片尺寸、卡片套卡片、报告感、文字过短、图文不匹配、同图重复误用、竖屏/横屏比例和客户阅读顺序。
+5. `approval=PASS` 不算授权；客户可见素材必须有匹配 asset hash/scope 的独立 `asset_authorizations.csv` receipt。
+6. `client-pack-gate` 只代表 ready for independent human review，并把所有 exact-current 输入绑定为 package digest。任何输入变化后必须重跑。`client-send-readiness-gate` 还要求独立人工 review receipt 和发送授权都绑定同一个 fresh digest，并且不会发送。
+7. `VALIDATION=PASS` 只代表结构和追溯关系，不代表创意质量、客户语言、视觉审美、素材授权或可发送。
 
 如果要清理文件或确认最终交付：
 
@@ -235,7 +245,7 @@ ad-creative:status
 ad-creative:gate
 
 Gate 类型：
-Brief Gate / Research Gate / Creative Gate / Visual Plan Gate / Visual Review Gate / HTML Gate / PPT Gate / Final Gate / Skill Mining Gate
+Brief Gate / Research Gate / Creative Gate / Client Outline Gate / Visual Review Gate / PPT/Layout Gate / Client Pack Gate / Client Send Readiness Gate / Internal Handoff Gate / Skill Mining Gate
 
 检查对象：
 <填 artifact 或 stage>
@@ -269,10 +279,13 @@ adco council <真实项目路径> --render-dashboard
 adco validate <真实项目路径>
 adco creative-proposal <真实项目路径>
 adco creative-quality-gate <真实项目路径>
+adco confirm-client-outline <真实项目路径> --confirmed-by "<人工确认者>" --confirmed-at <iso_time> --evidence-ref "<user_confirmation:id|client_confirmation:id>"
+adco client-outline-gate <真实项目路径>
 adco search-quality-gate <真实项目路径>
 adco reference-pack-gate <真实项目路径>
 adco visual-quality-gate <真实项目路径>
 adco client-pack-gate <真实项目路径>
+adco client-send-readiness-gate <真实项目路径>
 adco handoff-readiness-gate <真实项目路径>
 ```
 
@@ -289,7 +302,8 @@ SEARCH_QUALITY_GATE=PASS 或 PARTIAL_PASS
 REFERENCE_PACK_GATE=PASS 或 PARTIAL_PASS
 VISUAL_QUALITY_GATE=PASS
 CLIENT_PACK_GATE=PASS
-HANDOFF_READINESS_GATE=PASS
+CLIENT_SEND_READINESS_GATE=PASS（仅在本轮确实准备发送，且独立人工审阅和发送授权绑定同一 fresh package digest 时要求）
+HANDOFF_READINESS_GATE=PASS（仅表示内部运营可交接）
 ```
 
 `VALIDATION=PASS` 只证明结构、CSV/JSON、引用链和 traceability 成立。它不批准创意质量、审美、客户话术、客户可见 AI 图或最终发送。`CREATIVE_QUALITY_GATE=PASS` 也只是 proposal 草稿可进入人工创意复核或专项模块交接，不是客户批准。

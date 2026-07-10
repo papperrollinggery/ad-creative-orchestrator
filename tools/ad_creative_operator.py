@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import fcntl
 import hashlib
 import html
 import importlib.metadata as metadata
@@ -30,14 +31,50 @@ sys.dont_write_bytecode = True
 
 from init_project import agents_policy_status, copy_template
 from runtime_paths import repo_or_module_root, skill_draft_dir, source_root, template_root
-from validate_project import current_truth_value, validate, validate_client_delivery_readiness
+from specialist_schema_validation import (
+    specialist_control_plane_errors,
+    specialist_generation_authorization_errors,
+    validate_specialist_payload,
+)
+from validate_project import (
+    THREADOPS_RECEIPT_REQUIRED_PROOF,
+    current_truth_value,
+    receipt_proof_values,
+    validate,
+    validate_client_delivery_readiness,
+)
 
 
 REPO_ROOT = repo_or_module_root()
 TEMPLATE_ROOT = template_root()
 SKILL_DRAFT_DIR = skill_draft_dir()
 PACKAGE_NAME = "ad-creative-orchestrator"
-FALLBACK_VERSION = "0.1.0"
+FALLBACK_VERSION = "0.2.0"
+SPECIALIST_EXCHANGE_PROTOCOL = "adco.specialist-exchange"
+SPECIALIST_EXCHANGE_VERSION = "1.0"
+DIRCREATIVE_PROFILE_ID = "dircreative.film-preproduction"
+CLIENT_OUTLINE_CONFIRMATION_REL = Path(
+    "AD-creative/client_review/client_outline_confirmation.json"
+)
+SPECIALIST_RESERVED_CLAIMS = (
+    "client_ready",
+    "ppt_ready",
+    "final_delivery_ready",
+    "send_ready",
+    "project_complete",
+    "control_plane_updated",
+)
+CURRENT_VERSION_TRUTH_KEYS = (
+    "current_version_id",
+    "current_pptx_artifact_id",
+    "current_pdf_artifact_id",
+    "current_preview_artifact_id",
+    "current_text_extract_artifact_id",
+    "current_ppt_editability_artifact_id",
+    "version_map_status",
+    "last_archive_before_edit",
+)
+SPECIALIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 DEFAULT_SKILL_INSTALL_DIR = Path.home() / ".codex/skills/ad-creative-orchestrator"
 DASHBOARD_REL = Path("AD-creative/handoff/操作台.html")
 COUNCIL_REPORT_REL = Path("AD-creative/gates/THREE-COUNCIL-READINESS_report.md")
@@ -139,6 +176,19 @@ ASSET_CURRENT_FIELDS = [
     "status",
     "notes",
 ]
+ASSET_AUTHORIZATION_FIELDS = [
+    "authorization_id",
+    "asset_id",
+    "asset_sha256",
+    "approval_scope",
+    "approved_by",
+    "approved_at",
+    "evidence_ref",
+    "evidence_sha256",
+    "status",
+    "revoked_at",
+    "notes",
+]
 FINAL_DELIVERY_LOCK_FIELDS = [
     "lock_id",
     "path",
@@ -148,6 +198,74 @@ FINAL_DELIVERY_LOCK_FIELDS = [
     "protected",
     "registered_at",
     "notes",
+]
+ARTIFACT_INDEX_FIELDS = [
+    "artifact_id",
+    "artifact_type",
+    "path",
+    "stage",
+    "version",
+    "status",
+    "visibility",
+    "source_event_ids",
+    "linked_requirements",
+    "linked_work_items",
+    "linked_references",
+    "linked_assets",
+    "gate_status",
+    "supersedes_artifact_id",
+    "created_at",
+    "updated_at",
+    "sha256",
+    "size_bytes",
+    "derived_from_artifact_id",
+    "derived_from_sha256",
+]
+GATE_LOG_FIELDS = [
+    "gate_id",
+    "gate_run_id",
+    "stage",
+    "status",
+    "score",
+    "checked_artifacts",
+    "target_ref",
+    "target_sha256",
+    "evidence_snapshot_ref",
+    "evidence_snapshot_sha256",
+    "blocking_issues",
+    "revision_items",
+    "questions",
+    "next_state",
+    "created_at",
+    "owner",
+    "supersedes_gate_run_id",
+]
+SPECIALIST_EXCHANGE_INDEX_FIELDS = [
+    "exchange_id",
+    "handoff_id",
+    "attempt",
+    "work_id",
+    "provider_id",
+    "profile_id",
+    "contract_version",
+    "descriptor_sha256",
+    "handoff_sha256",
+    "baseline_path",
+    "baseline_sha256",
+    "compatibility_status",
+    "execution_mode",
+    "lane_id",
+    "thread_id",
+    "handoff_path",
+    "receipt_path",
+    "receipt_sha256",
+    "outcome",
+    "adoption_path",
+    "adoption_sha256",
+    "adoption_decision",
+    "thread_reconciliation_ref",
+    "created_at",
+    "updated_at",
 ]
 CLIENT_LANGUAGE_BLOCKLIST = [
     "prompt",
@@ -233,26 +351,28 @@ VISUAL_LAYOUT_RISK_PATTERN = re.compile(
 TEXT_CLIENT_SCAN_SUFFIXES = {".md", ".txt", ".csv", ".json", ".yaml", ".yml"}
 FINAL_DELIVERY_SUFFIXES = {".pptx", ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".txt", ".md"}
 CREATIVE_PRODUCTION_KINDS = {"moodboard", "ads", "shots"}
-GOAL_PHASES = ("P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7")
+GOAL_PHASES = ("P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8")
 GOAL_PHASE_NAMES = {
     "P0": "Intake 与事实基线",
-    "P1": "研究计划与图片策略",
-    "P2": "证据包与资产槽位",
-    "P3": "策略方向与图片任务 PRD",
-    "P4": "内部原型与图片探索",
-    "P5": "视觉审核与客户审阅包",
-    "P6": "PPT / 最终交付 Gate",
-    "P7": "反馈合并与复用沉淀",
+    "P1": "客户可读文本框架",
+    "P2": "文本框架人工确认",
+    "P3": "创意、参考与按需 Specialist",
+    "P4": "Immutable PPT 版本导出",
+    "P5": "语言、视觉、授权与可编辑性 Gate",
+    "P6": "Fresh Client Pack Binding",
+    "P7": "独立审阅与发送准备 Gate",
+    "P8": "反馈合并与下一版本",
 }
 GOAL_PHASE_GATE_HINTS = {
     "P0": ("intake", "brief", "project_readiness"),
-    "P1": ("research_plan", "reference_research"),
-    "P2": ("reference_research", "visual_plan"),
-    "P3": ("creative", "image_job", "proposal_architecture"),
-    "P4": ("visual_review", "internal_prototype"),
-    "P5": ("client_review", "visual_review"),
-    "P6": ("ppt_gate", "final_delivery"),
-    "P7": ("feedback", "skill_mining"),
+    "P1": ("client_outline", "client_review"),
+    "P2": ("client_outline_confirmation",),
+    "P3": ("creative", "reference_research", "specialist_handoff"),
+    "P4": ("ppt_gate",),
+    "P5": ("client_review", "visual_review", "ppt_gate"),
+    "P6": ("client_pack", "final_delivery"),
+    "P7": ("client_send_readiness", "final_delivery"),
+    "P8": ("feedback", "next_version"),
 }
 VISUAL_RISK_PATTERNS = {
     "contact sheet",
@@ -475,12 +595,6 @@ def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def install_global_skill(target: Path = DEFAULT_SKILL_INSTALL_DIR) -> dict[str, str | bool]:
@@ -502,11 +616,6 @@ def install_global_skill(target: Path = DEFAULT_SKILL_INSTALL_DIR) -> dict[str, 
 
 
 def package_version() -> str:
-    try:
-        return metadata.version(PACKAGE_NAME)
-    except metadata.PackageNotFoundError:
-        pass
-
     root = source_root()
     pyproject = root / "pyproject.toml" if root else None
     if pyproject and pyproject.exists():
@@ -519,6 +628,10 @@ def package_version() -> str:
                 return version
         except Exception:
             pass
+    try:
+        return metadata.version(PACKAGE_NAME)
+    except metadata.PackageNotFoundError:
+        pass
     return FALLBACK_VERSION
 
 
@@ -818,11 +931,26 @@ def read_csv_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
 
 def write_csv_rows(path: Path, fieldnames: list[str], rows: Iterable[dict[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({key: row.get(key, "") for key in fieldnames})
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            newline="",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({key: row.get(key, "") for key in fieldnames})
+        os.replace(temp_path, path)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def append_csv_row(path: Path, row: dict[str, str]) -> None:
@@ -833,15 +961,55 @@ def append_csv_row(path: Path, row: dict[str, str]) -> None:
     write_csv_rows(path, fieldnames, rows)
 
 
+def csv_rows_need_normalization(
+    fieldnames: list[str], rows: Iterable[dict[str, str]]
+) -> bool:
+    return any(
+        None in row or any(row.get(field) is None for field in fieldnames)
+        for row in rows
+    )
+
+
 def ensure_csv_fields(path: Path, required_fields: list[str]) -> list[str]:
     fieldnames, rows = read_csv_rows(path)
     if not fieldnames:
         raise FileNotFoundError(f"CSV header not found: {path}")
     missing = [field for field in required_fields if field not in fieldnames]
-    if missing:
+    if missing or csv_rows_need_normalization(fieldnames, rows):
         fieldnames = [*fieldnames, *missing]
         write_csv_rows(path, fieldnames, rows)
     return fieldnames
+
+
+def normalize_gate_log_schema(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    fieldnames, rows = read_csv_rows(path)
+    if not fieldnames:
+        write_csv_rows(path, GATE_LOG_FIELDS, [])
+        return GATE_LOG_FIELDS, []
+    normalized_rows: list[dict[str, str]] = []
+    previous_by_gate: dict[str, str] = {}
+    used_run_ids: set[str] = set()
+    for index, row in enumerate(rows, start=1):
+        gate_id = row.get("gate_id", "").strip()
+        run_id = row.get("gate_run_id", "").strip()
+        if not run_id or run_id in used_run_ids:
+            run_id = f"GATE-RUN-{index:04d}"
+            while run_id in used_run_ids:
+                index += 1
+                run_id = f"GATE-RUN-{index:04d}"
+        used_run_ids.add(run_id)
+        normalized = {field: row.get(field, "") or "" for field in GATE_LOG_FIELDS}
+        normalized["gate_run_id"] = run_id
+        normalized["supersedes_gate_run_id"] = (
+            row.get("supersedes_gate_run_id", "").strip()
+            or previous_by_gate.get(gate_id, "")
+        )
+        normalized_rows.append(normalized)
+        if gate_id:
+            previous_by_gate[gate_id] = run_id
+    if fieldnames != GATE_LOG_FIELDS or rows != normalized_rows:
+        write_csv_rows(path, GATE_LOG_FIELDS, normalized_rows)
+    return GATE_LOG_FIELDS, normalized_rows
 
 
 def update_or_append_csv_row(
@@ -1138,7 +1306,63 @@ def read_counts(project: Path) -> dict[str, int]:
 
 def write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content.rstrip() + "\n", encoding="utf-8")
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            handle.write(content.rstrip() + "\n")
+        os.replace(temp_path, path)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+def update_markdown_sections(path: Path, sections: dict[str, str]) -> None:
+    """Update owned sections while preserving version truth and user-added sections."""
+    text = path.read_text(encoding="utf-8") if path.exists() else "# Current Truth\n"
+    for heading, body in sections.items():
+        section = f"## {heading}\n{body.strip()}\n"
+        pattern = re.compile(
+            rf"(?ms)^## {re.escape(heading)}[ \t]*\n.*?(?=^## [^\n]+\n|\Z)"
+        )
+        if pattern.search(text):
+            text = pattern.sub(section, text, count=1)
+        else:
+            text = text.rstrip() + "\n\n" + section
+    write_text(path, text)
+
+
+def normalize_current_version_truth_section(text: str) -> tuple[str, list[str]]:
+    pattern = re.compile(
+        r"(?ims)^##[ \t]+Current Version Truth[ \t]*\n(.*?)(?=^##[ \t]+|\Z)"
+    )
+    matches = list(pattern.finditer(text))
+    if len(matches) != 1:
+        return text, []
+    match = matches[0]
+    body = match.group(1)
+    missing = [
+        key
+        for key in CURRENT_VERSION_TRUTH_KEYS
+        if not re.search(rf"(?m)^[ \t]*{re.escape(key)}[ \t]*:", body)
+    ]
+    if not missing:
+        return text, []
+    insertion = "".join(f"{key}:\n" for key in missing)
+    fence = body.rfind("```")
+    if fence >= 0:
+        normalized_body = body[:fence].rstrip() + "\n" + insertion + body[fence:]
+    else:
+        normalized_body = body.rstrip() + "\n" + insertion
+    normalized = text[: match.start(1)] + normalized_body + text[match.end(1) :]
+    return normalized, missing
 
 
 def md_cell(value: str | None) -> str:
@@ -1152,11 +1376,6 @@ def markdown_rows(rows: list[tuple[str, ...]], empty: str) -> str:
     return "".join(f"| {md_cell(a)} | {md_cell(b)} | {md_cell(c)} |\n" for a, b, c in rows)
 
 
-def ensure_csv_file(path: Path, fields: list[str]) -> None:
-    if not path.exists():
-        write_csv_rows(path, fields, [])
-        return
-    ensure_csv_fields(path, fields)
 
 
 def normalized_bool(value: str | None) -> bool:
@@ -1203,6 +1422,36 @@ def client_language_text_for_path(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".pptx":
         return pptx_text_content(path)
+    if suffix == ".pdf":
+        extraction_errors: list[str] = []
+        extractor = shutil.which("pdftotext")
+        if extractor:
+            result = subprocess.run(
+                [extractor, str(path), "-"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout
+            extraction_errors.append(
+                "pdftotext: " + (result.stderr.strip() or "empty output")
+            )
+        try:
+            import fitz  # type: ignore[import-not-found]
+
+            with fitz.open(path) as document:
+                text = "\n".join(page.get_text() for page in document)
+            if text.strip():
+                return text
+        except Exception as exc:  # noqa: BLE001 - fail closed below
+            extraction_errors.append(f"fitz: {exc}")
+        else:
+            extraction_errors.append("fitz: empty output")
+        raise RuntimeError(
+            "PDF text extraction unavailable or empty: "
+            + "; ".join(extraction_errors or ["no extractor available"])
+        )
     if suffix == ".csv":
         fields, rows = read_csv_rows(path)
         if "visibility" in fields:
@@ -1215,7 +1464,7 @@ def client_language_text_for_path(path: Path) -> str:
 
 def is_reliably_client_language_file(project: Path, path: Path) -> bool:
     suffix = path.suffix.lower()
-    if suffix not in TEXT_CLIENT_SCAN_SUFFIXES | {".pptx"}:
+    if suffix not in TEXT_CLIENT_SCAN_SUFFIXES | {".pptx", ".pdf"}:
         return False
     rel_path = safe_rel(project, path)
     if path.name in {"README.md", "目录索引.md"}:
@@ -1366,29 +1615,67 @@ def sync_asset_current_manifest(project: Path) -> Path:
     return project / "AD-creative/visual_assets/asset_current_manifest.csv"
 
 
-def register_final_delivery_locks(project: Path) -> Path:
-    ensure_csv_file(project / "AD-creative/orchestrator/final_delivery_lock.csv", FINAL_DELIVERY_LOCK_FIELDS)
-    fields, rows = read_csv_rows(project / "AD-creative/orchestrator/final_delivery_lock.csv")
-    by_path = {row.get("path", ""): row for row in rows if row.get("path", "")}
+def final_delivery_lock_snapshot(
+    project: Path,
+    *,
+    protected_value: str = "true",
+) -> tuple[list[dict[str, str]], Path]:
+    """Register new FinalDelivery files without ever refreshing an existing baseline."""
+    lock_path = project / "AD-creative/orchestrator/final_delivery_lock.csv"
+    ensure_csv_file(lock_path, FINAL_DELIVERY_LOCK_FIELDS)
+    fields, rows = read_csv_rows(lock_path)
+    by_path = {row.get("path", ""): dict(row) for row in rows if row.get("path", "")}
+    issues: list[str] = []
+
+    for rel_path, row in by_path.items():
+        if not normalized_bool(row.get("protected")):
+            continue
+        path = project / rel_path
+        if not path.exists() or not path.is_file():
+            issues.append(f"protected file missing: {rel_path}")
+            continue
+        current_sha = file_sha256(path)
+        current_size = str(path.stat().st_size)
+        expected_sha = row.get("sha256", "").strip()
+        expected_size = row.get("size_bytes", "").strip()
+        if expected_sha and current_sha != expected_sha:
+            issues.append(f"protected file changed: {rel_path}")
+        elif expected_size and current_size != expected_size:
+            issues.append(f"protected file size changed: {rel_path}")
+        elif not expected_sha or not expected_size:
+            # Migrate an incomplete legacy row once; a complete baseline is immutable.
+            row["sha256"] = current_sha
+            row["size_bytes"] = current_size
+            row["mtime"] = row.get("mtime") or file_stat_mtime(path)
+
     final_root = project / "05_最终交付_FinalDelivery"
     for path in sorted(final_root.rglob("*")) if final_root.exists() else []:
         if not path.is_file() or path.name in {"README.md", "目录索引.md", ".DS_Store"}:
             continue
-        if path.suffix.lower() not in FINAL_DELIVERY_SUFFIXES:
-            continue
         rel_path = safe_rel(project, path)
+        if rel_path in by_path:
+            continue
         by_path[rel_path] = {
-            "lock_id": by_path.get(rel_path, {}).get("lock_id") or f"LOCK-{safe_artifact_suffix(rel_path)[-12:]}",
+            "lock_id": f"LOCK-{safe_artifact_suffix(rel_path)[-12:]}",
             "path": rel_path,
             "sha256": file_sha256(path),
             "size_bytes": str(path.stat().st_size),
             "mtime": file_stat_mtime(path),
-            "protected": "true",
-            "registered_at": by_path.get(rel_path, {}).get("registered_at") or now_iso(),
-            "notes": by_path.get(rel_path, {}).get("notes") or "user_final_delivery_file_registered_only_do_not_move_or_overwrite",
+            "protected": protected_value,
+            "registered_at": now_iso(),
+            "notes": "user_final_delivery_file_registered_only_do_not_move_or_overwrite",
         }
-    write_csv_rows(project / "AD-creative/orchestrator/final_delivery_lock.csv", fields or FINAL_DELIVERY_LOCK_FIELDS, by_path.values())
-    return project / "AD-creative/orchestrator/final_delivery_lock.csv"
+
+    if issues:
+        raise RuntimeError("FinalDelivery lock integrity violation: " + "; ".join(issues))
+    locked = list(by_path.values())
+    write_csv_rows(lock_path, fields or FINAL_DELIVERY_LOCK_FIELDS, locked)
+    return locked, lock_path
+
+
+def register_final_delivery_locks(project: Path) -> Path:
+    _, lock_path = final_delivery_lock_snapshot(project)
+    return lock_path
 
 
 def render_human_workspace_indexes(project: Path) -> list[Path]:
@@ -2351,6 +2638,11 @@ def update_artifact(
     linked_references: str = "",
     linked_assets: str = "",
     gate_status: str = "PASS",
+    version: str = "v001",
+    derived_from_artifact_id: str = "",
+    derived_from_sha256: str = "",
+    sha256: str = "",
+    size_bytes: str = "",
 ) -> None:
     update_or_append_csv_row(
         project / "AD-creative/orchestrator/artifact_index.csv",
@@ -2360,7 +2652,7 @@ def update_artifact(
             "artifact_type": artifact_type,
             "path": rel_path,
             "stage": stage,
-            "version": "v001",
+            "version": version,
             "status": status,
             "visibility": visibility,
             "source_event_ids": source_event_ids,
@@ -2372,6 +2664,10 @@ def update_artifact(
             "supersedes_artifact_id": "",
             "created_at": now_iso(),
             "updated_at": now_iso(),
+            "sha256": sha256,
+            "size_bytes": size_bytes,
+            "derived_from_artifact_id": derived_from_artifact_id,
+            "derived_from_sha256": derived_from_sha256,
         },
     )
 
@@ -2388,30 +2684,97 @@ def append_gate(
     questions: str,
     next_state: str,
     owner: str,
+    target_ref: str = "",
+    target_sha256: str = "",
 ) -> None:
-    update_or_append_csv_row(
-        project / "AD-creative/orchestrator/gate_log.csv",
-        "gate_id",
+    path = project / "AD-creative/orchestrator/gate_log.csv"
+    fields, rows = normalize_gate_log_schema(path)
+    if not target_ref:
+        _, artifacts = read_csv_rows(
+            project / "AD-creative/orchestrator/artifact_index.csv"
+        )
+        artifacts_by_id = {
+            row.get("artifact_id", "").strip(): row
+            for row in artifacts
+            if row.get("artifact_id", "").strip()
+        }
+        for artifact_id in split_asset_refs(checked_artifacts):
+            artifact = artifacts_by_id.get(artifact_id)
+            if not artifact:
+                continue
+            try:
+                candidate = contained_project_path(
+                    project,
+                    artifact.get("path", ""),
+                    f"gate target artifact {artifact_id}",
+                )
+            except ValueError:
+                continue
+            if candidate.is_file():
+                target_ref = safe_rel(project, candidate)
+                target_sha256 = file_sha256(candidate)
+                break
+    previous = next(
+        (row for row in reversed(rows) if row.get("gate_id") == gate_id), None
+    )
+    run_id = next_id(rows, "gate_run_id", "GATE-RUN")
+    evidence_snapshot_ref = ""
+    evidence_snapshot_sha256 = ""
+    if target_ref:
+        target = contained_project_path(project, target_ref, "gate target_ref")
+        if not target.is_file():
+            raise ValueError(f"gate target does not exist: {target_ref}")
+        actual_target_sha = file_sha256(target)
+        if target_sha256 and target_sha256 != actual_target_sha:
+            raise ValueError("gate target_sha256 does not match target_ref")
+        target_sha256 = actual_target_sha
+        snapshot_suffix = target.suffix if target.suffix else ".evidence"
+        snapshot = (
+            project
+            / "AD-creative/gates/history"
+            / safe_artifact_suffix(gate_id)
+            / f"{safe_artifact_suffix(run_id)}_{target_sha256[:12]}{snapshot_suffix}"
+        )
+        snapshot.parent.mkdir(parents=True, exist_ok=True)
+        if snapshot.exists():
+            if file_sha256(snapshot) != target_sha256:
+                raise FileExistsError(
+                    f"immutable gate evidence snapshot collision: {snapshot}"
+                )
+        else:
+            shutil.copy2(target, snapshot)
+        evidence_snapshot_ref = safe_rel(project, snapshot)
+        evidence_snapshot_sha256 = file_sha256(snapshot)
+    rows.append(
         {
             "gate_id": gate_id,
+            "gate_run_id": run_id,
             "stage": stage,
             "status": status,
             "score": score,
             "checked_artifacts": checked_artifacts,
+            "target_ref": target_ref,
+            "target_sha256": target_sha256,
+            "evidence_snapshot_ref": evidence_snapshot_ref,
+            "evidence_snapshot_sha256": evidence_snapshot_sha256,
             "blocking_issues": blocking_issues,
             "revision_items": revision_items,
             "questions": questions,
             "next_state": next_state,
             "created_at": now_iso(),
             "owner": owner,
+            "supersedes_gate_run_id": (
+                previous.get("gate_run_id", "") if previous else ""
+            ),
         },
     )
+    write_csv_rows(path, fields, rows)
 
 
 POLLUTION_DIR_NAMES = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 POLLUTION_FILE_SUFFIXES = {".pyc", ".pyo"}
 POLLUTION_FILE_NAMES = {".DS_Store"}
-THREAD_TERMINAL_STATES = {"archived", "closed", "reconciled", "superseded", "duplicate", "stale"}
+THREAD_TERMINAL_STATES = {"archived", "closed"}
 
 
 def find_pollution_paths(root: Path, limit: int = 80) -> list[str]:
@@ -3088,11 +3451,45 @@ Do not treat VALIDATION=PASS as creative quality approval.
 
 
 def render_client_outline_rows(context: dict[str, object], rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    def readable(value: object, fallback: str) -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        if (
+            not non_placeholder(text, min_chars=4)
+            or find_client_language_hits(text)
+            or re.search(r"internal[_ -]?only|placeholder|source[_ -]?brief", text, flags=re.IGNORECASE)
+        ):
+            return fallback
+        return text
+
+    objective = readable(
+        context.get("client_objective"),
+        "本轮先对齐方案要解决的业务问题、客户需要做出的决定，以及下一阶段深化范围。",
+    )
+    problem = readable(
+        context.get("business_problem"),
+        "现有资料需要被整理成更清楚的传播问题和可比较的创意选择。",
+    )
+    audience = readable(
+        context.get("audience"),
+        "目标受众的具体生活场景和使用动机，将在首次方案讨论中共同锁定。",
+    )
+    barrier = readable(
+        context.get("barrier"),
+        "受众为何犹豫、忽略或不相信现有表达，是本轮需要共同判断的关键。",
+    )
+    insight = readable(
+        context.get("insight"),
+        "洞察页先呈现可讨论的行为假设，并明确哪些判断仍需要客户事实支持。",
+    )
+    product_feature = readable(
+        context.get("product_feature"),
+        "产品事实、卖点优先级和不可夸张边界，将由客户资料与首次讨论共同锁定。",
+    )
     outline_rows: list[dict[str, str]] = [
         {
             "slide_id": "1",
             "page_title": "客户目标与本轮问题",
-            "body_copy": f"本轮先把客户真实目标和需要解决的传播问题讲清楚：{context['client_objective']} / {context['business_problem']}",
+            "body_copy": f"本轮先把客户真实目标和需要解决的传播问题讲清楚：{objective} 同时聚焦这一核心问题：{problem}",
             "client_confirmation_point": "确认本轮客户审阅是先定方向，还是需要接近可发送版本。",
             "material_role": "source_brief_to_decision_context",
             "visual_slot": "文字页，保留一处客户目标或 brief 摘要占位。",
@@ -3105,10 +3502,10 @@ def render_client_outline_rows(context: dict[str, object], rows: list[dict[str, 
         {
             "slide_id": "2",
             "page_title": "受众洞察与行为阻力",
-            "body_copy": f"把受众、阻力和洞察放在同一页，避免方案只剩口号：{context['audience']} / {context['barrier']} / {context['insight']}",
-            "client_confirmation_point": "确认目标受众和行为阻力是否符合客户内部判断。",
+            "body_copy": f"把受众、阻力和洞察放在同一页，避免方案只剩口号。受众：{audience} 行为阻力：{barrier} 洞察假设：{insight}",
+            "client_confirmation_point": "确认目标受众和行为阻力是否符合客户团队判断。",
             "material_role": "audience_insight",
-            "visual_slot": "受众场景图或情绪参考图；未确认前使用低保真占位。",
+            "visual_slot": "受众场景图或情绪参考图；素材锁定前使用低保真示意画面。",
             "visual_asset_status": "placeholder",
             "asset_ids": "",
             "visibility": "client_visible_pending",
@@ -3118,7 +3515,7 @@ def render_client_outline_rows(context: dict[str, object], rows: list[dict[str, 
         {
             "slide_id": "3",
             "page_title": "产品事实到传播利益",
-            "body_copy": f"先讲清楚产品事实怎样转成客户能判断的传播利益：{context['product_feature']}。",
+            "body_copy": f"先讲清楚产品事实怎样转成客户能判断的传播利益：{product_feature}。这一页只保留有资料依据的事实和可讨论的利益表达。",
             "client_confirmation_point": "确认产品事实、卖点优先级和不可夸张边界。",
             "material_role": "product_fact_to_benefit",
             "visual_slot": "产品事实图、功能示意或已有产品图。",
@@ -3143,14 +3540,30 @@ def render_client_outline_rows(context: dict[str, object], rows: list[dict[str, 
         },
     ]
     for index, row in enumerate(rows, start=5):
+        proposition = readable(
+            row.get("creative_proposition"),
+            "本方向从真实使用场景出发，把产品利益转成受众能理解和记住的行动画面。",
+        )
+        core_message = readable(
+            row.get("core_message"),
+            "核心信息将围绕产品事实、受众动机和可感知利益展开。",
+        )
+        key_visual = readable(
+            row.get("key_visual_or_action"),
+            "以一张关键动作画面说明人物、产品与使用场景之间的关系。",
+        )
+        why_choose = readable(
+            row.get("why_choose"),
+            "这个方向便于客户判断信息重点、画面潜力和下一阶段深化成本。",
+        )
         outline_rows.append(
             {
                 "slide_id": str(index),
                 "page_title": row["name"],
-                "body_copy": f"{row['creative_proposition']} 核心信息是：{row['core_message']} 关键画面或行动：{row['key_visual_or_action']} 风险：{row['risk']}",
+                "body_copy": f"{proposition} 核心信息是：{core_message} 关键画面或行动：{key_visual} 选择理由：{why_choose}",
                 "client_confirmation_point": f"确认是否选择 {row['name']} 继续深化。",
                 "material_role": "creative_direction_story_page",
-                "visual_slot": f"{row['key_visual_or_action']}，未有原图前只做画面占位。",
+                "visual_slot": f"{key_visual}，素材锁定前先使用可替换的示意画面。",
                 "visual_asset_status": "to_generate",
                 "asset_ids": "",
                 "visibility": "client_visible_pending",
@@ -4003,12 +4416,23 @@ def review_visual_quality(
     min_short_edge: int = 480,
 ) -> tuple[str, list[str], Path]:
     _, assets = read_csv_rows(project / "AD-creative/visual_assets/asset_manifest.csv")
+    current_manifest_path = sync_asset_current_manifest(project)
+    _, current_assets = read_csv_rows(current_manifest_path)
+    current_by_id = {
+        row.get("asset_id", "").strip(): row
+        for row in current_assets
+        if row.get("asset_id", "").strip()
+    }
+    _, authorization_rows = read_csv_rows(
+        project / "AD-creative/visual_assets/asset_authorizations.csv"
+    )
     _, references = read_csv_rows(project / "AD-creative/references/reference_cards.csv")
     reference_ids = unique_rows(references, "reference_id")
     issues: list[str] = []
     warnings: list[str] = []
     evidence: list[str] = [
         f"assets={len(assets)}",
+        f"asset_authorizations={len(authorization_rows)}",
         f"min_long_edge={min_long_edge}",
         f"min_short_edge={min_short_edge}",
     ]
@@ -4054,8 +4478,16 @@ def review_visual_quality(
                 issues.append(f"{asset_id} 客户可见但 QA 未 PASS。")
             if not selected:
                 issues.append(f"{asset_id} 客户可见但未进入 selected/approved/done。")
-            if asset_type == "generated_image" and "client_visibility_approved" not in notes_lower:
-                issues.append(f"{asset_id} 客户可见生成图缺少 client_visibility_approved 记录。")
+            current = current_by_id.get(asset_id, {})
+            current_sha = current.get("sha256", "").strip()
+            if not current_sha:
+                issues.append(f"{asset_id} 客户可见但 current manifest 缺少 sha256。")
+            elif not matching_asset_authorization(
+                project, asset_id, current_sha, authorization_rows
+            ):
+                issues.append(
+                    f"{asset_id} 客户可见但缺少匹配 asset hash/scope 的独立授权 receipt。"
+                )
             if reference_id in {"", "pending"}:
                 warnings.append(f"{asset_id} 客户可见但未绑定真实 reference_id。")
         if client_visible:
@@ -4115,7 +4547,7 @@ checked_at: {now_iso()}
 - active 图片必须存在且可读取。
 - selected / approved / done 图片必须 QA PASS。
 - 生成图必须有 prompt_or_edit_ref。
-- 客户可见生成图必须记录 `client_visibility_approved`。
+- 客户可见图片必须有绑定 exact asset SHA-256、scope、确认者、时间与证据的独立授权 receipt；notes token 不算授权。
 - 客户可见图片不能是 contact sheet、低质拼贴、placeholder-only、假 logo。
 - 默认最低尺寸：长边 {min_long_edge}px，短边 {min_short_edge}px。
 """,
@@ -4163,6 +4595,15 @@ def review_film_quality(project: Path) -> tuple[str, list[str], Path]:
     _, requirements = read_csv_rows(project / "AD-creative/orchestrator/requirements.csv")
     _, references = read_csv_rows(project / "AD-creative/references/reference_cards.csv")
     _, assets = read_csv_rows(project / "AD-creative/visual_assets/asset_manifest.csv")
+    current_assets, _ = refresh_asset_current_manifest(project)
+    current_by_id = {
+        row.get("asset_id", "").strip(): row
+        for row in current_assets
+        if row.get("asset_id", "").strip()
+    }
+    _, authorization_rows = read_csv_rows(
+        project / "AD-creative/visual_assets/asset_authorizations.csv"
+    )
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
     issues: list[str] = []
     warnings: list[str] = []
@@ -4205,15 +4646,23 @@ def review_film_quality(project: Path) -> tuple[str, list[str], Path]:
     else:
         evidence.append(f"visual_quality_gate={visual_gate.get('status')}")
 
-    client_visible_generated = [
-        asset.get("asset_id", "")
-        for asset in assets
-        if asset.get("visibility", "").strip().lower() in CLIENT_VISIBLE_VALUES
-        and asset.get("asset_type", "").strip().lower() == "generated_image"
-        and "client_visibility_approved" not in asset.get("notes", "").lower()
-    ]
+    client_visible_generated = []
+    for asset in assets:
+        if asset.get("visibility", "").strip().lower() not in CLIENT_VISIBLE_VALUES:
+            continue
+        if asset.get("asset_type", "").strip().lower() != "generated_image":
+            continue
+        asset_id = asset.get("asset_id", "").strip()
+        current_sha = current_by_id.get(asset_id, {}).get("sha256", "").strip()
+        if not current_sha or not matching_asset_authorization(
+            project, asset_id, current_sha, authorization_rows
+        ):
+            client_visible_generated.append(asset_id)
     if client_visible_generated:
-        issues.append("客户可见生成图缺少批准记录: " + ";".join(client_visible_generated))
+        issues.append(
+            "客户可见生成图缺少匹配 asset hash/scope 的独立授权 receipt: "
+            + ";".join(client_visible_generated)
+        )
 
     client_visible_artifacts = [
         artifact.get("artifact_id", "")
@@ -4501,35 +4950,18 @@ def perform_intake(project: Path, source_ids: list[str], goal: str) -> dict[str,
     open_questions = "\n".join(
         f"- {row.get('question_for_client') or row.get('description')}" for row in gap_rows[:8]
     ) or "- 暂无"
-    write_text(
+    update_markdown_sections(
         current_truth_path,
-        f"""# Current Truth
-
-## Project
-{project.name}
-
-## Confirmed
-{confirmed}
-
-## Inferred
-- 当前处于 intake；已从本地资料抽取第一轮需求和缺口。
-- 客户可见稿前需要 Gate；AI 图默认 internal_only。
-
-## Conflicted
-- 暂无自动识别冲突。
-
-## Deprecated
-- 暂无。
-
-## Open Questions
-{open_questions}
-
-## Current Stage
-intake
-
-## Next Action
-按缺口向客户/内部负责人追问；三方议会 PASS 后可推进公开官方来源搜索计划。
-""",
+        {
+            "Project": project.name,
+            "Confirmed": confirmed,
+            "Inferred": "- 当前处于 intake；已从本地资料抽取第一轮需求和缺口。\n- 客户可见稿前需要独立质量与发送准备检查；生成图默认 internal_only。",
+            "Conflicted": "- 暂无自动识别冲突。",
+            "Deprecated": "- 暂无。",
+            "Open Questions": open_questions,
+            "Current Stage": "intake",
+            "Next Action": "按缺口向客户/内部负责人追问；确认文本框架后再进入视觉与 PPT。",
+        },
     )
 
     question_rows = "\n".join(
@@ -4599,23 +5031,18 @@ intake
                 break
         write_csv_rows(work_path, work_fields, work_rows)
 
-    gate_path = project / "AD-creative/orchestrator/gate_log.csv"
-    update_or_append_csv_row(
-        gate_path,
-        "gate_id",
-        {
-            "gate_id": "GATE-AUTO-BRIEF-001",
-            "stage": "intake",
-            "status": "PARTIAL_PASS" if gap_rows else "PASS",
-            "score": "72",
-            "checked_artifacts": "ART-AUTO-CURRENT-TRUTH;ART-AUTO-CLIENT-QUESTIONS",
-            "blocking_issues": ";".join(row["description"] for row in gap_rows[:5]),
-            "revision_items": "补齐缺口后进入 research_plan。",
-            "questions": ";".join(row.get("question_for_client", "") for row in gap_rows[:5]),
-            "next_state": "research_plan",
-            "created_at": now,
-            "owner": "ad_creative_operator",
-        },
+    append_gate(
+        project,
+        "GATE-AUTO-BRIEF-001",
+        "intake",
+        "PARTIAL_PASS" if gap_rows else "PASS",
+        "72",
+        "ART-AUTO-CURRENT-TRUTH;ART-AUTO-CLIENT-QUESTIONS",
+        ";".join(row["description"] for row in gap_rows[:5]),
+        "补齐缺口后进入 research_plan。",
+        ";".join(row.get("question_for_client", "") for row in gap_rows[:5]),
+        "research_plan",
+        "ad_creative_operator",
     )
 
     append_event(
@@ -5391,35 +5818,92 @@ def latest_gate(project: Path, stage: str | None = None, gate_id: str | None = N
         candidates.append(gate)
     if not candidates:
         return None
-    return sorted(candidates, key=lambda row: row.get("created_at", ""), reverse=True)[0]
+    return candidates[-1]
 
 
-def has_gate(project: Path, gate_id: str) -> bool:
-    return latest_gate(project, gate_id=gate_id) is not None
+def has_gate(
+    project: Path,
+    gate_id: str,
+    allowed_statuses: set[str] | None = None,
+) -> bool:
+    gate = latest_gate(project, gate_id=gate_id)
+    if not gate:
+        return False
+    allowed = allowed_statuses or {"PASS", "PARTIAL_PASS"}
+    if gate.get("status", "").strip().upper() not in allowed:
+        return False
+    if gate_id.startswith("GATE-AUTO-") and not gate_target_is_fresh(project, gate):
+        return False
+    return True
+
+
+def gate_target_is_fresh(project: Path, gate: dict[str, str]) -> bool:
+    target_ref = gate.get("target_ref", "").strip()
+    target_sha256 = gate.get("target_sha256", "").strip()
+    if not target_ref or not re.fullmatch(r"[0-9a-f]{64}", target_sha256):
+        return False
+    try:
+        target = contained_project_path(project, target_ref, "gate target_ref")
+    except ValueError:
+        return False
+    return target.is_file() and file_sha256(target) == target_sha256
+
+
+def latest_gate_rows(project: Path) -> list[dict[str, str]]:
+    _, gates = read_csv_rows(project / "AD-creative/orchestrator/gate_log.csv")
+    latest_by_id: dict[str, dict[str, str]] = {}
+    order: list[str] = []
+    for gate in gates:
+        gate_id = gate.get("gate_id", "").strip()
+        if not gate_id:
+            continue
+        if gate_id not in latest_by_id:
+            order.append(gate_id)
+        latest_by_id[gate_id] = gate
+    return [latest_by_id[gate_id] for gate_id in order]
 
 
 def derive_goal_phase(project: Path) -> str:
     counts = read_counts(project)
     if counts["source_events"] == 0 or counts["requirements"] == 0:
         return "P0"
-    if counts["references"] == 0:
+    outline = client_outline_rows(project)
+    if client_outline_content_issues(outline, require_confirmed_state=False):
         return "P1"
-    if counts["assets"] == 0 and not has_gate(project, "GATE-AUTO-VISUAL-QUALITY-001"):
+    if client_outline_confirmation_errors(project):
         return "P2"
-    if not has_gate(project, "GATE-AUTO-FILM-QUALITY-001"):
-        return "P3" if counts["assets"] == 0 else "P4"
-    if not has_gate(project, "GATE-AUTO-CLIENT-PACK-001"):
+    _, artifacts = read_csv_rows(
+        project / "AD-creative/orchestrator/artifact_index.csv"
+    )
+    truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    truth = truth_path.read_text(encoding="utf-8") if truth_path.is_file() else ""
+    if not current_truth_value(truth, "current_pptx_artifact_id"):
+        if not has_gate(project, "GATE-AUTO-CREATIVE-QUALITY-001"):
+            return "P3"
+        return "P4"
+    required_package_gates = [
+        "GATE-AUTO-CLIENT-OUTLINE-001",
+        "GATE-AUTO-CLIENT-LANGUAGE-001",
+        "GATE-AUTO-VISUAL-LAYOUT-001",
+        "GATE-AUTO-VISUAL-QUALITY-001",
+        "GATE-AUTO-PPT-001",
+    ]
+    if any(not has_gate(project, gate_id, {"PASS"}) for gate_id in required_package_gates):
         return "P5"
-    if not has_gate(project, "GATE-AUTO-HANDOFF-READINESS-001"):
+    binding_errors, _ = current_client_pack_binding_errors(project, artifacts)
+    if binding_errors or not has_gate(project, "GATE-AUTO-CLIENT-PACK-001", {"PASS"}):
         return "P6"
-    return "P7"
+    if not has_gate(
+        project, "GATE-AUTO-CLIENT-SEND-READINESS-001", {"PASS"}
+    ):
+        return "P7"
+    return "P8"
 
 
 def gate_status_for_stages(project: Path, stages: tuple[str, ...]) -> str:
-    _, gates = read_csv_rows(project / "AD-creative/orchestrator/gate_log.csv")
     statuses = [
         gate.get("status", "")
-        for gate in gates
+        for gate in latest_gate_rows(project)
         if gate.get("stage", "").strip() in stages and gate.get("status", "").strip()
     ]
     if not statuses:
@@ -5436,28 +5920,39 @@ def gate_status_for_stages(project: Path, stages: tuple[str, ...]) -> str:
 def goal_lane_states(project: Path) -> dict[str, str]:
     counts = read_counts(project)
     return {
-        "brand_research": "active" if counts["requirements"] else "needs_material",
-        "image_function": "active" if counts["assets"] else "planned",
+        "text_framework": "confirmed" if not client_outline_confirmation_errors(project) else "active" if client_outline_rows(project) else "needs_material",
+        "specialist_assets": "active" if counts["assets"] else "optional",
         "gates": gate_status_for_stages(project, ("visual_review", "film_quality", "client_review", "final_delivery")),
-        "delivery": "ready" if has_gate(project, "GATE-AUTO-HANDOFF-READINESS-001") else "internal_only",
+        "client_pack": "fresh" if has_gate(project, "GATE-AUTO-CLIENT-PACK-001", {"PASS"}) else "internal_only",
+        "send_readiness": "ready_not_sent" if has_gate(project, "GATE-AUTO-CLIENT-SEND-READINESS-001", {"PASS"}) else "not_ready",
     }
 
 
 def goal_completion_readiness(project: Path, errors: list[str], confirmations: list[dict[str, str]]) -> dict[str, object]:
-    _, gates = read_csv_rows(project / "AD-creative/orchestrator/gate_log.csv")
-    blocking_gates = [gate.get("gate_id", "") for gate in gates if gate.get("status") == "BLOCKED"]
-    required = [
-        "GATE-AUTO-VISUAL-QUALITY-001",
-        "GATE-AUTO-FILM-QUALITY-001",
-        "GATE-AUTO-CLIENT-PACK-001",
-        "GATE-AUTO-HANDOFF-READINESS-001",
+    latest_gates = latest_gate_rows(project)
+    blocking_gates = [
+        gate.get("gate_id", "")
+        for gate in latest_gates
+        if gate.get("status", "").strip().upper() == "BLOCKED"
     ]
-    missing = [gate_id for gate_id in required if not has_gate(project, gate_id)]
+    required = [
+        "GATE-AUTO-CLIENT-OUTLINE-001",
+        "GATE-AUTO-CLIENT-LANGUAGE-001",
+        "GATE-AUTO-VISUAL-QUALITY-001",
+        "GATE-AUTO-VISUAL-LAYOUT-001",
+        "GATE-AUTO-PPT-001",
+        "GATE-AUTO-CLIENT-PACK-001",
+    ]
+    missing = [gate_id for gate_id in required if not has_gate(project, gate_id, {"PASS"})]
     ready = not errors and not confirmations and not blocking_gates and not missing
     return {
-        "status": "READY_INTERNAL_REVIEW" if ready else "NOT_READY",
+        "status": "READY_FOR_INDEPENDENT_REVIEW" if ready else "NOT_READY",
         "missing_gates": missing,
         "blocking_gates": blocking_gates,
+        "send_readiness": latest_gate_status(
+            project, "GATE-AUTO-CLIENT-SEND-READINESS-001"
+        )
+        or "NOT_RUN",
         "validation_errors": len(errors),
         "pending_confirmations": len(confirmations),
     }
@@ -6221,26 +6716,20 @@ Still requires explicit confirmation:
 """,
     )
 
-    update_or_append_csv_row(
-        project / "AD-creative/orchestrator/gate_log.csv",
-        "gate_id",
-        {
-            "gate_id": "GATE-THREE-COUNCIL-READINESS",
-            "stage": "project_readiness",
-            "status": overall,
-            "score": "3/3" if overall == "PASS" else "",
-            "checked_artifacts": "",
-            "blocking_issues": ";".join(
-                issue for result in results for issue in result.issues
-            ),
-            "revision_items": "",
-            "questions": "",
-            "next_state": "ready_for_non_developer_operation"
-            if overall == "PASS"
-            else "revise_readiness",
-            "created_at": now_iso(),
-            "owner": "three_council",
-        },
+    append_gate(
+        project,
+        "GATE-THREE-COUNCIL-READINESS",
+        "project_readiness",
+        overall,
+        "3/3" if overall == "PASS" else "",
+        "",
+        ";".join(issue for result in results for issue in result.issues),
+        "",
+        "",
+        "ready_for_non_developer_operation" if overall == "PASS" else "revise_readiness",
+        "three_council",
+        target_ref=safe_rel(project, report_path),
+        target_sha256=file_sha256(report_path),
     )
     return overall, results, report_path
 
@@ -6507,6 +6996,7 @@ def inspect_pptx(path: Path) -> dict[str, int | bool | str]:
         raise FileNotFoundError(f"pptx not found: {path}")
     slide_files: list[str] = []
     text_runs = 0
+    slide_text_runs: list[int] = []
     image_refs = 0
     has_presentation = False
     with zipfile.ZipFile(path) as archive:
@@ -6522,15 +7012,27 @@ def inspect_pptx(path: Path) -> dict[str, int | bool | str]:
         image_refs = len(media_files)
         for slide_name in slide_files:
             root = ET.fromstring(archive.read(slide_name))
-            text_runs += sum(
+            slide_runs = sum(
                 1
                 for text_node in root.iter("{http://schemas.openxmlformats.org/drawingml/2006/main}t")
                 if text_node.text and text_node.text.strip()
             )
-    editable = bool(has_presentation and slide_files and text_runs)
+            slide_text_runs.append(slide_runs)
+            text_runs += slide_runs
+    flattened_slides = [
+        index for index, count in enumerate(slide_text_runs, start=1) if count == 0
+    ]
+    editable = bool(
+        has_presentation
+        and slide_files
+        and text_runs
+        and not flattened_slides
+    )
     return {
         "slides": len(slide_files),
         "editable_text_runs": text_runs,
+        "editable_slides": len(slide_files) - len(flattened_slides),
+        "flattened_slides": ",".join(str(item) for item in flattened_slides),
         "embedded_media": image_refs,
         "has_presentation": has_presentation,
         "editable": editable,
@@ -6618,9 +7120,6 @@ def pptx_layout_findings(path: Path) -> list[str]:
     return findings
 
 
-def client_outline_rows(project: Path) -> list[dict[str, str]]:
-    _, rows = read_csv_rows(project / "AD-creative/client_review/client_outline.csv")
-    return rows
 
 
 def find_client_language_hits(text: str) -> list[str]:
@@ -6629,165 +7128,21 @@ def find_client_language_hits(text: str) -> list[str]:
     return sorted(hits, key=lambda item: item.lower())
 
 
-def review_client_outline(project: Path) -> tuple[str, list[str], Path]:
-    ensure_csv_file(project / "AD-creative/client_review/client_outline.csv", CLIENT_OUTLINE_FIELDS)
-    rows = client_outline_rows(project)
-    issues: list[str] = []
-    warnings: list[str] = []
-    evidence: list[str] = [f"client_outline_rows={len(rows)}"]
-    if not rows:
-        issues.append("缺少客户可读文本框架：AD-creative/client_review/client_outline.csv 没有页记录。")
-    slide_ids: set[str] = set()
-    numeric_ids: list[int] = []
-    for index, row in enumerate(rows, start=2):
-        owner = row.get("slide_id", "").strip() or f"row-{index}"
-        if owner in slide_ids:
-            issues.append(f"client_outline slide_id 重复: {owner}")
-        slide_ids.add(owner)
-        if owner.isdigit():
-            numeric_ids.append(int(owner))
-        for field, min_chars, label in [
-            ("page_title", 3, "每页标题"),
-            ("body_copy", 22, "每页正文"),
-            ("client_confirmation_point", 8, "客户确认点"),
-            ("material_role", 4, "素材角色"),
-        ]:
-            if not non_placeholder(row.get(field), min_chars=min_chars):
-                issues.append(f"{owner} 缺少可客户阅读的{label}: {field}")
-        hits = find_client_language_hits(" ".join(row.get(field, "") for field in CLIENT_OUTLINE_FIELDS))
-        if hits:
-            issues.append(f"{owner} 客户文本框架含内部/执行侧词: {', '.join(hits[:8])}")
-        if row.get("visibility", "").strip().lower() == "client_visible" and row.get("status", "").strip().lower() not in {"approved", "locked", "done"}:
-            warnings.append(f"{owner} 已标客户可见但 status 未 locked/approved/done。")
-    if numeric_ids and numeric_ids != sorted(numeric_ids):
-        issues.append("client_outline slide_id 阅读顺序不是递增。")
-
-    status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
-    report_path = project / "AD-creative/gates/GATE-AUTO-CLIENT-OUTLINE-001_report.md"
-    write_text(
-        report_path,
-        f"""# Client Outline Gate
-
-status: {status}
-visibility: internal_only
-checked_at: {now_iso()}
-
-## Evidence
-
-{chr(10).join(f"- {item}" for item in evidence)}
-
-## Blocking Issues
-
-{chr(10).join(f"- {issue}" for issue in issues) or "- 无"}
-
-## Warnings
-
-{chr(10).join(f"- {warning}" for warning in warnings) or "- 无"}
-
-## Rule
-
-PPT builder 前必须有客户可读文本框架、每页标题、正文、客户确认点和素材角色。这个 Gate 不批准视觉质量或最终发送。
-""",
-    )
-    update_artifact(
-        project,
-        "ART-AUTO-CLIENT-OUTLINE-GATE",
-        "client_outline_gate_report",
-        safe_rel(project, report_path),
-        "client_outline",
-        status="done" if status != "BLOCKED" else "blocked",
-        visibility="internal_only",
-        gate_status=status,
-    )
-    append_gate(
-        project,
-        "GATE-AUTO-CLIENT-OUTLINE-001",
-        "client_outline",
-        status,
-        "92" if status == "PASS" else "65" if status == "PARTIAL_PASS" else "30",
-        "ART-AUTO-CLIENT-OUTLINE-GATE",
-        ";".join(issues[:8]),
-        ";".join(warnings[:8]) or "补齐客户可读文本框架后重跑 client-outline-gate。",
-        "",
-        "ready_for_ppt_builder" if status == "PASS" else "fix_client_outline_before_ppt",
-        "ad_creative_operator",
-    )
-    return status, issues + warnings, report_path
 
 
 def write_pptx_check(project: Path, pptx_path: Path, stats: dict[str, int | bool | str]) -> Path:
-    rel_pptx = safe_rel(project, pptx_path)
-    status = "PASS" if stats["editable"] else "BLOCKED"
-    check_path = project / "AD-creative/ppt/ppt_editability_check.md"
-    write_text(
-        check_path,
-        f"""# PPT Editability Check
-
-status: {status}
-visibility: internal_only
-checked_at: {now_iso()}
-pptx: {rel_pptx}
-
-## Result
-
-| Check | Value |
-| --- | --- |
-| has_presentation_xml | {stats['has_presentation']} |
-| slides | {stats['slides']} |
-| editable_text_runs | {stats['editable_text_runs']} |
-| embedded_media | {stats['embedded_media']} |
-| editable | {stats['editable']} |
-
-## Rules
-
-- `editable=true` 只代表 PPTX 内存在可编辑文本层。
-- 图片页若存在，必须在客户稿前说明用途、来源和可替换性。
-- 客户可见前仍需 Delivery Gate。
-""",
-    )
-    update_artifact(
-        project,
-        "ART-AUTO-PPTX",
-        "pptx",
-        rel_pptx,
-        "ppt_gate",
-        status="done" if stats["editable"] else "blocked",
-        visibility="internal_only",
-        gate_status=status,
-    )
-    update_artifact(
-        project,
-        "ART-AUTO-PPT-EDITABILITY",
-        "ppt_editability_check",
-        safe_rel(project, check_path),
-        "ppt_gate",
-        status="done",
-        visibility="internal_only",
-        gate_status=status,
-    )
-    append_gate(
-        project,
-        "GATE-AUTO-PPT-001",
-        "ppt_gate",
-        status,
-        "90" if stats["editable"] else "35",
-        "ART-AUTO-PPTX;ART-AUTO-PPT-EDITABILITY",
-        "" if stats["editable"] else "PPTX 缺少可编辑文本层。",
-        "客户可见前检查图片来源、页面备注和最终交付一致性。",
-        "",
-        "ready_for_internal_review" if stats["editable"] else "rebuild_pptx",
-        "ad_creative_operator",
-    )
-    append_event(
-        project,
-        {
-            "event_id": "EVT-AUTO-PPTX-CHECK",
-            "event_type": "pptx_editability_checked",
-            "created_at": now_iso(),
-            "pptx": rel_pptx,
-            "stats": stats,
-        },
-    )
+    sha256 = file_sha256(pptx_path)
+    check_path = project / f"AD-creative/ppt/checks/{pptx_path.stem}_{sha256[:12]}_editability.md"
+    if not check_path.exists():
+        write_text(
+            check_path,
+            pptx_editability_report_content(
+                project,
+                pptx_path,
+                stats,
+                sha256=sha256,
+            ),
+        )
     return check_path
 
 
@@ -6822,7 +7177,7 @@ def candidate_client_files(project: Path, artifacts: list[dict[str, str]]) -> li
             continue
         rel_path = artifact.get("path", "").strip()
         path = project / rel_path
-        if path.is_file() and path.suffix.lower() in {".md", ".txt", ".csv"}:
+        if path.is_file() and path.suffix.lower() in {".md", ".txt", ".csv", ".pptx", ".pdf"}:
             files.append(path)
     return sorted(files)
 
@@ -6862,185 +7217,250 @@ def current_pptx_path(project: Path, artifacts: list[dict[str, str]]) -> tuple[P
     return artifact_path_by_id(project, artifacts, artifact_id), True
 
 
-def review_client_language(project: Path) -> tuple[str, list[str], Path]:
-    _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
-    files = candidate_client_language_files(project, artifacts)
-    issues: list[str] = []
-    warnings: list[str] = []
-    evidence: list[str] = [f"scanned_files={len(files)}"]
-    for path in files:
-        if path.suffix.lower() == ".pptx":
-            text = pptx_text_content(path)
+def current_delivery_paths(
+    project: Path,
+    artifacts: list[dict[str, str]],
+) -> dict[str, Path | None]:
+    truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    truth = truth_path.read_text(encoding="utf-8") if truth_path.exists() else ""
+    keys = {
+        "pptx": "current_pptx_artifact_id",
+        "pdf": "current_pdf_artifact_id",
+        "preview": "current_preview_artifact_id",
+        "text_extract": "current_text_extract_artifact_id",
+        "editability": "current_ppt_editability_artifact_id",
+    }
+    return {
+        name: artifact_path_by_id(project, artifacts, current_truth_value(truth, key))
+        if current_truth_value(truth, key)
+        else None
+        for name, key in keys.items()
+    }
+
+
+def build_client_pack_input_manifest(
+    project: Path,
+    artifacts: list[dict[str, str]],
+) -> tuple[dict[str, object], str, list[str]]:
+    truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    truth = truth_path.read_text(encoding="utf-8") if truth_path.is_file() else ""
+    version_id = current_truth_value(truth, "current_version_id")
+    pointer_keys = [
+        "current_pptx_artifact_id",
+        "current_pdf_artifact_id",
+        "current_preview_artifact_id",
+        "current_text_extract_artifact_id",
+        "current_ppt_editability_artifact_id",
+    ]
+    artifact_by_id = {
+        row.get("artifact_id", ""): row
+        for row in artifacts
+        if row.get("artifact_id", "")
+    }
+    pointers = {key: current_truth_value(truth, key) for key in pointer_keys}
+    errors: list[str] = []
+    paths: set[Path] = {
+        truth_path,
+        project / "AD-creative/orchestrator/version_map.csv",
+        project / "AD-creative/client_review/client_outline.csv",
+        project / CLIENT_OUTLINE_CONFIRMATION_REL,
+        project / "AD-creative/visual_assets/asset_manifest.csv",
+        project / "AD-creative/visual_assets/asset_current_manifest.csv",
+        project / "AD-creative/visual_assets/asset_authorizations.csv",
+        project / "AD-creative/visual_review/review_matrix.csv",
+        project / "AD-creative/references/reference_cards.csv",
+        project / "AD-creative/feedback/feedback_map.csv",
+    }
+    for key, artifact_id in pointers.items():
+        row = artifact_by_id.get(artifact_id)
+        if not artifact_id or not row:
+            errors.append(f"{key} 未解析到 exact-current artifact")
+            continue
+        try:
+            path = contained_project_path(
+                project, row.get("path", ""), f"{key} artifact path"
+            )
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        paths.add(path)
+    paths.update(candidate_client_language_files(project, artifacts))
+    _, current_assets = read_csv_rows(
+        project / "AD-creative/visual_assets/asset_current_manifest.csv"
+    )
+    for row in current_assets:
+        if not (
+            normalized_bool(row.get("direct_client_use"))
+            or row.get("used_in_slide", "").strip()
+        ):
+            continue
+        try:
+            paths.add(
+                contained_project_path(
+                    project,
+                    row.get("path", ""),
+                    f"client-used asset {row.get('asset_id', '')}",
+                )
+            )
+        except ValueError as exc:
+            errors.append(str(exc))
+    entries: list[dict[str, object]] = []
+    for path in sorted(paths):
+        try:
+            rel_path = canonical_project_relative(project, path)
+        except ValueError:
+            errors.append(f"client-pack input escapes project: {path}")
+            continue
+        if not path.is_file():
+            errors.append(f"client-pack input missing: {rel_path}")
+            continue
+        entries.append(
+            {
+                "path": rel_path,
+                "sha256": file_sha256(path),
+                "size_bytes": path.stat().st_size,
+            }
+        )
+    payload: dict[str, object] = {
+        "protocol_id": "adco.client-pack-input-manifest",
+        "version": "1.0",
+        "current_version_id": version_id,
+        "artifact_pointers": pointers,
+        "files": entries,
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return payload, digest, errors
+
+
+def write_client_pack_binding(
+    project: Path,
+    *,
+    payload: dict[str, object],
+    package_digest: str,
+    report_path: Path,
+    status: str,
+) -> tuple[Path, Path]:
+    version_id = validate_specialist_token(
+        str(payload.get("current_version_id", "")), "current_version_id"
+    )
+    manifest_path = (
+        project
+        / "AD-creative/delivery/client_pack_manifests"
+        / f"{version_id}_{package_digest}.json"
+    )
+    manifest_core = {**payload, "package_digest": package_digest}
+    manifest_payload = {**manifest_core, "created_at": now_iso()}
+    if manifest_path.exists():
+        existing = read_json_object(manifest_path, "client pack manifest")
+        existing_core = {
+            key: value for key, value in existing.items() if key != "created_at"
+        }
+        if existing_core != manifest_core or not str(
+            existing.get("created_at", "")
+        ).strip():
+            raise ValueError("immutable client pack manifest collision")
+    else:
+        write_json_object(manifest_path, manifest_payload)
+    binding_path = project / "AD-creative/delivery/client_pack_binding.json"
+    write_json_object(
+        binding_path,
+        {
+            "protocol_id": "adco.client-pack-binding",
+            "version": "1.0",
+            "status": status,
+            "current_version_id": version_id,
+            "package_digest": package_digest,
+            "manifest_path": safe_rel(project, manifest_path),
+            "manifest_sha256": file_sha256(manifest_path),
+            "report_path": safe_rel(project, report_path),
+            "report_sha256": file_sha256(report_path),
+            "checked_at": now_iso(),
+        },
+    )
+    return manifest_path, binding_path
+
+
+def current_client_pack_binding_errors(
+    project: Path,
+    artifacts: list[dict[str, str]],
+) -> tuple[list[str], str]:
+    binding_path = project / "AD-creative/delivery/client_pack_binding.json"
+    if not binding_path.is_file():
+        return ["缺少 current client-pack binding；先重跑 client-pack-gate"], ""
+    try:
+        binding = read_json_object(binding_path, "client pack binding")
+    except ValueError as exc:
+        return [str(exc)], ""
+    errors: list[str] = []
+    if binding.get("status") != "PASS":
+        errors.append("current client-pack binding status 不是 PASS")
+    current_payload, current_digest, manifest_errors = build_client_pack_input_manifest(
+        project, artifacts
+    )
+    errors.extend(manifest_errors)
+    bound_digest = str(binding.get("package_digest", ""))
+    if not re.fullmatch(r"[0-9a-f]{64}", bound_digest):
+        errors.append("client-pack binding package_digest 无效")
+    elif current_digest != bound_digest:
+        errors.append("client-pack binding 已过期：exact-current package inputs changed")
+    checked_paths: dict[str, Path] = {}
+    for key in ["manifest", "report"]:
+        try:
+            path = contained_project_path(
+                project, str(binding.get(f"{key}_path", "")), f"client-pack {key}"
+            )
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        checked_paths[key] = path
+        if not path.is_file() or file_sha256(path) != binding.get(f"{key}_sha256"):
+            errors.append(f"client-pack {key} missing or hash mismatch")
+    manifest_path = checked_paths.get("manifest")
+    if manifest_path and manifest_path.is_file():
+        try:
+            manifest = read_json_object(manifest_path, "client pack manifest")
+        except ValueError as exc:
+            errors.append(str(exc))
         else:
-            try:
-                text = path.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                text = path.read_text(encoding="utf-8", errors="ignore")
-        hits = find_client_language_hits(text)
-        if hits:
-            issues.append(f"{safe_rel(project, path)} 命中客户语言禁词: {', '.join(hits[:10])}")
-    status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
-    report_path = project / "AD-creative/gates/GATE-AUTO-CLIENT-LANGUAGE-001_report.md"
-    write_text(
-        report_path,
-        f"""# Client Language Gate
-
-status: {status}
-visibility: internal_only
-checked_at: {now_iso()}
-
-## Evidence
-
-{chr(10).join(f"- {item}" for item in evidence)}
-
-## Blocking Issues
-
-{chr(10).join(f"- {issue}" for issue in issues) or "- 无"}
-
-## Warnings
-
-{chr(10).join(f"- {warning}" for warning in warnings) or "- 无"}
-
-## Blocklist
-
-prompt / thread / worker / AI / ChatGPT / Grok / ImageGen / gate / 制作表 / 可授权 / 需确认 / 内部 / 执行过程 / TODO / TBD 等执行侧或未确认表达，不能进入客户版导出。
-""",
-    )
-    update_artifact(
-        project,
-        "ART-AUTO-CLIENT-LANGUAGE-GATE",
-        "client_language_gate_report",
-        safe_rel(project, report_path),
-        "client_language",
-        status="done" if status != "BLOCKED" else "blocked",
-        visibility="internal_only",
-        gate_status=status,
-    )
-    append_gate(
-        project,
-        "GATE-AUTO-CLIENT-LANGUAGE-001",
-        "client_language",
-        status,
-        "95" if status == "PASS" else "70" if status == "PARTIAL_PASS" else "25",
-        "ART-AUTO-CLIENT-LANGUAGE-GATE",
-        ";".join(issues[:8]),
-        ";".join(warnings[:8]) or "替换内部/执行侧词后重跑 client-language-gate。",
-        "",
-        "ready_for_client_export_language" if status != "BLOCKED" else "rewrite_client_visible_language",
-        "ad_creative_operator",
-    )
-    return status, issues + warnings, report_path
+            expected_core = {**current_payload, "package_digest": current_digest}
+            actual_core = {
+                key: value for key, value in manifest.items() if key != "created_at"
+            }
+            if actual_core != expected_core:
+                errors.append(
+                    "client-pack immutable manifest content does not match exact-current inputs"
+                )
+            expected_name = (
+                f"{current_payload.get('current_version_id')}_{current_digest}.json"
+            )
+            if manifest_path.name != expected_name:
+                errors.append("client-pack manifest path is not digest-addressed")
+    return errors, bound_digest
 
 
-def review_visual_layout(project: Path, pptx_path: Path | None = None) -> tuple[str, list[str], Path]:
-    manifest_path = sync_asset_current_manifest(project)
-    _, asset_rows = read_csv_rows(manifest_path)
-    outline = client_outline_rows(project)
-    _, review_rows = read_csv_rows(project / "AD-creative/visual_review/review_matrix.csv")
-    issues: list[str] = []
-    warnings: list[str] = []
-    evidence: list[str] = [f"asset_current_rows={len(asset_rows)}", f"client_outline_rows={len(outline)}"]
 
-    for row in outline:
-        slide_id = row.get("slide_id", "").strip() or "<missing slide_id>"
-        if not non_placeholder(row.get("body_copy"), min_chars=22):
-            issues.append(f"{slide_id} 客户页正文过短或未成故事。")
-        if not non_placeholder(row.get("material_role"), min_chars=4):
-            issues.append(f"{slide_id} 缺少素材角色，无法判断图片/文本服务哪段故事。")
 
-    approved_values = {"approved", "client_approved", "approved_for_client", "licensed", "cleared"}
-    for asset in asset_rows:
-        asset_id = asset.get("asset_id", "").strip() or "<missing asset_id>"
-        notes_blob = " ".join(asset.get(key, "") for key in ASSET_CURRENT_FIELDS).lower()
-        risk_match = VISUAL_LAYOUT_RISK_PATTERN.search(notes_blob)
-        if risk_match:
-            issues.append(f"{asset_id} asset_current_manifest 命中视觉版式风险词: {risk_match.group(0)}")
-        direct_client = normalized_bool(asset.get("direct_client_use"))
-        used_in_slide = asset.get("used_in_slide", "").strip()
-        approval = asset.get("approval", "").strip().lower()
-        if (direct_client or used_in_slide) and approval not in approved_values:
-            issues.append(f"{asset_id} 用于客户页但 approval={asset.get('approval') or 'missing'}。")
-        rel_path = asset.get("path", "").strip()
-        if used_in_slide and not asset.get("sha256", "").strip():
-            issues.append(f"{asset_id} 用于 slide 但缺少 sha256。")
-        if rel_path and (project / rel_path).exists() and Path(rel_path).suffix.lower() in GENERATED_IMAGE_SUFFIXES:
-            width, height, image_format = probe_image(project / rel_path)
-            evidence.append(f"{asset_id}={width}x{height} {image_format}")
-            if width and height and (max(width, height) < 1000 or min(width, height) < 650):
-                warnings.append(f"{asset_id} 图像尺寸偏小，进入 PPT 前需确认放大后不糊: {width}x{height}")
-
-    for row in review_rows:
-        blob = " ".join(row.values()).lower()
-        risk_match = VISUAL_LAYOUT_RISK_PATTERN.search(blob)
-        if risk_match:
-            issues.append(f"visual_review {row.get('review_id', '<row>')} 命中视觉版式风险词: {risk_match.group(0)}")
-
-    if pptx_path:
-        findings = pptx_layout_findings(pptx_path)
-        issues.extend(findings)
-        evidence.append(f"pptx_layout_checked={safe_rel(project, pptx_path)}")
-
-    if not outline:
-        warnings.append("未找到 client_outline.csv 页记录；visual-layout-gate 无法判断客户阅读顺序。")
-    status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
-    report_path = project / "AD-creative/gates/GATE-AUTO-VISUAL-LAYOUT-001_report.md"
-    write_text(
-        report_path,
-        f"""# Visual Layout Gate
-
-status: {status}
-visibility: internal_only
-checked_at: {now_iso()}
-
-## Evidence
-
-{chr(10).join(f"- {item}" for item in evidence)}
-
-## Blocking Issues
-
-{chr(10).join(f"- {issue}" for issue in issues) or "- 无"}
-
-## Warnings
-
-{chr(10).join(f"- {warning}" for warning in warnings) or "- 无"}
-
-## Rule
-
-检查图片拉伸、裁切错误、图像过小、页面拥挤、卡片套卡片、报告感、文字过短、过度简化和客户阅读顺序。自动检查只覆盖可解析证据，不代表审美批准。
-""",
-    )
-    update_artifact(
-        project,
-        "ART-AUTO-VISUAL-LAYOUT-GATE",
-        "visual_layout_gate_report",
-        safe_rel(project, report_path),
-        "visual_layout",
-        status="done" if status != "BLOCKED" else "blocked",
-        visibility="internal_only",
-        linked_assets=";".join(row.get("asset_id", "") for row in asset_rows if row.get("asset_id", "")),
-        gate_status=status,
-    )
-    append_gate(
-        project,
-        "GATE-AUTO-VISUAL-LAYOUT-001",
-        "visual_layout",
-        status,
-        "92" if status == "PASS" else "65" if status == "PARTIAL_PASS" else "30",
-        "ART-AUTO-VISUAL-LAYOUT-GATE",
-        ";".join(issues[:8]),
-        ";".join(warnings[:8]) or "修正版式和图片使用记录后重跑 visual-layout-gate。",
-        "",
-        "ready_for_ppt_visual_review" if status != "BLOCKED" else "fix_visual_layout",
-        "ad_creative_operator",
-    )
-    return status, issues + warnings, report_path
 
 
 def review_client_pack(project: Path, pptx_path: Path | None = None) -> tuple[str, list[str], Path]:
+    migrate_control_plane(project)
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    package_paths = current_delivery_paths(project, artifacts)
     _, version_map = read_csv_rows(project / "AD-creative/orchestrator/version_map.csv")
     _, feedback_rows = read_csv_rows(project / "AD-creative/feedback/feedback_map.csv")
     _, assets = read_csv_rows(project / "AD-creative/visual_assets/asset_manifest.csv")
+    current_manifest_path = sync_asset_current_manifest(project)
+    _, current_assets = read_csv_rows(current_manifest_path)
+    current_by_id = {
+        row.get("asset_id", "").strip(): row
+        for row in current_assets
+        if row.get("asset_id", "").strip()
+    }
+    _, authorization_rows = read_csv_rows(
+        project / "AD-creative/visual_assets/asset_authorizations.csv"
+    )
     _, references = read_csv_rows(project / "AD-creative/references/reference_cards.csv")
     issues: list[str] = []
     warnings: list[str] = []
@@ -7053,7 +7473,21 @@ def review_client_pack(project: Path, pptx_path: Path | None = None) -> tuple[st
     elif outline_findings:
         warnings.extend(f"Client Outline Gate: {item}" for item in outline_findings[:8])
 
-    language_status, language_findings, language_report = review_client_language(project)
+    for row in client_outline_rows(project):
+        slide_id = row.get("slide_id", "<missing>")
+        if row.get("visibility", "").strip().lower() not in CLIENT_VISIBLE_VALUES:
+            issues.append(f"Client Outline: {slide_id} 仍是 internal/pending，不能满足客户包准备。")
+        if row.get("status", "").strip().lower() not in {"ready", "approved", "done"}:
+            issues.append(f"Client Outline: {slide_id} status 未 ready/approved/done。")
+
+    language_status, language_findings, language_report = review_client_language(
+        project,
+        extra_paths=[
+            path
+            for name, path in package_paths.items()
+            if name in {"pptx", "pdf", "text_extract"} and path is not None
+        ],
+    )
     evidence.append(f"client_language_gate={language_status} {safe_rel(project, language_report)}")
     if language_status == "BLOCKED":
         issues.extend(f"Client Language Gate: {item}" for item in language_findings[:8])
@@ -7083,16 +7517,23 @@ def review_client_pack(project: Path, pptx_path: Path | None = None) -> tuple[st
         visibility = asset.get("visibility", "").lower()
         qa_status = asset.get("qa_status", "").upper()
         status = asset.get("status", "").lower()
-        asset_type = asset.get("asset_type", "").lower()
-        notes = asset.get("notes", "").lower()
         reference_id = asset.get("reference_id", "").strip()
         if visibility in CLIENT_VISIBLE_VALUES:
             if qa_status != "PASS":
                 issues.append(f"客户可见图片 QA 未 PASS: {asset.get('asset_id')}")
             if status not in CLIENT_REVIEW_ASSET_STATUSES:
                 issues.append(f"客户可见图片未进入 selected/approved: {asset.get('asset_id')}")
-            if asset_type == "generated_image" and "client_visibility_approved" not in notes:
-                issues.append(f"客户可见生成图缺少批准记录: {asset.get('asset_id')}")
+            asset_id = asset.get("asset_id", "").strip()
+            current = current_by_id.get(asset_id, {})
+            current_sha = current.get("sha256", "").strip()
+            if not current_sha:
+                issues.append(f"客户可见图片 current manifest 缺少 sha256: {asset_id}")
+            elif not matching_asset_authorization(
+                project, asset_id, current_sha, authorization_rows
+            ):
+                issues.append(
+                    f"客户可见图片缺少匹配 asset hash/scope 的独立授权 receipt: {asset_id}"
+                )
             if reference_id in {"", "pending"}:
                 issues.append(f"客户可见图片未绑定真实参考: {asset.get('asset_id')}")
 
@@ -7111,12 +7552,9 @@ def review_client_pack(project: Path, pptx_path: Path | None = None) -> tuple[st
         issues.append(
             f"PPTX 检查目标不是 current_pptx_artifact_id 指向的当前文件: {safe_rel(project, pptx_path)}"
         )
-    default_pptx = project / "AD-creative/ppt/client_review_draft.pptx"
-    check_target = (
-        exact_current_pptx
-        if current_pptx_declared
-        else pptx_path or (default_pptx if default_pptx.exists() else None)
-    )
+    if not current_pptx_declared:
+        issues.append("缺少 current_pptx_artifact_id；client-pack-gate 只检查已登记的 exact current PPTX。")
+    check_target = exact_current_pptx if current_pptx_declared else None
     pptx_stats: dict[str, int | bool | str] | None = None
     if check_target:
         if not check_target.exists():
@@ -7138,20 +7576,43 @@ def review_client_pack(project: Path, pptx_path: Path | None = None) -> tuple[st
     risky_hits: list[str] = []
     for path in scanned_files:
         try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            text = client_language_text_for_path(path)
+        except RuntimeError as exc:
+            issues.append(f"客户稿候选无法可靠解析: {safe_rel(project, path)}: {exc}")
+            continue
         lowered = text.lower()
         risky_patterns = {match.group(0) for match in RISKY_CLIENT_COPY_PATTERN.finditer(lowered)}
         risky_hits.extend(f"{safe_rel(project, path)}: {pattern}" for pattern in risky_patterns)
     if risky_hits:
         issues.extend(f"客户稿候选含风险词: {hit}" for hit in sorted(risky_hits)[:12])
 
+    manifest_payload, package_digest, manifest_issues = build_client_pack_input_manifest(
+        project, artifacts
+    )
+    issues.extend(manifest_issues)
+    evidence.append(f"package_digest={package_digest}")
+    adversarial_target = write_adversarial_target_snapshot(
+        project,
+        stage="final_delivery",
+        payload=manifest_payload,
+        target_digest=package_digest,
+    )
+    evidence.append(f"adversarial_target={safe_rel(project, adversarial_target)}")
     status = "PASS" if not issues else "BLOCKED"
     status = enforce_adversarial_gate_policy(
-        project, "final_delivery", status, warnings, evidence
+        project,
+        "final_delivery",
+        status,
+        warnings,
+        evidence,
+        expected_targets=[adversarial_target],
     )
-    report_path = project / "AD-creative/gates/GATE-AUTO-CLIENT-PACK-001_report.md"
+    version_id = str(manifest_payload.get("current_version_id") or "UNVERSIONED")
+    report_path = (
+        project
+        / "AD-creative/gates"
+        / f"GATE-AUTO-CLIENT-PACK-001_{safe_artifact_suffix(version_id)}_{package_digest[:12]}.md"
+    )
     evidence.extend(
         [
             f"client_candidate_files={len(scanned_files)}",
@@ -7170,6 +7631,8 @@ def review_client_pack(project: Path, pptx_path: Path | None = None) -> tuple[st
 status: {status}
 checked_at: {now_iso()}
 visibility: internal_only
+current_version_id: {version_id}
+package_digest: {package_digest}
 
 ## Evidence
 
@@ -7193,6 +7656,47 @@ visibility: internal_only
 - 当前交付包必须具备 current version、PPTX、PDF、preview、text extract、PPT editability 和 feedback closure 证据。
 """,
     )
+    manifest_payload_for_binding = {
+        **manifest_payload,
+        "current_version_id": version_id,
+    }
+    manifest_path, binding_path = write_client_pack_binding(
+        project,
+        payload=manifest_payload_for_binding,
+        package_digest=package_digest,
+        report_path=report_path,
+        status=status,
+    )
+    manifest_artifact_id = f"ART-CLIENT-PACK-MANIFEST-{package_digest[:12].upper()}"
+    update_artifact(
+        project,
+        manifest_artifact_id,
+        "client_pack_input_manifest",
+        safe_rel(project, manifest_path),
+        "final_delivery",
+        status="done",
+        visibility="internal_only",
+        gate_status=status,
+        version=version_id,
+        derived_from_sha256=package_digest,
+        sha256=file_sha256(manifest_path),
+        size_bytes=str(manifest_path.stat().st_size),
+    )
+    update_artifact(
+        project,
+        "ART-AUTO-CLIENT-PACK-BINDING",
+        "client_pack_binding",
+        safe_rel(project, binding_path),
+        "final_delivery",
+        status="done" if status == "PASS" else "blocked",
+        visibility="internal_only",
+        gate_status=status,
+        version=version_id,
+        derived_from_artifact_id=manifest_artifact_id,
+        derived_from_sha256=file_sha256(manifest_path),
+        sha256=file_sha256(binding_path),
+        size_bytes=str(binding_path.stat().st_size),
+    )
     update_artifact(
         project,
         "ART-AUTO-CLIENT-PACK-GATE",
@@ -7202,6 +7706,11 @@ visibility: internal_only
         status="done" if status != "BLOCKED" else "blocked",
         visibility="internal_only",
         gate_status=status,
+        version=version_id,
+        derived_from_artifact_id=manifest_artifact_id,
+        derived_from_sha256=package_digest,
+        sha256=file_sha256(report_path),
+        size_bytes=str(report_path.stat().st_size),
     )
     append_gate(
         project,
@@ -7209,12 +7718,14 @@ visibility: internal_only
         "final_delivery",
         status,
         "92" if status == "PASS" else "65" if status == "PARTIAL_PASS" else "40",
-        "ART-AUTO-CLIENT-PACK-GATE",
+        f"ART-AUTO-CLIENT-PACK-GATE;{manifest_artifact_id};ART-AUTO-CLIENT-PACK-BINDING",
         ";".join(issues[:8]),
         ";".join(warnings[:8]) or "修正客户稿风险后重跑 client-pack-gate。",
         "",
-        "ready_for_manual_send_confirmation" if status == "PASS" else "revise_client_pack",
+        "ready_for_independent_human_review" if status == "PASS" else "revise_client_pack",
         "ad_creative_operator",
+        target_ref=safe_rel(project, binding_path),
+        target_sha256=file_sha256(binding_path),
     )
     append_event(
         project,
@@ -7225,6 +7736,9 @@ visibility: internal_only
             "status": status,
             "issues": issues[:12],
             "warnings": warnings[:12],
+            "current_version_id": version_id,
+            "package_digest": package_digest,
+            "binding": safe_rel(project, binding_path),
         },
     )
     return status, issues + warnings, report_path
@@ -7252,7 +7766,14 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
     targets = [
         ("AD-creative/client_review/client_outline.csv", CLIENT_OUTLINE_FIELDS),
         ("AD-creative/visual_assets/asset_current_manifest.csv", ASSET_CURRENT_FIELDS),
+        ("AD-creative/visual_assets/asset_authorizations.csv", ASSET_AUTHORIZATION_FIELDS),
         ("AD-creative/orchestrator/final_delivery_lock.csv", FINAL_DELIVERY_LOCK_FIELDS),
+        ("AD-creative/orchestrator/artifact_index.csv", ARTIFACT_INDEX_FIELDS),
+        ("AD-creative/orchestrator/gate_log.csv", GATE_LOG_FIELDS),
+        (
+            "AD-creative/orchestrator/specialist_exchange/exchange_index.csv",
+            SPECIALIST_EXCHANGE_INDEX_FIELDS,
+        ),
         ("AD-creative/orchestrator/agency/specialist_preflight.csv", ["preflight_id", "work_id", "requested_skill", "skill_path", "rules_read", "derived_gates", "status", "blocked_reason", "created_at"]),
         ("AD-creative/orchestrator/agency/asset_preflight.csv", ["preflight_id", "work_id", "source_scope", "local_manifest_checked", "browser_checked", "browser_tool", "download_method", "imported_asset_ids", "replacement_generation_allowed", "status", "blocked_reason", "created_at"]),
         ("AD-creative/orchestrator/agency/skill_scout.csv", ["scout_id", "work_id", "skill_name", "skill_path", "match_reason", "selected", "status", "created_at", "notes"]),
@@ -7270,21 +7791,69 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
         if not path.exists() or not path.read_text(encoding="utf-8").strip():
             changes.append(f"create_csv:{rel_path}")
         else:
-            existing, _ = read_csv_rows(path)
+            existing, rows = read_csv_rows(path)
             missing = [field for field in fields if field not in existing]
             if missing:
                 changes.append(f"add_csv_fields:{rel_path}:{','.join(missing)}")
+            elif csv_rows_need_normalization(existing, rows):
+                changes.append(f"normalize_csv_rows:{rel_path}")
     for rel_path in static_files:
         if not (project / rel_path).exists():
             changes.append(f"create_file:{rel_path}")
+    truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    truth_text = truth_path.read_text(encoding="utf-8") if truth_path.is_file() else ""
+    truth_sections = re.findall(
+        r"(?ims)^##[ \t]+Current Version Truth[ \t]*\n(.*?)(?=^##[ \t]+|\Z)",
+        truth_text,
+    )
+    warnings: list[str] = []
+    if "## Current Version Truth" not in truth_text:
+        changes.append("add_section:AD-creative/orchestrator/current_truth.md:Current Version Truth")
+    elif len(truth_sections) == 1:
+        _, missing_truth_keys = normalize_current_version_truth_section(truth_text)
+        if missing_truth_keys:
+            changes.append(
+                "add_current_truth_keys:AD-creative/orchestrator/current_truth.md:"
+                + ",".join(missing_truth_keys)
+            )
+    elif len(truth_sections) > 1:
+        warnings.append(
+            "current_truth has duplicate Current Version Truth sections; migration did not choose one"
+        )
     if not dry_run:
         for rel_path, fields in targets:
             ensure_csv_file(project / rel_path, fields)
+        normalize_gate_log_schema(project / "AD-creative/orchestrator/gate_log.csv")
         for rel_path, content in static_files.items():
             path = project / rel_path
             if not path.exists():
                 write_text(path, content)
-    return {"project": str(project), "dry_run": dry_run, "changes": changes, "warnings": []}
+        if truth_path.is_file() and "## Current Version Truth" not in truth_text:
+            update_markdown_sections(
+                truth_path,
+                {
+                    "Current Version Truth": """```text
+current_version_id:
+current_pptx_artifact_id:
+current_pdf_artifact_id:
+current_preview_artifact_id:
+current_text_extract_artifact_id:
+current_ppt_editability_artifact_id:
+version_map_status:
+last_archive_before_edit:
+```""",
+                },
+            )
+        elif truth_path.is_file() and len(truth_sections) == 1:
+            normalized_truth, _ = normalize_current_version_truth_section(truth_text)
+            if normalized_truth != truth_text:
+                write_text(truth_path, normalized_truth)
+    return {
+        "project": str(project),
+        "dry_run": dry_run,
+        "changes": changes,
+        "warnings": warnings,
+    }
 
 
 def row_text(row: dict[str, str], keys: Iterable[str] | None = None) -> str:
@@ -7391,6 +7960,1342 @@ def write_specialist_preflight(
     return preflight_id
 
 
+def read_json_object(path: Path, label: str) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} is not valid JSON: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must be a JSON object: {path}")
+    return payload
+
+
+def write_json_object(path: Path, payload: dict[str, object]) -> None:
+    write_text(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def contained_project_path(project: Path, raw_path: str, label: str) -> Path:
+    candidate = Path(raw_path)
+    if candidate.is_absolute():
+        raise ValueError(f"{label} must be a project-relative path: {raw_path}")
+    resolved = (project / candidate).resolve()
+    try:
+        resolved.relative_to(project.resolve())
+    except ValueError as exc:
+        raise ValueError(f"{label} escapes project scope: {raw_path}") from exc
+    return resolved
+
+
+def project_relative_path_has_symlink_component(project: Path, raw_path: str) -> bool:
+    candidate = Path(raw_path.replace("\\", "/"))
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return False
+    current = project.resolve()
+    for part in candidate.parts:
+        if part in {"", "."}:
+            continue
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def validate_specialist_token(value: str, label: str) -> str:
+    token = value.strip()
+    if (
+        not SPECIALIST_ID_PATTERN.fullmatch(token)
+        or token in {".", ".."}
+        or ".." in token
+    ):
+        raise ValueError(f"{label} must be a safe protocol token: {value}")
+    return token
+
+
+def relative_path_is_within(relative_path: str, root: str) -> bool:
+    path_parts = Path(relative_path).parts
+    root_parts = Path(root.rstrip("/")).parts
+    return len(path_parts) >= len(root_parts) and path_parts[: len(root_parts)] == root_parts
+
+
+def canonical_project_relative(project: Path, path: Path) -> str:
+    return path.resolve().relative_to(project.resolve()).as_posix()
+
+
+def specialist_scope_manifest(
+    project: Path,
+    *,
+    excluded_roots: list[str],
+) -> dict[str, str]:
+    roots = [root.strip().rstrip("/") for root in excluded_roots if root.strip()]
+    files: dict[str, str] = {}
+    for path in sorted(project.rglob("*")):
+        rel = path.relative_to(project).as_posix()
+        if rel == ".git" or rel.startswith(".git/"):
+            continue
+        if any(relative_path_is_within(rel, root) for root in roots):
+            continue
+        if path.is_symlink():
+            files[rel] = "symlink:" + os.readlink(path)
+        elif path.is_file():
+            files[rel] = file_sha256(path)
+    return files
+
+
+def specialist_manifest_digest(files: dict[str, str]) -> str:
+    canonical = json.dumps(files, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def with_project_advisory_lock(
+    project: Path,
+    lock_name: str,
+    operation: Callable[[], tuple[dict[str, object], Path | None]],
+) -> tuple[dict[str, object], Path | None]:
+    lock_path = project / "AD-creative/orchestrator/specialist_exchange" / lock_name
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            return operation()
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def validate_specialist_descriptor(
+    descriptor: dict[str, object],
+    *,
+    profile_id: str,
+    required_capabilities: list[str],
+) -> tuple[str, dict[str, object]]:
+    if descriptor.get("protocol_id") != SPECIALIST_EXCHANGE_PROTOCOL:
+        raise ValueError("descriptor protocol_id mismatch")
+    if descriptor.get("message_type") != "descriptor":
+        raise ValueError("descriptor message_type mismatch")
+    descriptor_version = str(descriptor.get("descriptor_version", ""))
+    if not re.fullmatch(r"1\.\d+", descriptor_version):
+        raise ValueError("unsupported descriptor_version")
+    supported = descriptor.get("supported_contract_versions")
+    if not isinstance(supported, list) or SPECIALIST_EXCHANGE_VERSION not in supported:
+        raise ValueError("descriptor does not support contract_version 1.0")
+    provider = descriptor.get("provider")
+    if not isinstance(provider, dict) or not str(provider.get("id", "")).strip():
+        raise ValueError("descriptor provider.id missing")
+    provider_id = validate_specialist_token(str(provider.get("id", "")), "provider.id")
+    profile_id = validate_specialist_token(profile_id, "profile_id")
+    profiles = descriptor.get("profiles")
+    if not isinstance(profiles, list):
+        raise ValueError("descriptor profiles missing")
+    profile = next(
+        (
+            item
+            for item in profiles
+            if isinstance(item, dict) and item.get("profile_id") == profile_id
+        ),
+        None,
+    )
+    if not isinstance(profile, dict):
+        raise ValueError(f"descriptor profile not found: {profile_id}")
+    capabilities = profile.get("capabilities")
+    if not isinstance(capabilities, list):
+        raise ValueError("descriptor profile capabilities missing")
+    capability_set = {
+        validate_specialist_token(str(item), "descriptor capability")
+        for item in capabilities
+    }
+    missing = sorted(set(required_capabilities) - capability_set)
+    if missing:
+        raise ValueError("descriptor missing capabilities: " + ",".join(missing))
+    authority = profile.get("authority")
+    if not isinstance(authority, dict):
+        raise ValueError("descriptor profile authority missing")
+    for key in [
+        "client_interaction",
+        "artifact_adoption",
+        "client_readiness",
+        "final_export",
+        "nested_dispatch",
+    ]:
+        if authority.get(key) is not False:
+            raise ValueError(f"descriptor authority escalation: {key}")
+    for key, value in authority.items():
+        if value is not False:
+            raise ValueError(f"descriptor authority escalation: {key}")
+    receipt_extension = profile.get("receipt_extension")
+    if receipt_extension is not None:
+        if not isinstance(receipt_extension, dict):
+            raise ValueError("descriptor receipt_extension must be an object")
+        validate_specialist_token(
+            str(receipt_extension.get("id", "")), "receipt_extension.id"
+        )
+        if not re.fullmatch(r"\d+\.\d+", str(receipt_extension.get("version", ""))):
+            raise ValueError("receipt_extension.version must be major.minor")
+        if not isinstance(receipt_extension.get("required"), bool):
+            raise ValueError("receipt_extension.required must be boolean")
+    validate_specialist_payload("descriptor", descriptor)
+    return provider_id, profile
+
+
+def create_specialist_handoff(
+    project: Path,
+    *,
+    work_id: str,
+    profile_id: str,
+    objective: str,
+    input_artifact_ids: list[str],
+    expected_output_kinds: list[str],
+    required_capabilities: list[str],
+    descriptor_path: Path | None,
+    execution_mode: str,
+    workspace_mode: str,
+    lane_id: str = "",
+    generation_mode: str = "prompt_only",
+    generation_authorized: bool = False,
+    authorization_ref: str = "",
+) -> tuple[dict[str, object], Path]:
+    result, path = with_project_advisory_lock(
+        project,
+        ".exchange.lock",
+        lambda: _create_specialist_handoff_locked(
+            project,
+            work_id=work_id,
+            profile_id=profile_id,
+            objective=objective,
+            input_artifact_ids=input_artifact_ids,
+            expected_output_kinds=expected_output_kinds,
+            required_capabilities=required_capabilities,
+            descriptor_path=descriptor_path,
+            execution_mode=execution_mode,
+            workspace_mode=workspace_mode,
+            lane_id=lane_id,
+            generation_mode=generation_mode,
+            generation_authorized=generation_authorized,
+            authorization_ref=authorization_ref,
+        ),
+    )
+    if path is None:
+        raise RuntimeError("specialist handoff did not produce a handoff path")
+    return result, path
+
+
+def _create_specialist_handoff_locked(
+    project: Path,
+    *,
+    work_id: str,
+    profile_id: str,
+    objective: str,
+    input_artifact_ids: list[str],
+    expected_output_kinds: list[str],
+    required_capabilities: list[str],
+    descriptor_path: Path | None,
+    execution_mode: str,
+    workspace_mode: str,
+    lane_id: str = "",
+    generation_mode: str = "prompt_only",
+    generation_authorized: bool = False,
+    authorization_ref: str = "",
+) -> tuple[dict[str, object], Path]:
+    migrate_control_plane(project)
+    if not work_id.strip() or not objective.strip():
+        raise ValueError("work_id and objective are required")
+    if not input_artifact_ids or not expected_output_kinds:
+        raise ValueError("at least one input artifact and expected output kind are required")
+    work_id = validate_specialist_token(work_id, "work_id")
+    profile_id = validate_specialist_token(profile_id, "profile_id")
+    input_artifact_ids = [
+        validate_specialist_token(item, "input_artifact_id")
+        for item in input_artifact_ids
+    ]
+    expected_output_kinds = list(
+        dict.fromkeys(
+            validate_specialist_token(item, "expected_output_kind")
+            for item in expected_output_kinds
+        )
+    )
+    required_capabilities = list(
+        dict.fromkeys(
+            validate_specialist_token(item, "required_capability")
+            for item in [*required_capabilities, *expected_output_kinds]
+        )
+    )
+    if execution_mode not in {"inline", "codex_thread", "external_handoff"}:
+        raise ValueError(f"unsupported execution_mode: {execution_mode}")
+    if workspace_mode not in {"read_only", "isolated_workspace", "worktree"}:
+        raise ValueError(f"unsupported workspace_mode: {workspace_mode}")
+    authorization_block: dict[str, object] = {
+        "generation_mode": generation_mode,
+        "authorized": generation_authorized,
+        "authorization_ref": authorization_ref.strip() or None,
+        "external_upload": False,
+    }
+    authorization_errors = specialist_generation_authorization_errors(
+        project,
+        authorization=authorization_block,
+        work_id=work_id,
+        profile_id=profile_id,
+        input_artifact_ids=input_artifact_ids,
+        expected_output_kinds=expected_output_kinds,
+    )
+    if authorization_errors:
+        raise ValueError("; ".join(authorization_errors))
+    if generation_mode == "real_media":
+        authorization_path = contained_project_path(
+            project,
+            str(authorization_block["authorization_ref"]),
+            "generation authorization_ref",
+        )
+        authorization_block["authorization_ref"] = canonical_project_relative(
+            project, authorization_path
+        )
+
+    descriptor_sha = ""
+    compatibility_status = "unverified"
+    provider_id = validate_specialist_token(
+        profile_id.split(".", 1)[0], "provider_id"
+    )
+    profile: dict[str, object] | None = None
+    descriptor_ref: dict[str, object] | None = None
+    descriptor_snapshot: Path | None = None
+    descriptor_snapshot_payload: dict[str, object] | None = None
+    required_receipt_extensions: list[dict[str, str]] = []
+    if descriptor_path:
+        descriptor = read_json_object(descriptor_path, "descriptor")
+        provider_id, profile = validate_specialist_descriptor(
+            descriptor,
+            profile_id=profile_id,
+            required_capabilities=required_capabilities,
+        )
+        modes = {str(item) for item in profile.get("execution_modes", [])}
+        workspaces = {str(item) for item in profile.get("workspace_modes", [])}
+        if execution_mode not in modes or workspace_mode not in workspaces:
+            raise ValueError("descriptor does not support requested execution/workspace mode")
+        canonical = json.dumps(descriptor, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        descriptor_sha = hashlib.sha256(canonical).hexdigest()
+        descriptor_snapshot = (
+            project
+            / "AD-creative/orchestrator/specialist_exchange/descriptors"
+            / f"descriptor_{descriptor_sha}.json"
+        )
+        descriptor_snapshot_payload = descriptor
+        descriptor_ref = {"provider_id": provider_id, "sha256": descriptor_sha}
+        receipt_extension = profile.get("receipt_extension")
+        if isinstance(receipt_extension, dict) and receipt_extension.get("required") is True:
+            required_receipt_extensions.append(
+                {
+                    "id": str(receipt_extension["id"]),
+                    "version": str(receipt_extension["version"]),
+                }
+            )
+        compatibility_status = "compatible"
+
+    generation_modes = {"prompt_only"}
+    if profile is not None:
+        raw_generation_modes = profile.get("generation_modes", ["prompt_only"])
+        if isinstance(raw_generation_modes, list):
+            generation_modes = {str(item) for item in raw_generation_modes}
+    if generation_mode not in generation_modes:
+        raise ValueError(
+            "specialist profile does not support generation_mode: " + generation_mode
+        )
+
+    artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+    _, artifacts = read_csv_rows(artifact_path)
+    _, work_items = read_csv_rows(project / "AD-creative/orchestrator/work_items.csv")
+    if work_id not in {row.get("work_id", "") for row in work_items}:
+        raise ValueError(f"specialist handoff work_id is not registered: {work_id}")
+    artifact_by_id = {
+        row.get("artifact_id", ""): row for row in artifacts if row.get("artifact_id", "")
+    }
+    source_artifacts: list[dict[str, object]] = []
+    for artifact_id in input_artifact_ids:
+        row = artifact_by_id.get(artifact_id)
+        if not row:
+            raise ValueError(f"input artifact is not indexed: {artifact_id}")
+        rel_path = row.get("path", "").strip()
+        path = contained_project_path(project, rel_path, f"input artifact {artifact_id}")
+        if not path.is_file():
+            raise ValueError(f"input artifact file missing: {artifact_id}: {rel_path}")
+        actual_sha = file_sha256(path)
+        registered_sha = row.get("sha256", "").strip()
+        if registered_sha and registered_sha != actual_sha:
+            raise ValueError(f"stale_input_artifact: {artifact_id}")
+        source_artifacts.append(
+            {
+                "artifact_id": artifact_id,
+                "version": row.get("version", "") or "unversioned",
+                "path": rel_path,
+                "sha256": actual_sha,
+                "visibility": row.get("visibility", "") or "internal_only",
+            }
+        )
+
+    index_path = project / "AD-creative/orchestrator/specialist_exchange/exchange_index.csv"
+    index_fields, index_rows = read_csv_rows(index_path)
+    exchange_id = next_id(index_rows, "exchange_id", "SPX")
+    handoff_id = "SPH-" + exchange_id.rsplit("-", 1)[-1]
+    output_root_rel = f"AD-creative/workspaces/{work_id}/specialists/{handoff_id}/outputs"
+    receipt_rel = f"AD-creative/workspaces/{work_id}/specialists/{handoff_id}/receipt.json"
+    baseline_rel = f"AD-creative/orchestrator/specialist_exchange/baselines/{handoff_id}.json"
+    handoff_rel = f"AD-creative/orchestrator/specialist_exchange/handoffs/{handoff_id}.json"
+    thread_id: str | None = None
+    lane_run_id: str | None = None
+    thread_control_exclusions: list[str] = []
+    if execution_mode == "codex_thread":
+        if not lane_id:
+            raise ValueError("codex_thread execution requires lane_id")
+        validate_specialist_token(lane_id, "lane_id")
+        if workspace_mode != "isolated_workspace":
+            raise ValueError("specialist exchange v1 codex_thread requires isolated_workspace")
+        registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
+        registry_fields, registry = read_csv_rows(registry_path)
+        row = thread_registry_target(registry, lane_id=lane_id, work_id=work_id)
+        candidate = row.get("real_thread_id", "").strip()
+        validate_real_thread_id(candidate)
+        if row.get("dispatch_status", "").strip().lower() not in {"dispatched", "running"}:
+            raise ValueError("codex_thread lane is not an active verified dispatch")
+        if row.get("receipt_status", "").strip().lower() in {"received", "rejected"}:
+            raise ValueError("codex_thread lane already has a terminal receipt")
+        if row.get("reconciliation_status", "").strip().lower() not in {"", "pending"}:
+            raise ValueError("codex_thread lane is stale or already reconciled")
+        if row.get("mode", "").strip() != "execution_worker":
+            raise ValueError("codex_thread specialist lane must be execution_worker")
+        if row.get("environment", "").strip() != "isolated_workspace":
+            raise ValueError("codex_thread specialist lane must use isolated_workspace")
+        lane_run_id = row.get("lane_run_id", "").strip()
+        if lane_run_id != f"{work_id}:{lane_id}":
+            raise ValueError("codex_thread lane_run_id mismatch")
+        dispatch_rel = row.get("dispatch_receipt_path", "").strip()
+        dispatch_path = contained_project_path(
+            project, dispatch_rel, "codex_thread dispatch receipt"
+        )
+        if not dispatch_path.is_file() or receipt_thread_ids(
+            dispatch_path.read_text(encoding="utf-8", errors="ignore")
+        ) != [candidate]:
+            raise ValueError("codex_thread lane lacks verified dispatch receipt")
+        write_scope_values = [
+            item.strip()
+            for item in row.get("write_scope", "").split(";")
+            if item.strip()
+        ]
+        if len(write_scope_values) != 1:
+            raise ValueError(
+                "codex_thread specialist lane requires one bounded workspace-directory write_scope"
+            )
+        lane_scope = contained_project_path(
+            project, write_scope_values[0], "codex_thread write_scope"
+        )
+        lane_scope_rel = canonical_project_relative(project, lane_scope)
+        expected_workspace_rel = f"AD-creative/workspaces/{work_id}/{lane_id}"
+        if lane_scope_rel != expected_workspace_rel:
+            raise ValueError(
+                "codex_thread specialist lane write_scope must equal its isolated workspace directory"
+            )
+        output_root_rel = f"{lane_scope_rel}/specialist_exchange/{handoff_id}/outputs"
+        receipt_rel = f"{lane_scope_rel}/specialist_exchange/{handoff_id}/receipt.json"
+        thread_baseline_path = contained_project_path(
+            project,
+            row.get("scope_baseline_path", "").strip(),
+            "codex_thread scope baseline",
+        )
+        if not thread_baseline_path.is_file() or file_sha256(
+            thread_baseline_path
+        ) != row.get("scope_baseline_sha256", "").strip():
+            raise ValueError("codex_thread scope baseline is missing or stale")
+        thread_baseline = read_json_object(
+            thread_baseline_path, "codex_thread scope baseline"
+        )
+        thread_excluded = thread_baseline.get("excluded_roots")
+        if not isinstance(thread_excluded, list):
+            raise ValueError("codex_thread scope baseline exclusions are invalid")
+        host_control_paths = [
+            "AD-creative/orchestrator/specialist_exchange",
+            receipt_rel,
+        ]
+        if descriptor_path:
+            try:
+                host_control_paths.append(
+                    canonical_project_relative(project, descriptor_path)
+                )
+            except ValueError:
+                pass
+        thread_baseline["excluded_roots"] = list(
+            dict.fromkeys(
+                [*[str(item) for item in thread_excluded], *host_control_paths]
+            )
+        )
+        thread_baseline_files = specialist_scope_manifest(
+            project,
+            excluded_roots=[
+                str(item) for item in thread_baseline["excluded_roots"]
+            ],
+        )
+        thread_baseline["files"] = thread_baseline_files
+        thread_baseline["manifest_sha256"] = specialist_manifest_digest(
+            thread_baseline_files
+        )
+        write_json_object(thread_baseline_path, thread_baseline)
+        row["receipt_path"] = receipt_rel
+        row["scope_baseline_sha256"] = file_sha256(thread_baseline_path)
+        write_csv_rows(registry_path, registry_fields, registry)
+        update_thread_agent_run(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            updates={
+                "receipt_path": receipt_rel,
+                "proof_status": "dispatch_verified_specialist_handoff_bound",
+            },
+        )
+        thread_control_exclusions = [
+            "AD-creative/orchestrator/thread_registry.csv",
+            "AD-creative/orchestrator/agent_runs.csv",
+            "AD-creative/orchestrator/thread_scope_baselines",
+            "AD-creative/orchestrator/thread_scope_proofs",
+            f"AD-creative/orchestrator/thread_convergence_{safe_artifact_suffix(work_id)}.md",
+            dispatch_rel,
+            f"AD-creative/orchestrator/thread_rescue_dispatch_{safe_artifact_suffix(work_id)}_{safe_artifact_suffix(lane_id)}.md",
+        ]
+        thread_id = candidate
+    elif lane_id:
+        raise ValueError("lane_id is allowed only for codex_thread execution")
+
+    writable_output_roots = (
+        [] if workspace_mode == "read_only" else [output_root_rel]
+    )
+    baseline_exclusions = [
+        "AD-creative/orchestrator/specialist_exchange",
+        *writable_output_roots,
+        receipt_rel,
+        *thread_control_exclusions,
+    ]
+    baseline_files = specialist_scope_manifest(
+        project, excluded_roots=baseline_exclusions
+    )
+    if generation_mode == "real_media":
+        authorization_rel = str(authorization_block["authorization_ref"])
+        authorization_path = contained_project_path(
+            project, authorization_rel, "generation authorization_ref"
+        )
+        if baseline_files.get(authorization_rel) != file_sha256(authorization_path):
+            raise ValueError(
+                "generation authorization evidence must stay inside the monitored host scope"
+            )
+    exchange_created_at = now_iso()
+    baseline_payload: dict[str, object] = {
+        "protocol_id": SPECIALIST_EXCHANGE_PROTOCOL,
+        "contract_version": SPECIALIST_EXCHANGE_VERSION,
+        "message_type": "host_scope_baseline",
+        "handoff_id": handoff_id,
+        "excluded_roots": baseline_exclusions,
+        "files": baseline_files,
+        "manifest_sha256": specialist_manifest_digest(baseline_files),
+        "created_at": exchange_created_at,
+    }
+    baseline_path = project / baseline_rel
+    write_json_object(baseline_path, baseline_payload)
+    baseline_sha = file_sha256(baseline_path)
+
+    handoff: dict[str, object] = {
+        "protocol_id": SPECIALIST_EXCHANGE_PROTOCOL,
+        "contract_version": SPECIALIST_EXCHANGE_VERSION,
+        "message_type": "handoff",
+        "exchange_id": exchange_id,
+        "handoff_id": handoff_id,
+        "attempt": 1,
+        "supersedes_handoff_id": None,
+        "work_id": work_id,
+        "provider_id": provider_id,
+        "profile_id": profile_id,
+        "descriptor_ref": descriptor_ref,
+        "task": {
+            "objective": objective,
+            "required_capabilities": required_capabilities,
+            "expected_output_kinds": expected_output_kinds,
+        },
+        "source_truth": {"artifacts": source_artifacts, "locks": []},
+        "execution": {
+            "mode": execution_mode,
+            "workspace_mode": workspace_mode,
+            "lane_id": lane_id or None,
+            "lane_run_id": lane_run_id,
+            "thread_id": thread_id,
+            "nested_dispatch_allowed": False,
+        },
+        "scope": {
+            "read": [item["path"] for item in source_artifacts],
+            "write": [*writable_output_roots, receipt_rel],
+            "receipt_path": receipt_rel,
+            "host_baseline": {
+                "path": safe_rel(project, baseline_path),
+                "sha256": baseline_sha,
+                "manifest_sha256": baseline_payload["manifest_sha256"],
+            },
+            "forbidden": [
+                "AD-creative/orchestrator/current_truth.md",
+                "AD-creative/orchestrator/version_map.csv",
+                "AD-creative/orchestrator/artifact_index.csv",
+                "AD-creative/orchestrator/gate_log.csv",
+                "AD-creative/ppt/exports/",
+                "05_最终交付_FinalDelivery/",
+            ],
+        },
+        "authorization": authorization_block,
+        "acceptance": {
+            "visibility": "internal_only",
+            "provider_recommendation_only": True,
+            "required_receipt_extensions": required_receipt_extensions,
+            "stop_on": ["needs_user", "blocked", "failed"],
+        },
+    }
+    validate_specialist_payload("handoff", handoff)
+    if (
+        descriptor_snapshot is not None
+        and descriptor_snapshot_payload is not None
+        and not descriptor_snapshot.exists()
+    ):
+        write_json_object(descriptor_snapshot, descriptor_snapshot_payload)
+    handoff_path = project / handoff_rel
+    write_json_object(handoff_path, handoff)
+    handoff_sha = file_sha256(handoff_path)
+    now = exchange_created_at
+    index_rows.append(
+        {
+            "exchange_id": exchange_id,
+            "handoff_id": handoff_id,
+            "attempt": "1",
+            "work_id": work_id,
+            "provider_id": provider_id,
+            "profile_id": profile_id,
+            "contract_version": SPECIALIST_EXCHANGE_VERSION,
+            "descriptor_sha256": descriptor_sha,
+            "handoff_sha256": handoff_sha,
+            "baseline_path": safe_rel(project, baseline_path),
+            "baseline_sha256": baseline_sha,
+            "compatibility_status": compatibility_status,
+            "execution_mode": execution_mode,
+            "lane_id": lane_id,
+            "thread_id": thread_id or "",
+            "handoff_path": safe_rel(project, handoff_path),
+            "receipt_path": receipt_rel,
+            "receipt_sha256": "",
+            "outcome": "pending",
+            "adoption_path": "",
+            "adoption_sha256": "",
+            "adoption_decision": "",
+            "thread_reconciliation_ref": "",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    write_csv_rows(index_path, index_fields, index_rows)
+    return handoff, handoff_path
+
+
+def adopt_specialist_receipt(
+    project: Path,
+    *,
+    handoff_path: Path,
+    receipt_path: Path,
+    decision: str,
+    reason: str,
+    output_mappings: dict[str, str],
+    dry_run: bool = False,
+) -> tuple[dict[str, object], Path | None]:
+    return with_project_advisory_lock(
+        project,
+        ".exchange.lock",
+        lambda: _adopt_specialist_receipt_locked(
+            project,
+            handoff_path=handoff_path,
+            receipt_path=receipt_path,
+            decision=decision,
+            reason=reason,
+            output_mappings=output_mappings,
+            dry_run=dry_run,
+        ),
+    )
+
+
+def _adopt_specialist_receipt_locked(
+    project: Path,
+    *,
+    handoff_path: Path,
+    receipt_path: Path,
+    decision: str,
+    reason: str,
+    output_mappings: dict[str, str],
+    dry_run: bool = False,
+) -> tuple[dict[str, object], Path | None]:
+    migrate_control_plane(project)
+    for evidence_path, label in [
+        (handoff_path.resolve(), "handoff"),
+        (receipt_path.resolve(), "receipt"),
+    ]:
+        try:
+            evidence_path.relative_to(project.resolve())
+        except ValueError as exc:
+            raise ValueError(f"{label} must stay inside the project") from exc
+    decision = decision.strip().lower()
+    if decision not in {"adopt", "partial_adopt", "reject", "defer"}:
+        raise ValueError(f"unsupported adoption decision: {decision}")
+    if not reason.strip():
+        raise ValueError("adoption reason is required")
+    handoff = read_json_object(handoff_path, "handoff")
+    validate_specialist_payload("handoff", handoff)
+    receipt_scope = handoff.get("scope")
+    if not isinstance(receipt_scope, dict):
+        raise ValueError("handoff scope missing")
+    receipt_rel = str(receipt_scope.get("receipt_path", ""))
+    expected_receipt_lexical = project / receipt_rel
+    supplied_receipt_lexical = Path(os.path.abspath(receipt_path))
+    allowed_receipt_lexical_paths = {
+        Path(os.path.abspath(expected_receipt_lexical)),
+        project.resolve() / receipt_rel,
+    }
+    if supplied_receipt_lexical not in allowed_receipt_lexical_paths:
+        raise ValueError("receipt path does not match exact handoff receipt_path")
+    if "\\" in receipt_rel or project_relative_path_has_symlink_component(
+        project, receipt_rel
+    ):
+        raise ValueError("receipt_path must use a non-symlink POSIX project path")
+    if not expected_receipt_lexical.is_file():
+        raise ValueError("specialist receipt file is missing")
+    receipt_stat = expected_receipt_lexical.stat()
+    if receipt_stat.st_size == 0 or receipt_stat.st_nlink != 1:
+        raise ValueError("specialist receipt must be non-empty and not hardlinked")
+    receipt = read_json_object(expected_receipt_lexical, "receipt")
+    for payload, message_type in [(handoff, "handoff"), (receipt, "receipt")]:
+        if payload.get("protocol_id") != SPECIALIST_EXCHANGE_PROTOCOL:
+            raise ValueError(f"{message_type} protocol_id mismatch")
+        if payload.get("contract_version") != SPECIALIST_EXCHANGE_VERSION:
+            raise ValueError(f"unsupported_contract_version: {message_type}")
+        if payload.get("message_type") != message_type:
+            raise ValueError(f"{message_type} message_type mismatch")
+    index_path = project / "AD-creative/orchestrator/specialist_exchange/exchange_index.csv"
+    _, exchange_rows = read_csv_rows(index_path)
+    exchange_matches = [
+        row
+        for row in exchange_rows
+        if row.get("handoff_id", "") == str(handoff.get("handoff_id", ""))
+    ]
+    if len(exchange_matches) != 1:
+        raise ValueError("specialist exchange index identity is missing or ambiguous")
+    exchange_row = exchange_matches[0]
+    control_errors = specialist_control_plane_errors(project, exchange_rows)
+    if control_errors:
+        raise ValueError("specialist_control_plane_write: " + "; ".join(control_errors))
+    handoff_execution = handoff.get("execution")
+    handoff_scope = handoff.get("scope")
+    descriptor_ref_for_index = handoff.get("descriptor_ref")
+    baseline_ref_for_index = (
+        handoff_scope.get("host_baseline")
+        if isinstance(handoff_scope, dict)
+        else None
+    )
+    expected_index_values = {
+        "exchange_id": str(handoff.get("exchange_id", "")),
+        "handoff_id": str(handoff.get("handoff_id", "")),
+        "attempt": str(handoff.get("attempt", "")),
+        "work_id": str(handoff.get("work_id", "")),
+        "provider_id": str(handoff.get("provider_id", "")),
+        "profile_id": str(handoff.get("profile_id", "")),
+        "contract_version": str(handoff.get("contract_version", "")),
+        "descriptor_sha256": (
+            str(descriptor_ref_for_index.get("sha256", ""))
+            if isinstance(descriptor_ref_for_index, dict)
+            else ""
+        ),
+        "baseline_path": (
+            str(baseline_ref_for_index.get("path", ""))
+            if isinstance(baseline_ref_for_index, dict)
+            else ""
+        ),
+        "baseline_sha256": (
+            str(baseline_ref_for_index.get("sha256", ""))
+            if isinstance(baseline_ref_for_index, dict)
+            else ""
+        ),
+        "compatibility_status": (
+            "compatible" if isinstance(descriptor_ref_for_index, dict) else "unverified"
+        ),
+        "execution_mode": (
+            str(handoff_execution.get("mode", ""))
+            if isinstance(handoff_execution, dict)
+            else ""
+        ),
+        "lane_id": (
+            str(handoff_execution.get("lane_id") or "")
+            if isinstance(handoff_execution, dict)
+            else ""
+        ),
+        "thread_id": (
+            str(handoff_execution.get("thread_id") or "")
+            if isinstance(handoff_execution, dict)
+            else ""
+        ),
+        "handoff_path": safe_rel(project, handoff_path),
+        "receipt_path": (
+            str(handoff_scope.get("receipt_path", ""))
+            if isinstance(handoff_scope, dict)
+            else ""
+        ),
+        "receipt_sha256": "",
+        "outcome": "pending",
+        "adoption_path": "",
+        "adoption_sha256": "",
+        "adoption_decision": "",
+        "thread_reconciliation_ref": "",
+    }
+    for field, expected_value in expected_index_values.items():
+        if exchange_row.get(field, "") != expected_value:
+            raise ValueError(f"specialist exchange index {field} binding mismatch")
+    if exchange_row.get("handoff_path", "") != safe_rel(project, handoff_path):
+        raise ValueError("handoff path does not match exchange index")
+    actual_handoff_sha = file_sha256(handoff_path)
+    if exchange_row.get("handoff_sha256", "") != actual_handoff_sha:
+        raise ValueError("handoff_hash_mismatch")
+    if decision in {"adopt", "partial_adopt"} and exchange_row.get(
+        "compatibility_status", ""
+    ) != "compatible":
+        raise ValueError("unverified specialist descriptor cannot be adopted")
+
+    for key in ["exchange_id", "handoff_id", "work_id", "provider_id", "profile_id"]:
+        if receipt.get(key) != handoff.get(key):
+            raise ValueError(f"receipt {key} mismatch")
+    descriptor_ref = handoff.get("descriptor_ref")
+    descriptor_sha = (
+        str(descriptor_ref.get("sha256", ""))
+        if isinstance(descriptor_ref, dict)
+        else ""
+    )
+    if receipt.get("descriptor_sha256") != descriptor_sha:
+        raise ValueError("receipt descriptor_sha256 mismatch")
+    if receipt.get("handoff_sha256") != actual_handoff_sha:
+        raise ValueError("receipt handoff_sha256 mismatch")
+    if exchange_row.get("provider_id", "") != str(handoff.get("provider_id", "")):
+        raise ValueError("provider identity does not match exchange index")
+    if exchange_row.get("descriptor_sha256", "") != descriptor_sha:
+        raise ValueError("descriptor identity does not match exchange index")
+    claims = receipt.get("claims")
+    if (
+        not isinstance(claims, dict)
+        or set(claims) != set(SPECIALIST_RESERVED_CLAIMS)
+        or any(claims.get(key) is not False for key in SPECIALIST_RESERVED_CLAIMS)
+    ):
+        raise ValueError("authority escalation in specialist receipt claims")
+
+    acceptance = handoff.get("acceptance")
+    extensions = receipt.get("extensions")
+    if not isinstance(acceptance, dict) or not isinstance(extensions, list):
+        raise ValueError("specialist receipt extensions missing")
+    extension_pairs = {
+        (str(item.get("id", "")), str(item.get("version", "")))
+        for item in extensions
+        if isinstance(item, dict)
+    }
+    for required in acceptance.get("required_receipt_extensions", []):
+        if not isinstance(required, dict):
+            raise ValueError("invalid required receipt extension negotiation")
+        pair = (str(required.get("id", "")), str(required.get("version", "")))
+        if pair not in extension_pairs:
+            raise ValueError(
+                f"required receipt extension missing: {pair[0]}@{pair[1]}"
+            )
+    scope = handoff.get("scope")
+    if not isinstance(scope, dict):
+        raise ValueError("handoff scope missing")
+    source_truth_for_auth = handoff.get("source_truth")
+    task_for_auth = handoff.get("task")
+    if not isinstance(source_truth_for_auth, dict) or not isinstance(task_for_auth, dict):
+        raise ValueError("handoff authorization context is missing")
+    authorization_errors = specialist_generation_authorization_errors(
+        project,
+        authorization=handoff.get("authorization"),
+        work_id=str(handoff.get("work_id", "")),
+        profile_id=str(handoff.get("profile_id", "")),
+        input_artifact_ids=[
+            str(item.get("artifact_id", ""))
+            for item in source_truth_for_auth.get("artifacts", [])
+            if isinstance(item, dict)
+        ],
+        expected_output_kinds=[
+            str(item) for item in task_for_auth.get("expected_output_kinds", [])
+        ],
+    )
+    if authorization_errors:
+        raise ValueError("; ".join(authorization_errors))
+    expected_receipt = contained_project_path(
+        project, str(scope.get("receipt_path", "")), "handoff receipt_path"
+    )
+    if receipt_path.resolve() != expected_receipt:
+        raise ValueError("receipt path does not match handoff receipt_path")
+    baseline_ref = scope.get("host_baseline")
+    if not isinstance(baseline_ref, dict):
+        raise ValueError("handoff host scope baseline missing")
+    baseline_path = contained_project_path(
+        project, str(baseline_ref.get("path", "")), "host scope baseline"
+    )
+    if not baseline_path.is_file() or file_sha256(baseline_path) != baseline_ref.get(
+        "sha256"
+    ):
+        raise ValueError("host scope baseline hash mismatch")
+    baseline = read_json_object(baseline_path, "host scope baseline")
+    baseline_created_at = str(baseline.get("created_at", ""))
+    if (
+        not baseline_created_at
+        or exchange_row.get("created_at", "") != baseline_created_at
+        or exchange_row.get("updated_at", "") != baseline_created_at
+    ):
+        raise ValueError("specialist exchange index timestamp binding mismatch")
+    baseline_files = baseline.get("files")
+    excluded_roots = baseline.get("excluded_roots")
+    if not isinstance(baseline_files, dict) or not isinstance(excluded_roots, list):
+        raise ValueError("host scope baseline is malformed")
+    baseline_files = {str(key): str(value) for key, value in baseline_files.items()}
+    authorization = handoff.get("authorization")
+    if isinstance(authorization, dict) and authorization.get("generation_mode") == "real_media":
+        authorization_rel = str(authorization.get("authorization_ref", ""))
+        authorization_path = contained_project_path(
+            project, authorization_rel, "generation authorization_ref"
+        )
+        if baseline_files.get(authorization_rel) != file_sha256(authorization_path):
+            raise ValueError(
+                "generation authorization evidence is not bound by the host baseline"
+            )
+    current_files = specialist_scope_manifest(
+        project, excluded_roots=[str(item) for item in excluded_roots]
+    )
+    if current_files != baseline_files:
+        changed_paths = sorted(
+            path
+            for path in set(current_files) | set(baseline_files)
+            if current_files.get(path) != baseline_files.get(path)
+        )
+        raise ValueError("out_of_scope_changes: " + ",".join(changed_paths[:12]))
+    host_scope_proof = {
+        "baseline_path": safe_rel(project, baseline_path),
+        "baseline_sha256": str(baseline_ref.get("sha256", "")),
+        "baseline_manifest_sha256": specialist_manifest_digest(baseline_files),
+        "observed_manifest_sha256": specialist_manifest_digest(current_files),
+        "changed_paths": [],
+    }
+    execution = handoff.get("execution")
+    evidence = receipt.get("execution_evidence")
+    if not isinstance(execution, dict) or not isinstance(evidence, dict):
+        raise ValueError("execution evidence missing")
+    if evidence.get("mode") != execution.get("mode"):
+        raise ValueError("receipt execution mode mismatch")
+    if evidence.get("nested_dispatch_used") is not False:
+        raise ValueError("nested dispatch is not allowed")
+    if evidence.get("out_of_scope_writes") not in ([], None):
+        raise ValueError("receipt reports out-of-scope writes")
+    thread_reconciliation_ref: dict[str, object] | None = None
+    if execution.get("mode") == "codex_thread":
+        registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
+        _, registry = read_csv_rows(registry_path)
+        row = thread_registry_target(
+            registry,
+            lane_id=str(execution.get("lane_id") or ""),
+            work_id=str(handoff.get("work_id") or ""),
+        )
+        valid_ids = {
+            value
+            for value in [row.get("real_thread_id", ""), row.get("rescue_thread_id", "")]
+            if value
+        }
+        if evidence.get("thread_id") not in valid_ids:
+            raise ValueError("invalid_worker_thread_id")
+        if execution.get("lane_run_id") != row.get("lane_run_id", ""):
+            raise ValueError("codex_thread lane_run_id changed after handoff")
+        if decision in {"adopt", "partial_adopt"}:
+            if row.get("receipt_status", "").strip().lower() != "received":
+                raise ValueError("codex_thread receipt is not host-received")
+            if row.get("reconciliation_status", "").strip().lower() != "reconciled":
+                raise ValueError("codex_thread receipt is not host-reconciled")
+            if row.get("receipt_thread_id", "").strip() != evidence.get("thread_id"):
+                raise ValueError("codex_thread reconciliation identity mismatch")
+            registry_receipt = contained_project_path(
+                project,
+                row.get("receipt_path", "").strip(),
+                "codex_thread reconciled receipt",
+            )
+            if registry_receipt != receipt_path.resolve():
+                raise ValueError("codex_thread reconciled a different receipt")
+            if row.get("adoption_decision", "").strip().upper() not in {
+                "ADOPT",
+                "PARTIAL_ADOPT",
+            }:
+                raise ValueError("codex_thread main adoption decision is missing")
+            if not normalized_bool(row.get("archived")) or not row.get(
+                "archived_at", ""
+            ).strip():
+                raise ValueError("codex_thread cleanup/archive is incomplete")
+            if not row.get("cleanup_action", "").strip():
+                raise ValueError("codex_thread cleanup action is missing")
+            scope_proof_rel = row.get("scope_proof_path", "").strip()
+            scope_proof_path = contained_project_path(
+                project, scope_proof_rel, "codex_thread host scope proof"
+            )
+            if not scope_proof_path.is_file() or file_sha256(
+                scope_proof_path
+            ) != row.get("scope_proof_sha256", "").strip():
+                raise ValueError("codex_thread host scope proof is missing or stale")
+            scope_proof = read_json_object(
+                scope_proof_path, "codex_thread host scope proof"
+            )
+            if scope_proof.get("decision") not in {"ADOPT", "PARTIAL_ADOPT"}:
+                raise ValueError("codex_thread host scope proof lacks adoption decision")
+            if scope_proof.get("validation_success") is not True:
+                raise ValueError("codex_thread host scope proof validation failed")
+            dispatch_ref = row.get("dispatch_receipt_path", "").strip()
+            if evidence.get("thread_id") == row.get("rescue_thread_id", "").strip():
+                dispatch_ref = row.get("rescue_dispatch_receipt_path", "").strip()
+            dispatch_path = contained_project_path(
+                project, dispatch_ref, "codex_thread dispatch proof"
+            )
+            if not dispatch_path.is_file() or evidence.get("thread_id") not in dispatch_path.read_text(
+                encoding="utf-8", errors="ignore"
+            ):
+                raise ValueError("codex_thread dispatch proof is missing")
+            thread_reconciliation_ref = {
+                "lane_id": row.get("lane_id", ""),
+                "lane_run_id": row.get("lane_run_id", ""),
+                "thread_id": evidence.get("thread_id"),
+                "receipt_path": safe_rel(project, receipt_path),
+                "receipt_sha256": file_sha256(receipt_path),
+                "dispatch_receipt_path": safe_rel(project, dispatch_path),
+                "dispatch_receipt_sha256": file_sha256(dispatch_path),
+                "registry_sha256": file_sha256(registry_path),
+                "scope_proof_path": safe_rel(project, scope_proof_path),
+                "scope_proof_sha256": file_sha256(scope_proof_path),
+                "archived_at": row.get("archived_at", ""),
+                "cleanup_action": row.get("cleanup_action", ""),
+            }
+    elif evidence.get("thread_id") not in {None, ""}:
+        raise ValueError("non-thread exchange must not claim thread_id")
+
+    outcome = str(receipt.get("outcome", ""))
+    if outcome not in {"completed", "needs_user", "blocked", "failed"}:
+        raise ValueError("invalid specialist outcome")
+    open_questions = receipt.get("open_questions")
+    if outcome == "needs_user":
+        if not isinstance(open_questions, list) or not open_questions:
+            raise ValueError("needs_user receipt lacks open_questions")
+        if any(
+            not isinstance(item, dict)
+            or not str(item.get("id", "")).strip()
+            or not str(item.get("question", "")).strip()
+            for item in open_questions
+        ):
+            raise ValueError("needs_user receipt open_questions must contain id and question")
+        question_ids = [str(item["id"]).strip() for item in open_questions]
+        if len(question_ids) != len(set(question_ids)):
+            raise ValueError("needs_user receipt contains duplicate question id")
+    if decision == "adopt" and outcome != "completed":
+        raise ValueError("only completed receipt can be fully adopted")
+    if decision in {"adopt", "partial_adopt"}:
+        if outcome in {"blocked", "failed"}:
+            raise ValueError("blocked/failed receipt cannot be adopted")
+        if bool(receipt.get("simulated")):
+            raise ValueError("simulated receipt cannot be adopted")
+        qa = receipt.get("qa")
+        if not isinstance(qa, dict) or qa.get("status") != "pass":
+            raise ValueError("adoption requires specialist qa.status=pass")
+
+    source_truth = handoff.get("source_truth")
+    consumed = receipt.get("consumed_inputs")
+    if not isinstance(source_truth, dict) or not isinstance(consumed, list):
+        raise ValueError("receipt consumed_inputs missing")
+    consumed_by_id = {
+        str(item.get("artifact_id")): item
+        for item in consumed
+        if isinstance(item, dict)
+    }
+    for item in source_truth.get("artifacts", []):
+        if not isinstance(item, dict):
+            continue
+        artifact_id = str(item.get("artifact_id"))
+        consumed_item = consumed_by_id.get(artifact_id)
+        if not consumed_item or consumed_item.get("sha256") != item.get("sha256"):
+            raise ValueError(f"stale_input_artifact: {artifact_id}")
+        source_path = contained_project_path(project, str(item.get("path")), artifact_id)
+        if not source_path.is_file() or file_sha256(source_path) != item.get("sha256"):
+            raise ValueError(f"stale_input_artifact: {artifact_id}")
+
+    scope = handoff.get("scope")
+    if not isinstance(scope, dict):
+        raise ValueError("handoff scope missing")
+    allowed_roots = [
+        contained_project_path(project, str(item), "handoff write scope")
+        for item in scope.get("write", [])
+        if str(item) != str(scope.get("receipt_path"))
+    ]
+    outputs = receipt.get("output_artifacts")
+    if not isinstance(outputs, list):
+        raise ValueError("receipt output_artifacts missing")
+    write_scope = [str(item) for item in scope.get("write", [])]
+    if execution.get("workspace_mode") == "read_only":
+        if write_scope != [str(scope.get("receipt_path", ""))]:
+            raise ValueError(
+                "read_only handoff may write only its exact receipt_path"
+            )
+        if outputs:
+            raise ValueError("read_only receipt must not return output artifacts")
+    task = handoff.get("task")
+    if not isinstance(task, dict):
+        raise ValueError("handoff task missing")
+    expected_kinds = {
+        str(item) for item in task.get("expected_output_kinds", []) if str(item)
+    }
+    if not expected_kinds:
+        raise ValueError("handoff expected_output_kinds missing")
+    if outcome == "completed" and not outputs:
+        raise ValueError("completed specialist receipt has no outputs")
+    output_by_id: dict[str, tuple[dict[str, object], Path]] = {}
+    returned_kinds: set[str] = set()
+    returned_paths: set[str] = set()
+    returned_inodes: set[tuple[int, int]] = set()
+    source_input_ids = {
+        str(item.get("artifact_id"))
+        for item in source_truth.get("artifacts", [])
+        if isinstance(item, dict)
+    }
+    for item in outputs:
+        if not isinstance(item, dict):
+            raise ValueError("invalid output artifact entry")
+        provider_artifact_id = validate_specialist_token(
+            str(item.get("provider_artifact_id", "")), "provider_artifact_id"
+        )
+        if provider_artifact_id in output_by_id:
+            raise ValueError(f"duplicate provider_artifact_id: {provider_artifact_id}")
+        kind = validate_specialist_token(str(item.get("kind", "")), "output kind")
+        if kind not in expected_kinds:
+            raise ValueError(f"unexpected specialist output kind: {kind}")
+        if kind in returned_kinds:
+            raise ValueError(f"duplicate specialist output kind: {kind}")
+        returned_kinds.add(kind)
+        if item.get("visibility") != "internal_only":
+            raise ValueError("specialist output visibility must remain internal_only")
+        output_sources = item.get("source_input_ids")
+        if (
+            not isinstance(output_sources, list)
+            or not output_sources
+            or not {str(source) for source in output_sources}.issubset(source_input_ids)
+        ):
+            raise ValueError(f"specialist output source_input_ids invalid: {provider_artifact_id}")
+        raw_output_path = str(item.get("path", ""))
+        if "\\" in raw_output_path:
+            raise ValueError(
+                f"specialist output must use POSIX path separators: {provider_artifact_id}"
+            )
+        if project_relative_path_has_symlink_component(project, raw_output_path):
+            raise ValueError(
+                f"specialist output must not use symlink path: {provider_artifact_id}"
+            )
+        output_path = contained_project_path(
+            project, raw_output_path, provider_artifact_id
+        )
+        if not output_path.is_file():
+            raise ValueError(f"specialist output missing: {provider_artifact_id}")
+        if not any(output_path == root or root in output_path.parents for root in allowed_roots):
+            raise ValueError(f"specialist output outside write scope: {provider_artifact_id}")
+        canonical_output_path = canonical_project_relative(project, output_path)
+        if canonical_output_path in returned_paths:
+            raise ValueError(
+                f"duplicate specialist output path: {canonical_output_path}"
+            )
+        returned_paths.add(canonical_output_path)
+        output_stat = output_path.stat()
+        if output_stat.st_size == 0 or output_stat.st_nlink != 1:
+            raise ValueError(
+                f"specialist output must be non-empty and not hardlinked: {provider_artifact_id}"
+            )
+        physical_id = (output_stat.st_dev, output_stat.st_ino)
+        if physical_id in returned_inodes:
+            raise ValueError(
+                f"specialist output physical file reused: {provider_artifact_id}"
+            )
+        returned_inodes.add(physical_id)
+        if file_sha256(output_path) != item.get("sha256"):
+            raise ValueError(f"output_hash_mismatch: {provider_artifact_id}")
+        output_by_id[provider_artifact_id] = (item, output_path)
+    if outcome == "completed" and not expected_kinds.issubset(returned_kinds):
+        missing_kinds = sorted(expected_kinds - returned_kinds)
+        raise ValueError("completed receipt missing expected output kinds: " + ",".join(missing_kinds))
+    validate_specialist_payload("receipt", receipt)
+
+    if decision == "adopt" and set(output_mappings) != set(output_by_id):
+        raise ValueError("full adoption requires a target mapping for every output")
+    if decision == "partial_adopt" and not output_mappings:
+        raise ValueError("partial adoption requires at least one output mapping")
+    if decision in {"reject", "defer"} and output_mappings:
+        raise ValueError("reject/defer adoption must not map specialist outputs")
+    unknown_mappings = set(output_mappings) - set(output_by_id)
+    if unknown_mappings:
+        raise ValueError("mapping references unknown output: " + ",".join(sorted(unknown_mappings)))
+
+    forbidden_roots = [
+        contained_project_path(project, value, "adoption forbidden scope")
+        for value in [
+            "AD-creative/orchestrator",
+            "AD-creative/ppt/exports",
+            "05_最终交付_FinalDelivery",
+            *[str(item) for item in scope.get("forbidden", [])],
+        ]
+    ]
+    prepared: list[tuple[str, dict[str, object], Path, Path]] = []
+    prepared_targets: set[Path] = set()
+    for provider_artifact_id, target_rel in output_mappings.items():
+        target = contained_project_path(project, target_rel, "adoption target")
+        if any(target == root or root in target.parents for root in forbidden_roots):
+            raise ValueError(f"adoption target is forbidden control/final scope: {target_rel}")
+        if target in prepared_targets:
+            raise ValueError(f"multiple outputs map to the same adoption target: {target_rel}")
+        prepared_targets.add(target)
+        if target.exists():
+            raise ValueError(f"adoption target already exists; overwrite forbidden: {target_rel}")
+        item, source = output_by_id[provider_artifact_id]
+        prepared.append((provider_artifact_id, item, source, target))
+
+    receipt_sha = file_sha256(receipt_path)
+    adoption_id = "SPA-" + safe_artifact_suffix(str(handoff.get("handoff_id")))
+    adoption_rel = (
+        Path("AD-creative/orchestrator/specialist_exchange/adoptions")
+        / f"{adoption_id}.json"
+    )
+    adoption_path = project / adoption_rel
+    adopted_outputs: list[dict[str, object]] = []
+    for number, (provider_artifact_id, item, _, target) in enumerate(prepared, start=1):
+        adopted_outputs.append(
+            {
+                "provider_artifact_id": provider_artifact_id,
+                "target_artifact_id": f"ART-{safe_artifact_suffix(adoption_id)}-{number:02d}",
+                "target_path": safe_rel(project, target),
+                "sha256": item.get("sha256"),
+                "visibility": "internal_only",
+            }
+        )
+    adoption: dict[str, object] = {
+        "protocol_id": SPECIALIST_EXCHANGE_PROTOCOL,
+        "contract_version": SPECIALIST_EXCHANGE_VERSION,
+        "message_type": "adoption",
+        "adoption_id": adoption_id,
+        "handoff_id": handoff.get("handoff_id"),
+        "receipt_id": receipt.get("receipt_id"),
+        "receipt_sha256": receipt_sha,
+        "decision_owner": "adco",
+        "decision": decision,
+        "reason": reason,
+        "adopted_outputs": adopted_outputs,
+        "rejected_outputs": sorted(set(output_by_id) - set(output_mappings)),
+        "limitations_carried_forward": (receipt.get("qa") or {}).get("limitations", []) if isinstance(receipt.get("qa"), dict) else [],
+        "adco_validation": [
+            "protocol",
+            "identity",
+            "scope",
+            "host_scope_manifest",
+            "hash",
+            "authority",
+            "output_contract",
+        ],
+        "host_scope_proof": host_scope_proof,
+        "gate_effect": {
+            "advance_allowed": outcome == "completed" and decision in {"adopt", "partial_adopt"},
+            "next_gate": "creative-quality-gate",
+        },
+        "thread_reconciliation_ref": thread_reconciliation_ref,
+        "created_at": now_iso(),
+    }
+    validate_specialist_payload("adoption", adoption)
+    if dry_run:
+        return adoption, None
+    if adoption_path.exists():
+        raise FileExistsError(
+            f"specialist adoption already exists for handoff: {adoption_rel}"
+        )
+
+    artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+    index_path = project / "AD-creative/orchestrator/specialist_exchange/exchange_index.csv"
+    artifact_snapshot = artifact_path.read_bytes()
+    index_snapshot = index_path.read_bytes()
+    created_targets: list[Path] = []
+    try:
+        artifact_fields, artifact_rows = read_csv_rows(artifact_path)
+        for adopted, (_, item, source, target) in zip(adopted_outputs, prepared):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("xb") as handle:
+                handle.write(source.read_bytes())
+            created_targets.append(target)
+            artifact_rows.append(
+                {
+                    "artifact_id": str(adopted["target_artifact_id"]),
+                    "artifact_type": str(item.get("kind", "specialist_output")),
+                    "path": safe_rel(project, target),
+                    "stage": "specialist_adoption",
+                    "version": str(item.get("version", "1")),
+                    "status": "internal_review",
+                    "visibility": "internal_only",
+                    "source_event_ids": "",
+                    "linked_requirements": "",
+                    "linked_work_items": str(handoff.get("work_id", "")),
+                    "linked_references": "",
+                    "linked_assets": "",
+                    "gate_status": "NOT_RUN",
+                    "supersedes_artifact_id": "",
+                    "created_at": now_iso(),
+                    "updated_at": now_iso(),
+                    "sha256": str(item.get("sha256", "")),
+                    "size_bytes": str(target.stat().st_size),
+                    "derived_from_artifact_id": "",
+                    "derived_from_sha256": "",
+                }
+            )
+        write_csv_rows(artifact_path, artifact_fields, artifact_rows)
+        write_json_object(adoption_path, adoption)
+        index_fields, index_rows = read_csv_rows(index_path)
+        row = next(
+            item
+            for item in index_rows
+            if item.get("handoff_id") == handoff.get("handoff_id")
+        )
+        if row.get("compatibility_status") != "compatible" and decision in {"adopt", "partial_adopt"}:
+            raise ValueError("unverified specialist descriptor cannot be adopted")
+        row.update(
+            {
+                "receipt_path": safe_rel(project, receipt_path),
+                "receipt_sha256": receipt_sha,
+                "outcome": outcome,
+                "adoption_path": str(adoption_rel),
+                "adoption_sha256": file_sha256(adoption_path),
+                "adoption_decision": decision,
+                "thread_reconciliation_ref": (
+                    json.dumps(
+                        thread_reconciliation_ref,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                    if thread_reconciliation_ref
+                    else ""
+                ),
+                "updated_at": now_iso(),
+            }
+        )
+        write_csv_rows(index_path, index_fields, index_rows)
+        validation_errors, _ = validate(project)
+        if validation_errors:
+            raise ValueError(
+                "specialist adoption would leave project invalid: "
+                + "; ".join(validation_errors[:12])
+            )
+    except Exception:
+        artifact_path.write_bytes(artifact_snapshot)
+        index_path.write_bytes(index_snapshot)
+        adoption_path.unlink(missing_ok=True)
+        for target in created_targets:
+            target.unlink(missing_ok=True)
+        raise
+    return adoption, adoption_path
+
+
 def write_asset_preflight(
     project: Path,
     *,
@@ -7429,31 +9334,238 @@ def write_asset_preflight(
     return preflight_id
 
 
+def parse_thread_timestamp(value: str, field: str) -> datetime:
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an ISO-8601 timestamp with timezone") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{field} must include a timezone")
+    return parsed
+
+
+def validate_real_thread_id(value: str, field: str = "real_thread_id") -> str:
+    thread_id = value.strip()
+    if not THREADOPS_REAL_THREAD_ID_PATTERN.fullmatch(thread_id):
+        raise ValueError(f"{field} must be a real Codex Thread UUID, not a planned or narrative id")
+    return thread_id
+
+
+def thread_registry_target(
+    rows: list[dict[str, str]], *, lane_id: str, work_id: str
+) -> dict[str, str]:
+    matches = [
+        row
+        for row in rows
+        if row.get("lane_id", "").strip() == lane_id
+        and row.get("work_id", "").strip() == work_id
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            f"expected exactly one registry row for work_id={work_id} lane_id={lane_id}; found {len(matches)}"
+        )
+    return matches[0]
+
+
+def update_thread_agent_run(
+    project: Path,
+    *,
+    lane_id: str,
+    work_id: str,
+    updates: dict[str, str],
+) -> None:
+    path = project / "AD-creative/orchestrator/agent_runs.csv"
+    fields, rows = read_csv_rows(path)
+    matches = [
+        row
+        for row in rows
+        if row.get("lane_id", "").strip() == lane_id
+        and row.get("work_id", "").strip() == work_id
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            f"expected exactly one agent_runs row for work_id={work_id} lane_id={lane_id}; found {len(matches)}"
+        )
+    matches[0].update(updates)
+    write_csv_rows(path, fields, rows)
+
+
+def append_thread_convergence_event(
+    project: Path,
+    row: dict[str, str],
+    *,
+    state: str,
+    observed_at: str,
+    evidence: str,
+) -> Path:
+    work_id = row.get("work_id", "") or "unknown-work"
+    path = project / f"AD-creative/orchestrator/thread_convergence_{safe_artifact_suffix(work_id)}.md"
+    if path.exists():
+        text = path.read_text(encoding="utf-8").rstrip() + "\n"
+    else:
+        text = (
+            "# Thread Convergence Log\n\n"
+            "Fixed poll counts are inspection budgets, not automatic failure. "
+            "Progress permits at most one reasoned bounded extension; rescue_count must stay <= 1.\n\n"
+            "| observed_at | work_id | lane_id | real_thread_id | state | absolute_deadline_at | "
+            "extension_used | rescue_count | receipt_thread_id | evidence |\n"
+            "|---|---|---|---|---|---|---|---|---|---|\n"
+        )
+    clean_evidence = evidence.replace("|", "/").replace("\n", " ").strip()
+    text += (
+        f"| {observed_at} | {work_id} | {row.get('lane_id', '')} | "
+        f"{row.get('real_thread_id', '')} | {state} | {row.get('absolute_deadline_at', '')} | "
+        f"{row.get('bounded_extension_used', 'false')} | {row.get('rescue_count', '0')} | "
+        f"{row.get('receipt_thread_id', '')} | {clean_evidence} |\n"
+    )
+    write_text(path, text)
+    return path
+
+
+def receipt_thread_ids(text: str) -> list[str]:
+    json_ids: list[str] = []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        direct = payload.get("thread_id")
+        evidence = payload.get("execution_evidence")
+        nested = evidence.get("thread_id") if isinstance(evidence, dict) else None
+        for value in [direct, nested]:
+            if isinstance(value, str) and value.strip():
+                json_ids.append(value.strip())
+        if json_ids:
+            return list(dict.fromkeys(json_ids))
+    pattern = re.compile(
+        r"(?im)^\s*(?:[-*]\s*)?(?:receipt\.)?(?:thread_id|real_thread_id)\s*[:=]\s*([^\s,;]+)\s*$"
+    )
+    return list(
+        dict.fromkeys(match.group(1).strip() for match in pattern.finditer(text))
+    )
+
+
+def bind_dispatch_identity_file(
+    path: Path,
+    *,
+    real_thread_id: str,
+    absolute_deadline_at: str,
+    receipt_envelope: bool,
+) -> None:
+    if not path.is_file():
+        raise ValueError(f"dispatch identity target missing: {path}")
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("TBD_DISPATCH_RECORD_REQUIRED", real_thread_id)
+    text = text.replace("TBD_DISPATCH_DEADLINE_REQUIRED", absolute_deadline_at)
+    if receipt_envelope and not receipt_thread_ids(text):
+        text = re.sub(
+            r"(?im)^\s*thread_id\s*:\s*TBD\s*$",
+            f"thread_id: {real_thread_id}",
+            text,
+            count=1,
+        )
+    if receipt_envelope and receipt_thread_ids(text) != [real_thread_id]:
+        raise ValueError(f"receipt envelope could not be bound to {real_thread_id}: {path}")
+    if not receipt_envelope and real_thread_id not in text:
+        lane_match = re.search(r"(?m)^Lane id:.*$", text)
+        if not lane_match:
+            raise ValueError(f"worker prompt lacks Lane id anchor: {path}")
+        insert_at = lane_match.end()
+        text = (
+            text[:insert_at]
+            + f"\nExpected real thread id: {real_thread_id}\nAbsolute deadline: {absolute_deadline_at}"
+            + text[insert_at:]
+        )
+    write_text(path, text)
+
+
 def record_thread_dispatch(
     project: Path,
     *,
     lane_id: str,
+    work_id: str,
     real_thread_id: str,
     title_action: str,
     title_verified_at: str,
     dispatch_evidence: str,
     dispatch_status: str,
+    absolute_deadline_at: str,
 ) -> dict[str, str]:
     migrate_control_plane(project)
+    real_thread_id = validate_real_thread_id(real_thread_id)
+    title_verified_time = parse_thread_timestamp(title_verified_at, "title_verified_at")
+    absolute_deadline_time = parse_thread_timestamp(absolute_deadline_at, "absolute_deadline_at")
+    if absolute_deadline_time <= title_verified_time:
+        raise ValueError("absolute_deadline_at must be later than title_verified_at")
     registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
     fields, rows = read_csv_rows(registry_path)
-    target: dict[str, str] | None = None
-    for row in rows:
-        if row.get("lane_id") == lane_id:
-            target = row
-            break
-    if target is None:
-        raise ValueError(f"lane_id not found: {lane_id}")
-    work_id = target.get("work_id", "")
+    target = thread_registry_target(rows, lane_id=lane_id, work_id=work_id)
+    planned_thread_id = target.get("planned_thread_id", "").strip() or target.get("thread_id", "").strip()
+    prompt_rel = target.get("notes", "").partition("prompt=")[2].strip()
+    prompt_path = project / prompt_rel if prompt_rel else None
+    worker_receipt_rel = target.get("receipt_path", "").strip()
+    worker_receipt_path = project / worker_receipt_rel if worker_receipt_rel else None
+    if not prompt_path or not worker_receipt_path:
+        raise ValueError("registry row lacks worker prompt or receipt envelope path")
+    bind_dispatch_identity_file(
+        prompt_path,
+        real_thread_id=real_thread_id,
+        absolute_deadline_at=absolute_deadline_at,
+        receipt_envelope=False,
+    )
+    bind_dispatch_identity_file(
+        worker_receipt_path,
+        real_thread_id=real_thread_id,
+        absolute_deadline_at=absolute_deadline_at,
+        receipt_envelope=True,
+    )
+    lane_plan_path = project / "AD-creative/orchestrator/thread_lane_plan.md"
+    if lane_plan_path.is_file() and planned_thread_id:
+        write_text(
+            lane_plan_path,
+            lane_plan_path.read_text(encoding="utf-8").replace(planned_thread_id, real_thread_id),
+        )
     receipt_path = project / f"AD-creative/orchestrator/thread_dispatch_{work_id or lane_id}.md"
+    baseline_path = (
+        project
+        / "AD-creative/orchestrator/thread_scope_baselines"
+        / f"{safe_artifact_suffix(work_id)}_{safe_artifact_suffix(lane_id)}.json"
+    )
+    baseline_exclusions = [
+        "AD-creative/orchestrator/thread_scope_baselines",
+        "AD-creative/orchestrator/thread_scope_proofs",
+        "AD-creative/orchestrator/thread_registry.csv",
+        "AD-creative/orchestrator/agent_runs.csv",
+        safe_rel(project, receipt_path),
+        safe_rel(project, worker_receipt_path),
+        f"AD-creative/orchestrator/thread_convergence_{safe_artifact_suffix(work_id)}.md",
+        f"AD-creative/orchestrator/thread_rescue_dispatch_{safe_artifact_suffix(work_id)}_{safe_artifact_suffix(lane_id)}.md",
+    ]
+    baseline_files = specialist_scope_manifest(
+        project, excluded_roots=baseline_exclusions
+    )
+    write_json_object(
+        baseline_path,
+        {
+            "protocol_id": "adco.thread-scope-baseline",
+            "version": "1.0",
+            "work_id": work_id,
+            "lane_id": lane_id,
+            "real_thread_id": real_thread_id,
+            "write_scope": target.get("write_scope", ""),
+            "excluded_roots": baseline_exclusions,
+            "files": baseline_files,
+            "manifest_sha256": specialist_manifest_digest(baseline_files),
+            "created_at": now_iso(),
+        },
+    )
     target.update(
         {
             "thread_id": real_thread_id,
+            "lane_run_id": f"{work_id}:{lane_id}",
             "planned_thread_id": target.get("planned_thread_id") or f"planned:{lane_id}",
             "real_thread_id": real_thread_id,
             "dispatch_status": dispatch_status,
@@ -7461,12 +9573,42 @@ def record_thread_dispatch(
             "title_verified_at": title_verified_at,
             "dispatch_receipt_path": safe_rel(project, receipt_path),
             "dispatch_evidence": dispatch_evidence,
+            "scope_baseline_path": safe_rel(project, baseline_path),
+            "scope_baseline_sha256": file_sha256(baseline_path),
+            "scope_proof_path": "",
+            "scope_proof_sha256": "",
+            "rescue_dispatch_receipt_path": "",
+            "rescue_dispatch_evidence": "",
             "lifecycle_state": dispatch_status,
             "updated_at": now_iso(),
             "last_seen_at": now_iso(),
+            "convergence_state": "awaiting_first_readback",
+            "last_progress_at": "",
+            "absolute_deadline_at": absolute_deadline_at,
+            "bounded_extension_used": target.get("bounded_extension_used") or "false",
+            "extension_reason": target.get("extension_reason") or "",
+            "convergence_reminder_at": target.get("convergence_reminder_at") or "",
+            "convergence_reason": "",
+            "rescue_count": target.get("rescue_count") or "0",
+            "rescue_thread_id": target.get("rescue_thread_id") or "",
+            "receipt_thread_id": target.get("receipt_thread_id") or "",
+            "adoption_decision": target.get("adoption_decision") or "",
+            "rejection_reason": target.get("rejection_reason") or "",
         }
     )
     write_csv_rows(registry_path, fields, rows)
+    update_thread_agent_run(
+        project,
+        lane_id=lane_id,
+        work_id=work_id,
+        updates={
+            "thread_id": real_thread_id,
+            "status": dispatch_status,
+            "started_at": title_verified_at,
+            "proof_status": "dispatch_verified",
+            "reconciliation_status": "pending",
+        },
+    )
     write_text(
         receipt_path,
         f"""# Thread Dispatch Receipt
@@ -7477,6 +9619,7 @@ real_thread_id: {real_thread_id}
 dispatch_status: {dispatch_status}
 title_action: {title_action}
 title_verified_at: {title_verified_at}
+absolute_deadline_at: {absolute_deadline_at}
 
 ## Evidence
 
@@ -7493,6 +9636,625 @@ planned:* ids are placeholders only. This receipt records the real Codex Thread 
         "real_thread_id": real_thread_id,
         "dispatch_status": dispatch_status,
         "dispatch_receipt_path": safe_rel(project, receipt_path),
+        "absolute_deadline_at": absolute_deadline_at,
+    }
+
+
+def record_thread_observation(
+    project: Path,
+    *,
+    lane_id: str,
+    work_id: str,
+    state: str,
+    observed_at: str,
+    evidence: str,
+    absolute_deadline_at: str = "",
+    extension_reason: str = "",
+    convergence_reminder_sent: bool = False,
+    rescue_thread_id: str = "",
+) -> dict[str, str]:
+    migrate_control_plane(project)
+    if state not in THREADOPS_OBSERVATION_STATES:
+        raise ValueError(f"unknown convergence state: {state}")
+    observed_time = parse_thread_timestamp(observed_at, "observed_at")
+    registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
+    fields, rows = read_csv_rows(registry_path)
+    target = thread_registry_target(rows, lane_id=lane_id, work_id=work_id)
+    validate_real_thread_id(target.get("real_thread_id", ""))
+    current_deadline = target.get("absolute_deadline_at", "").strip()
+    deadline_time = (
+        parse_thread_timestamp(current_deadline, "absolute_deadline_at")
+        if current_deadline
+        else None
+    )
+    previous_state = target.get("convergence_state", "").strip()
+    new_deadline = absolute_deadline_at.strip()
+
+    if state in THREADOPS_PROGRESS_STATES:
+        if new_deadline and new_deadline != current_deadline:
+            if normalized_bool(target.get("bounded_extension_used")):
+                raise ValueError("bounded_extension_already_used")
+            if not extension_reason.strip():
+                raise ValueError("bounded extension requires --extension-reason")
+            new_deadline_time = parse_thread_timestamp(new_deadline, "absolute_deadline_at")
+            if deadline_time and new_deadline_time <= deadline_time:
+                raise ValueError("bounded extension deadline must be later than the current absolute deadline")
+            if new_deadline_time <= observed_time:
+                raise ValueError("bounded extension deadline must be later than observed_at")
+            target["absolute_deadline_at"] = new_deadline
+            target["bounded_extension_used"] = "true"
+            target["extension_reason"] = extension_reason.strip()
+            deadline_time = new_deadline_time
+        if deadline_time and observed_time > deadline_time:
+            raise ValueError("absolute_deadline_exceeded_without_available_extension")
+        target["last_progress_at"] = observed_at
+        # New visible activity invalidates any older silence/reminder evidence.
+        target["convergence_reminder_at"] = ""
+        target["convergence_reason"] = ""
+    elif state == "silent":
+        if new_deadline and new_deadline != current_deadline:
+            raise ValueError("silent observation cannot extend the absolute deadline")
+        last_progress = target.get("last_progress_at", "").strip()
+        if last_progress and observed_time <= parse_thread_timestamp(
+            last_progress, "last_progress_at"
+        ):
+            raise ValueError("silent observation must be later than last_progress_at")
+        if convergence_reminder_sent:
+            target["convergence_reminder_at"] = observed_at
+    elif state == "thread_not_converged":
+        if not deadline_time or observed_time <= deadline_time:
+            raise ValueError("thread_not_converged requires observed_at after absolute_deadline_at")
+        if previous_state != "silent":
+            raise ValueError("thread_not_converged requires a fresh prior silent observation")
+        reminder_at = target.get("convergence_reminder_at", "").strip()
+        last_progress = target.get("last_progress_at", "").strip()
+        if reminder_at and last_progress and parse_thread_timestamp(
+            reminder_at, "convergence_reminder_at"
+        ) <= parse_thread_timestamp(last_progress, "last_progress_at"):
+            raise ValueError("convergence reminder must be later than last_progress_at")
+        target["convergence_reason"] = (
+            "reminder_no_receipt"
+            if reminder_at
+            else "silent_past_absolute_deadline"
+        )
+        target["lifecycle_state"] = "thread_not_converged"
+        target["reconciliation_status"] = "thread_not_converged"
+    elif state == "rescue_dispatched":
+        try:
+            rescue_count = int(target.get("rescue_count", "0") or "0")
+        except ValueError as exc:
+            raise ValueError("rescue_count must be an integer") from exc
+        if rescue_count >= 1:
+            raise ValueError("rescue_limit_exceeded")
+        if previous_state != "thread_not_converged":
+            raise ValueError("rescue requires thread_not_converged state")
+        rescue_thread_id = validate_real_thread_id(rescue_thread_id, "rescue_thread_id")
+        if rescue_thread_id == target.get("real_thread_id", "").strip():
+            raise ValueError("rescue_thread_id must differ from real_thread_id")
+        if not new_deadline:
+            raise ValueError("rescue requires a new --absolute-deadline-at")
+        rescue_deadline = parse_thread_timestamp(new_deadline, "absolute_deadline_at")
+        if rescue_deadline <= observed_time:
+            raise ValueError("rescue absolute deadline must be later than observed_at")
+        if not evidence.strip():
+            raise ValueError("rescue dispatch requires title/readback dispatch evidence")
+        prompt_rel = target.get("notes", "").partition("prompt=")[2].strip()
+        original_prompt = contained_project_path(
+            project, prompt_rel, "rescue source prompt"
+        )
+        original_receipt = contained_project_path(
+            project, target.get("receipt_path", "").strip(), "rescue source receipt"
+        )
+        if not original_prompt.is_file() or not original_receipt.is_file():
+            raise ValueError("rescue dispatch requires existing bound prompt and receipt envelope")
+        rescue_prompt = original_prompt.with_name(
+            original_prompt.stem + "_rescue" + original_prompt.suffix
+        )
+        rescue_receipt = original_receipt.with_name(
+            original_receipt.stem + "_rescue" + original_receipt.suffix
+        )
+        primary_id = target.get("real_thread_id", "").strip()
+        prompt_text = original_prompt.read_text(encoding="utf-8")
+        receipt_text = original_receipt.read_text(encoding="utf-8")
+        for old, new in [
+            (primary_id, rescue_thread_id),
+            (current_deadline, new_deadline),
+        ]:
+            if old:
+                prompt_text = prompt_text.replace(old, new)
+                receipt_text = receipt_text.replace(old, new)
+        write_text(rescue_prompt, prompt_text)
+        write_text(rescue_receipt, receipt_text)
+        if rescue_thread_id not in rescue_prompt.read_text(encoding="utf-8"):
+            raise ValueError("rescue prompt could not be bound to rescue_thread_id")
+        if receipt_thread_ids(rescue_receipt.read_text(encoding="utf-8")) != [
+            rescue_thread_id
+        ]:
+            raise ValueError("rescue receipt envelope could not be bound to rescue_thread_id")
+        rescue_dispatch_path = (
+            project
+            / "AD-creative/orchestrator"
+            / f"thread_rescue_dispatch_{safe_artifact_suffix(work_id)}_{safe_artifact_suffix(lane_id)}.md"
+        )
+        write_text(
+            rescue_dispatch_path,
+            f"""# Thread Rescue Dispatch Receipt
+
+work_id: {work_id}
+lane_id: {lane_id}
+real_thread_id: {rescue_thread_id}
+supersedes_thread_id: {primary_id}
+dispatched_at: {observed_at}
+absolute_deadline_at: {new_deadline}
+rescue_prompt_path: {safe_rel(project, rescue_prompt)}
+rescue_receipt_path: {safe_rel(project, rescue_receipt)}
+
+## Readback Evidence
+
+{evidence}
+""",
+        )
+        baseline_path = contained_project_path(
+            project,
+            target.get("scope_baseline_path", "").strip(),
+            "thread scope baseline",
+        )
+        if not baseline_path.is_file() or file_sha256(baseline_path) != target.get(
+            "scope_baseline_sha256", ""
+        ).strip():
+            raise ValueError("thread scope baseline is missing or stale before rescue")
+        baseline = read_json_object(baseline_path, "thread scope baseline")
+        excluded = baseline.get("excluded_roots")
+        if not isinstance(excluded, list):
+            raise ValueError("thread scope baseline exclusions are invalid")
+        baseline["excluded_roots"] = list(
+            dict.fromkeys(
+                [
+                    *[str(item) for item in excluded],
+                    safe_rel(project, rescue_prompt),
+                    safe_rel(project, rescue_receipt),
+                    safe_rel(project, rescue_dispatch_path),
+                ]
+            )
+        )
+        write_json_object(baseline_path, baseline)
+        target["rescue_count"] = "1"
+        target["rescue_thread_id"] = rescue_thread_id
+        target["receipt_path"] = safe_rel(project, rescue_receipt)
+        target["scope_baseline_sha256"] = file_sha256(baseline_path)
+        target["rescue_dispatch_receipt_path"] = safe_rel(
+            project, rescue_dispatch_path
+        )
+        target["rescue_dispatch_evidence"] = evidence.strip()
+        target["absolute_deadline_at"] = new_deadline
+        target["lifecycle_state"] = "rescue_dispatched"
+        target["reconciliation_status"] = "rescue_dispatched"
+
+    target["convergence_state"] = state
+    target["last_seen_at"] = observed_at
+    target["updated_at"] = now_iso()
+    write_csv_rows(registry_path, fields, rows)
+    if state == "rescue_dispatched":
+        update_thread_agent_run(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            updates={
+                "receipt_path": target.get("receipt_path", ""),
+                "status": "rescue_dispatched",
+                "proof_status": "rescue_dispatch_verified",
+                "reconciliation_status": "rescue_dispatched",
+            },
+        )
+    log_path = append_thread_convergence_event(
+        project, target, state=state, observed_at=observed_at, evidence=evidence
+    )
+    return {
+        "lane_id": lane_id,
+        "work_id": work_id,
+        "state": state,
+        "absolute_deadline_at": target.get("absolute_deadline_at", ""),
+        "bounded_extension_used": target.get("bounded_extension_used", "false"),
+        "convergence_reminder_at": target.get("convergence_reminder_at", ""),
+        "rescue_count": target.get("rescue_count", "0"),
+        "log_path": safe_rel(project, log_path),
+    }
+
+
+def thread_receipt_json(text: str) -> dict[str, object] | None:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def receipt_field_text(text: str, key: str) -> str:
+    values = receipt_proof_values(
+        text, key, THREADOPS_RECEIPT_REQUIRED_PROOF.get(key, ())
+    )
+    return "\n".join(value.strip() for value in values if value.strip())
+
+
+def declared_thread_changed_paths(text: str) -> set[str]:
+    payload = thread_receipt_json(text)
+    if payload and payload.get("protocol_id") == SPECIALIST_EXCHANGE_PROTOCOL:
+        outputs = payload.get("output_artifacts")
+        if not isinstance(outputs, list):
+            return set()
+        return {
+            str(item.get("path", "")).strip()
+            for item in outputs
+            if isinstance(item, dict) and str(item.get("path", "")).strip()
+        }
+    raw = receipt_field_text(text, "files_changed")
+    paths: set[str] = set()
+    for line in raw.splitlines():
+        cleaned = re.sub(r"^[\s>*-]+", "", line).strip().strip("`")
+        if not cleaned:
+            continue
+        for item in cleaned.split(";"):
+            candidate = item.strip().strip("`")
+            if candidate.lower() in {
+                "none",
+                "no files changed",
+                "no file changes",
+                "not_applicable",
+                "n/a",
+            }:
+                continue
+            if " | " in candidate:
+                candidate = candidate.split(" | ", 1)[0].strip()
+            paths.add(candidate)
+    return paths
+
+
+def validation_result_is_success(text: str) -> bool:
+    payload = thread_receipt_json(text)
+    if payload and payload.get("protocol_id") == SPECIALIST_EXCHANGE_PROTOCOL:
+        qa = payload.get("qa")
+        return isinstance(qa, dict) and qa.get("status") == "pass"
+    value = receipt_field_text(text, "validation_result")
+    lowered = value.lower()
+    if re.search(r"\b(fail(?:ed)?|error|blocked|not[_ ]?run|exit\s*[=:]?\s*[1-9])\b", lowered):
+        return False
+    return bool(re.search(r"\b(pass(?:ed)?|success|ok|exit\s*[=:]?\s*0)\b", lowered))
+
+
+def receipt_loop_state_is_complete(text: str) -> bool:
+    payload = thread_receipt_json(text)
+    if payload and payload.get("protocol_id") == SPECIALIST_EXCHANGE_PROTOCOL:
+        return payload.get("outcome") == "completed"
+    value = receipt_field_text(text, "loop_state").lower()
+    return bool(re.search(r"\b(returned|reconciled|archived|completed|success)\b", value)) and not bool(
+        re.search(r"\b(blocked|failed|error|frozen|replay_requested)\b", value)
+    )
+
+
+def validate_thread_receipt_scope_and_semantics(
+    project: Path,
+    row: dict[str, str],
+    receipt_text: str,
+    *,
+    decision: str,
+    cleanup_action: str,
+    archived_at: str,
+) -> dict[str, object]:
+    if not archived_at:
+        raise ValueError("thread reconciliation requires archived_at cleanup evidence")
+    if re.search(r"\b(none|not[_ ]?done|did not|failed|pending|todo|tbd)\b", cleanup_action, re.IGNORECASE):
+        raise ValueError("thread cleanup_action is not complete")
+    baseline_rel = row.get("scope_baseline_path", "").strip()
+    baseline_path = contained_project_path(
+        project, baseline_rel, "thread scope baseline"
+    )
+    if not baseline_path.is_file() or file_sha256(baseline_path) != row.get(
+        "scope_baseline_sha256", ""
+    ).strip():
+        raise ValueError("thread scope baseline missing or hash mismatch")
+    baseline = read_json_object(baseline_path, "thread scope baseline")
+    baseline_files = baseline.get("files")
+    excluded_roots = baseline.get("excluded_roots")
+    if not isinstance(baseline_files, dict) or not isinstance(excluded_roots, list):
+        raise ValueError("thread scope baseline is malformed")
+    baseline_files = {str(key): str(value) for key, value in baseline_files.items()}
+    current_files = specialist_scope_manifest(
+        project, excluded_roots=[str(item) for item in excluded_roots]
+    )
+    actual_changed = {
+        path
+        for path in set(baseline_files) | set(current_files)
+        if baseline_files.get(path) != current_files.get(path)
+    }
+    declared_raw = declared_thread_changed_paths(receipt_text)
+    declared: set[str] = set()
+    for raw_path in declared_raw:
+        path = contained_project_path(project, raw_path, "receipt files_changed")
+        declared.add(canonical_project_relative(project, path))
+    mode = row.get("mode", "").strip()
+    if mode in THREADOPS_EXECUTION_MODES:
+        write_scope_values = [
+            item.strip()
+            for item in row.get("write_scope", "").split(";")
+            if item.strip()
+        ]
+        if not write_scope_values:
+            raise ValueError("execution worker write_scope is missing")
+        scope_roots = [
+            contained_project_path(project, item, "thread write_scope")
+            for item in write_scope_values
+        ]
+        for rel_path in actual_changed | declared:
+            path = contained_project_path(project, rel_path, "thread changed path")
+            if not any(path == root or root in path.parents for root in scope_roots):
+                raise ValueError(f"thread changed path outside write_scope: {rel_path}")
+        if actual_changed != declared:
+            missing = sorted(actual_changed - declared)
+            invented = sorted(declared - actual_changed)
+            raise ValueError(
+                "thread changed-path proof mismatch: "
+                f"undeclared={','.join(missing) or 'none'}; "
+                f"not_observed={','.join(invented) or 'none'}"
+            )
+        if decision in {"ADOPT", "PARTIAL_ADOPT"} and not actual_changed:
+            raise ValueError("execution worker adoption requires observed file output")
+        for rel_path in declared:
+            if decision in {"ADOPT", "PARTIAL_ADOPT"} and not (
+                project / rel_path
+            ).is_file():
+                raise ValueError(f"adopted worker output missing: {rel_path}")
+    elif actual_changed or declared:
+        raise ValueError("read-only/research thread changed project files")
+
+    if decision in {"ADOPT", "PARTIAL_ADOPT"}:
+        if not validation_result_is_success(receipt_text):
+            raise ValueError("worker validation_result is not successful")
+        if not receipt_loop_state_is_complete(receipt_text):
+            raise ValueError("worker loop_state is not complete")
+        payload = thread_receipt_json(receipt_text)
+        if not payload:
+            recommendation = receipt_field_text(
+                receipt_text, "worker_recommendation"
+            ).upper()
+            if not any(
+                value in recommendation for value in ["ADOPT", "PARTIAL_ADOPT"]
+            ):
+                raise ValueError("worker recommendation does not support adoption")
+            dirty_state = receipt_field_text(receipt_text, "dirty_state_impact")
+            if not dirty_state or re.search(
+                r"\b(unknown|failed|outside|unbounded|pending|tbd)\b",
+                dirty_state,
+                re.IGNORECASE,
+            ):
+                raise ValueError("worker dirty_state_impact is unsafe or missing")
+            receipt_cleanup = receipt_field_text(receipt_text, "cleanup_actions")
+            if not receipt_cleanup or re.search(
+                r"\b(none|not[_ ]?done|did not|failed|pending|tbd)\b",
+                receipt_cleanup,
+                re.IGNORECASE,
+            ):
+                raise ValueError("worker receipt cleanup_actions are incomplete")
+    proof: dict[str, object] = {
+        "protocol_id": "adco.thread-scope-proof",
+        "version": "1.0",
+        "work_id": row.get("work_id", ""),
+        "lane_id": row.get("lane_id", ""),
+        "lane_run_id": row.get("lane_run_id", ""),
+        "thread_id": row.get("receipt_thread_id", "") or row.get("real_thread_id", ""),
+        "baseline_path": baseline_rel,
+        "baseline_sha256": row.get("scope_baseline_sha256", ""),
+        "baseline_manifest_sha256": specialist_manifest_digest(baseline_files),
+        "observed_manifest_sha256": specialist_manifest_digest(current_files),
+        "observed_changed_paths": sorted(actual_changed),
+        "receipt_declared_paths": sorted(declared),
+        "decision": decision,
+        "validation_success": validation_result_is_success(receipt_text),
+        "cleanup_action": cleanup_action,
+        "archived_at": archived_at,
+        "created_at": now_iso(),
+    }
+    return proof
+
+
+def reconcile_thread_receipt(
+    project: Path,
+    *,
+    lane_id: str,
+    work_id: str,
+    receipt_path_value: str,
+    adoption_decision: str,
+    rejection_reason: str,
+    reconciled_at: str,
+    cleanup_action: str,
+    archived_at: str = "",
+) -> dict[str, str]:
+    migrate_control_plane(project)
+    parse_thread_timestamp(reconciled_at, "reconciled_at")
+    if archived_at:
+        parse_thread_timestamp(archived_at, "archived_at")
+    decision = adoption_decision.strip().upper()
+    if decision not in THREADOPS_ADOPTION_DECISIONS:
+        raise ValueError(f"unknown adoption decision: {adoption_decision}")
+    if decision != "ADOPT" and not rejection_reason.strip():
+        raise ValueError("rejection_reason is required unless adoption_decision is ADOPT")
+    if not cleanup_action.strip():
+        raise ValueError("cleanup_action is required")
+
+    registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
+    fields, rows = read_csv_rows(registry_path)
+    target = thread_registry_target(rows, lane_id=lane_id, work_id=work_id)
+    registered_receipt_rel = target.get("receipt_path", "").strip()
+    registered_receipt_path = contained_project_path(
+        project, registered_receipt_rel, "registered worker receipt"
+    )
+    receipt_path = Path(receipt_path_value).expanduser()
+    if not receipt_path.is_absolute():
+        receipt_path = project / receipt_path
+    if not receipt_path.is_file():
+        raise ValueError(f"receipt file does not exist: {receipt_path_value}")
+    receipt_text = receipt_path.read_text(encoding="utf-8", errors="ignore")
+    identities = receipt_thread_ids(receipt_text)
+    expected_ids = {
+        value
+        for value in [
+            target.get("real_thread_id", "").strip(),
+            target.get("rescue_thread_id", "").strip(),
+        ]
+        if value
+    }
+    identity = identities[0] if len(identities) == 1 else ";".join(identities)
+    target["receipt_thread_id"] = identity
+    target["returned_at"] = reconciled_at
+    target["updated_at"] = now_iso()
+    if len(identities) != 1 or identities[0] not in expected_ids:
+        target["receipt_status"] = "rejected"
+        target["reconciliation_status"] = "rejected_evidence"
+        target["convergence_state"] = "receipt_rejected"
+        target["adoption_decision"] = "REJECT"
+        target["rejection_reason"] = "invalid_worker_thread_id"
+        write_csv_rows(registry_path, fields, rows)
+        update_thread_agent_run(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            updates={
+                "status": "rejected_evidence",
+                "completed_at": reconciled_at,
+                "proof_status": "invalid_worker_thread_id",
+                "reconciliation_status": "rejected_evidence",
+            },
+        )
+        log_path = append_thread_convergence_event(
+            project,
+            target,
+            state="receipt_rejected",
+            observed_at=reconciled_at,
+            evidence="invalid_worker_thread_id",
+        )
+        return {
+            "status": "rejected_evidence",
+            "error": "invalid_worker_thread_id",
+            "receipt_thread_id": identity,
+            "log_path": safe_rel(project, log_path),
+        }
+
+    if receipt_path.resolve() != registered_receipt_path:
+        semantic_error = "receipt path does not match the bound registry receipt_path"
+    else:
+        target["receipt_thread_id"] = identity
+        try:
+            scope_proof = validate_thread_receipt_scope_and_semantics(
+                project,
+                target,
+                receipt_text,
+                decision=decision,
+                cleanup_action=cleanup_action,
+                archived_at=archived_at,
+            )
+        except ValueError as exc:
+            semantic_error = str(exc)
+        else:
+            semantic_error = ""
+    if semantic_error:
+        target["receipt_status"] = "rejected"
+        target["reconciliation_status"] = "rejected_evidence"
+        target["convergence_state"] = "receipt_rejected"
+        target["adoption_decision"] = "REJECT"
+        target["rejection_reason"] = semantic_error
+        write_csv_rows(registry_path, fields, rows)
+        update_thread_agent_run(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            updates={
+                "status": "rejected_evidence",
+                "completed_at": reconciled_at,
+                "proof_status": "receipt_semantics_rejected",
+                "reconciliation_status": "rejected_evidence",
+            },
+        )
+        log_path = append_thread_convergence_event(
+            project,
+            target,
+            state="receipt_rejected",
+            observed_at=reconciled_at,
+            evidence=semantic_error,
+        )
+        return {
+            "status": "rejected_evidence",
+            "error": semantic_error,
+            "receipt_thread_id": identity,
+            "log_path": safe_rel(project, log_path),
+        }
+
+    proof_path = (
+        project
+        / "AD-creative/orchestrator/thread_scope_proofs"
+        / f"{safe_artifact_suffix(work_id)}_{safe_artifact_suffix(lane_id)}_{file_sha256(receipt_path)[:12]}.json"
+    )
+    agent_runs_path = project / "AD-creative/orchestrator/agent_runs.csv"
+    convergence_log_path = (
+        project
+        / f"AD-creative/orchestrator/thread_convergence_{safe_artifact_suffix(work_id)}.md"
+    )
+    rollback_files = {
+        path: path.read_bytes() if path.is_file() else None
+        for path in [registry_path, agent_runs_path, convergence_log_path, proof_path]
+    }
+    write_json_object(proof_path, scope_proof)
+
+    target["receipt_status"] = "received"
+    target["reconciliation_status"] = (
+        "reconciled" if decision in {"ADOPT", "PARTIAL_ADOPT"} else "rejected_evidence" if decision == "REJECT" else "blocked"
+    )
+    target["convergence_state"] = "receipt_received"
+    target["adoption_decision"] = decision
+    target["rejection_reason"] = rejection_reason.strip()
+    target["reconciled_at"] = reconciled_at
+    target["cleanup_action"] = cleanup_action.strip()
+    target["archived"] = "true"
+    target["archived_at"] = archived_at
+    target["lifecycle_state"] = "archived"
+    target["scope_proof_path"] = safe_rel(project, proof_path)
+    target["scope_proof_sha256"] = file_sha256(proof_path)
+    write_csv_rows(registry_path, fields, rows)
+    update_thread_agent_run(
+        project,
+        lane_id=lane_id,
+        work_id=work_id,
+        updates={
+            "status": "reconciled" if decision in {"ADOPT", "PARTIAL_ADOPT"} else decision.lower(),
+            "completed_at": reconciled_at,
+            "receipt_path": registered_receipt_rel,
+            "proof_status": "receipt_identity_and_host_scope_verified",
+            "reconciliation_status": target["reconciliation_status"],
+        },
+    )
+    log_path = append_thread_convergence_event(
+        project,
+        target,
+        state="receipt_received",
+        observed_at=reconciled_at,
+        evidence=f"main_adoption_decision={decision}; cleanup_action={cleanup_action}",
+    )
+    post_validation_errors, _ = validate(project)
+    if post_validation_errors:
+        for path, content in rollback_files.items():
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+        raise ValueError(
+            "project validation failed for candidate thread reconciliation; control-plane changes rolled back: "
+            + "; ".join(post_validation_errors[:12])
+        )
+    return {
+        "status": target["reconciliation_status"],
+        "receipt_thread_id": identity,
+        "adoption_decision": decision,
+        "scope_proof_path": safe_rel(project, proof_path),
+        "log_path": safe_rel(project, log_path),
     }
 
 
@@ -7501,13 +10263,12 @@ def client_outline_rows(project: Path) -> list[dict[str, str]]:
     return rows
 
 
-def review_client_outline(project: Path) -> tuple[str, list[str], Path]:
-    migrate_control_plane(project)
-    rows = client_outline_rows(project)
+def client_outline_content_issues(
+    rows: list[dict[str, str]], *, require_confirmed_state: bool
+) -> list[str]:
     issues: list[str] = []
-    evidence = [f"outline_rows={len(rows)}"]
     if not rows:
-        issues.append("缺少客户可读文本框架：client_outline.csv 没有任何页。")
+        return ["缺少客户可读文本框架：client_outline.csv 没有任何页。"]
     for row in rows:
         slide = row.get("slide_id", "<missing>")
         for field, min_chars in [
@@ -7522,17 +10283,183 @@ def review_client_outline(project: Path) -> tuple[str, list[str], Path]:
                 issues.append(f"{slide} 缺少可客户阅读的 {field}。")
         body_copy = row.get("body_copy", "").strip()
         if len(body_copy) > CLIENT_OUTLINE_BODY_MAX_CHARS:
-            issues.append(f"{slide} 正文过密：body_copy 超过 {CLIENT_OUTLINE_BODY_MAX_CHARS} 字，需拆页或降密度。")
+            issues.append(
+                f"{slide} 正文过密：body_copy 超过 {CLIENT_OUTLINE_BODY_MAX_CHARS} 字，需拆页或降密度。"
+            )
         visual_status = row.get("visual_asset_status", "").strip().lower()
         if visual_status and visual_status not in CLIENT_OUTLINE_VISUAL_STATUSES:
-            issues.append(f"{slide} visual_asset_status 无效: {row.get('visual_asset_status')}。")
-        if visual_status in EXISTING_IMAGE_STATUSES and not row.get("asset_ids", "").strip():
+            issues.append(
+                f"{slide} visual_asset_status 无效: {row.get('visual_asset_status')}。"
+            )
+        if visual_status in EXISTING_IMAGE_STATUSES and not row.get(
+            "asset_ids", ""
+        ).strip():
             issues.append(f"{slide} 标记已有图但 asset_ids 为空。")
         hits = find_client_language_hits(row_text(row))
         if hits:
-            issues.append(f"{slide} 客户文本框架含内部/执行侧词: {', '.join(hits[:8])}")
-        if row.get("visibility", "").strip().lower() in CLIENT_VISIBLE_VALUES and row.get("status", "").strip().lower() not in {"ready", "approved", "done"}:
-            issues.append(f"{slide} 客户可见但 status 不是 ready/approved/done。")
+            issues.append(
+                f"{slide} 客户文本框架含内部/执行侧词: {', '.join(hits[:8])}"
+            )
+        if require_confirmed_state:
+            if row.get("visibility", "").strip().lower() not in CLIENT_VISIBLE_VALUES:
+                issues.append(f"{slide} 文本仍是 pending/internal，尚未确认进入客户版。")
+            if row.get("status", "").strip().lower() not in {
+                "ready",
+                "approved",
+                "done",
+            }:
+                issues.append(f"{slide} status 不是 ready/approved/done。")
+    return issues
+
+
+def client_outline_confirmed_content_sha256(
+    fields: list[str], rows: list[dict[str, str]]
+) -> str:
+    """Hash client-reviewed content while excluding host-owned workflow state."""
+    content_fields = [
+        field for field in fields if field not in {"visibility", "status"}
+    ]
+    payload = {
+        "protocol_id": "adco.client-outline-confirmed-content",
+        "version": "1.0",
+        "fields": content_fields,
+        "rows": [
+            {field: row.get(field, "") for field in content_fields} for row in rows
+        ],
+    }
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def client_outline_confirmation_errors(project: Path) -> list[str]:
+    outline_path = project / "AD-creative/client_review/client_outline.csv"
+    receipt_path = project / CLIENT_OUTLINE_CONFIRMATION_REL
+    if not receipt_path.is_file():
+        return ["缺少 hash-bound client outline 人工确认 receipt。"]
+    try:
+        receipt = read_json_object(receipt_path, "client outline confirmation")
+    except ValueError as exc:
+        return [str(exc)]
+    errors: list[str] = []
+    if receipt.get("decision") != "approved_for_ppt":
+        errors.append("client outline confirmation decision 不是 approved_for_ppt。")
+    confirmed_by = str(receipt.get("confirmed_by", "")).strip()
+    if confirmed_by.lower() in {
+        "",
+        "ad_creative_operator",
+        "automation",
+        "worker",
+        "main controller",
+    }:
+        errors.append("client outline confirmation 缺少独立的人类确认者。")
+    try:
+        parse_thread_timestamp(
+            str(receipt.get("confirmed_at", "")), "client_outline.confirmed_at"
+        )
+    except ValueError as exc:
+        errors.append(str(exc))
+    evidence_ref = str(receipt.get("evidence_ref", "")).strip()
+    if not (
+        evidence_ref.startswith("user_confirmation:")
+        or evidence_ref.startswith("client_confirmation:")
+    ):
+        errors.append("client outline confirmation evidence_ref 必须绑定用户/客户确认。")
+    if receipt.get("outline_path") != safe_rel(project, outline_path):
+        errors.append("client outline confirmation outline_path 不匹配。")
+    if not outline_path.is_file() or receipt.get("outline_sha256") != file_sha256(
+        outline_path
+    ):
+        errors.append("client outline confirmation 已过期：outline hash 不匹配。")
+    if not re.fullmatch(
+        r"[0-9a-f]{64}", str(receipt.get("presented_outline_sha256", ""))
+    ):
+        errors.append("client outline confirmation 缺少确认前原始文件 hash。")
+    if receipt.get("confirmation_basis") != (
+        "exact_presented_file_and_canonical_content_excluding_host_state"
+    ):
+        errors.append("client outline confirmation confirmation_basis 不匹配。")
+    if outline_path.is_file():
+        fields, rows = read_csv_rows(outline_path)
+        if receipt.get(
+            "confirmed_content_sha256"
+        ) != client_outline_confirmed_content_sha256(fields, rows):
+            errors.append(
+                "client outline confirmation 已过期：客户确认内容 digest 不匹配。"
+            )
+    return errors
+
+
+def confirm_client_outline(
+    project: Path,
+    *,
+    confirmed_by: str,
+    confirmed_at: str,
+    evidence_ref: str,
+) -> Path:
+    migrate_control_plane(project)
+    parse_thread_timestamp(confirmed_at, "confirmed_at")
+    if confirmed_by.strip().lower() in {
+        "",
+        "ad_creative_operator",
+        "automation",
+        "worker",
+        "main controller",
+    }:
+        raise ValueError("confirmed_by must identify the human/client confirmer")
+    if not (
+        evidence_ref.startswith("user_confirmation:")
+        or evidence_ref.startswith("client_confirmation:")
+    ):
+        raise ValueError("evidence_ref must start with user_confirmation: or client_confirmation:")
+    outline_path = project / "AD-creative/client_review/client_outline.csv"
+    fields, rows = read_csv_rows(outline_path)
+    issues = client_outline_content_issues(rows, require_confirmed_state=False)
+    if issues:
+        raise ValueError("client outline content is not confirmable: " + "; ".join(issues[:8]))
+    presented_outline_sha256 = file_sha256(outline_path)
+    confirmed_content_sha256 = client_outline_confirmed_content_sha256(fields, rows)
+    for row in rows:
+        row["visibility"] = "client_visible_ready"
+        row["status"] = "approved"
+    write_csv_rows(outline_path, fields, rows)
+    receipt_path = project / CLIENT_OUTLINE_CONFIRMATION_REL
+    write_json_object(
+        receipt_path,
+        {
+            "confirmation_id": "CLIENT-OUTLINE-CONFIRMATION-001",
+            "outline_path": safe_rel(project, outline_path),
+            "presented_outline_sha256": presented_outline_sha256,
+            "confirmed_content_sha256": confirmed_content_sha256,
+            "outline_sha256": file_sha256(outline_path),
+            "confirmation_basis": (
+                "exact_presented_file_and_canonical_content_excluding_host_state"
+            ),
+            "decision": "approved_for_ppt",
+            "confirmed_by": confirmed_by.strip(),
+            "confirmed_at": confirmed_at,
+            "evidence_ref": evidence_ref,
+            "scope": "current_client_outline_all_rows",
+        },
+    )
+    return receipt_path
+
+
+def review_client_outline(project: Path) -> tuple[str, list[str], Path]:
+    migrate_control_plane(project)
+    rows = client_outline_rows(project)
+    issues = client_outline_content_issues(rows, require_confirmed_state=True)
+    evidence = [f"outline_rows={len(rows)}"]
+    confirmation_issues = client_outline_confirmation_errors(project)
+    issues.extend(confirmation_issues)
+    evidence.append(
+        "outline_confirmation=" + ("valid" if not confirmation_issues else "missing_or_stale")
+    )
     status = "PASS" if not issues else "BLOCKED"
     report_path = project / "AD-creative/gates/GATE-AUTO-CLIENT-OUTLINE-001_report.md"
     write_text(
@@ -7558,6 +10485,7 @@ visibility: internal_only
 - 详细客户方案允许 22-45+ 页；Gate 约束每页低密度，不把详细方案压成短 pitch。
 - visual_asset_status 必须说明画面是已有图、占位、待生成、无图或纯文字页。
 - 客户可见页必须显式 ready/approved/done。
+- PPT builder 前必须有绑定当前 client_outline.csv SHA-256 的人工确认 receipt。
 """,
     )
     update_artifact(project, "ART-AUTO-CLIENT-OUTLINE-GATE", "client_outline_gate_report", safe_rel(project, report_path), "client_review", status="done" if status == "PASS" else "blocked", visibility="internal_only", gate_status=status)
@@ -7582,21 +10510,33 @@ def review_client_language(project: Path, extra_paths: list[Path] | None = None)
     for path in sorted(candidate_files):
         if not path.exists():
             continue
-        text = client_language_text_for_path(path)
+        try:
+            text = client_language_text_for_path(path)
+        except RuntimeError as exc:
+            issues.append(f"{safe_rel(project, path)} 无法可靠提取客户文本: {exc}")
+            continue
         if not text.strip():
+            issues.append(f"{safe_rel(project, path)} 客户文本为空或不可解析")
             continue
         issues.extend(text_hits_for_blocklist(safe_rel(project, path), text))
     for path in sorted(forced_files - candidate_files):
         if not path.exists():
             continue
-        if path.suffix.lower() == ".pptx":
-            text = pptx_text_content(path)
+        if path.suffix.lower() in {".pptx", ".pdf"}:
+            try:
+                text = client_language_text_for_path(path)
+            except RuntimeError as exc:
+                issues.append(f"{safe_rel(project, path)} 无法可靠提取客户文本: {exc}")
+                continue
         elif path.suffix.lower() in TEXT_CLIENT_SCAN_SUFFIXES:
             try:
                 text = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 text = path.read_text(encoding="utf-8", errors="ignore")
         else:
+            continue
+        if not text.strip():
+            issues.append(f"{safe_rel(project, path)} 客户文本为空或不可解析")
             continue
         issues.extend(text_hits_for_blocklist(safe_rel(project, path), text))
     status = "PASS" if not issues else "BLOCKED"
@@ -7669,7 +10609,65 @@ def update_current_asset_metadata(
         write_csv_rows(path, ASSET_CURRENT_FIELDS, rows)
 
 
-def review_visual_layout(project: Path, *, min_long_edge: int = 900, min_short_edge: int = 600) -> tuple[str, list[str], Path]:
+def matching_asset_authorization(
+    project: Path,
+    asset_id: str,
+    asset_sha256: str,
+    rows: list[dict[str, str]],
+) -> dict[str, str] | None:
+    for row in rows:
+        if row.get("asset_id", "").strip() != asset_id:
+            continue
+        if row.get("asset_sha256", "").strip() != asset_sha256:
+            continue
+        if row.get("approval_scope", "").strip().lower() not in {
+            "client_review",
+            "client_delivery",
+            "client_visible",
+        }:
+            continue
+        if row.get("status", "").strip().lower() != "approved" or row.get("revoked_at", "").strip():
+            continue
+        approved_by = row.get("approved_by", "").strip()
+        if approved_by.lower() in {
+            "",
+            "ad_creative_operator",
+            "automation",
+            "worker",
+            "main controller",
+        }:
+            continue
+        evidence_ref = row.get("evidence_ref", "").strip()
+        try:
+            parse_thread_timestamp(row.get("approved_at", ""), "asset approved_at")
+        except ValueError:
+            continue
+        if evidence_ref.startswith(
+            ("user_confirmation:", "client_confirmation:")
+        ):
+            return row
+        try:
+            evidence_path = contained_project_path(
+                project, evidence_ref, "asset authorization evidence_ref"
+            )
+        except ValueError:
+            continue
+        if (
+            evidence_path.is_file()
+            and row.get("evidence_sha256", "").strip() == file_sha256(evidence_path)
+        ):
+            return row
+    return None
+
+
+def review_visual_layout(
+    project: Path,
+    *,
+    min_long_edge: int = 900,
+    min_short_edge: int = 600,
+    pptx_path: Path | None = None,
+    preview_path: Path | None = None,
+) -> tuple[str, list[str], Path]:
     current_manifest_path = project / "AD-creative/visual_assets/asset_current_manifest.csv"
     _, previous_current_rows = read_csv_rows(current_manifest_path)
     previous_current_by_id = {
@@ -7678,11 +10676,34 @@ def review_visual_layout(project: Path, *, min_long_edge: int = 900, min_short_e
         if row.get("asset_id", "").strip()
     }
     manifest, _ = refresh_asset_current_manifest(project)
+    _, authorization_rows = read_csv_rows(
+        project / "AD-creative/visual_assets/asset_authorizations.csv"
+    )
     outline = client_outline_rows(project)
     assets_by_id = {row.get("asset_id", "").strip(): row for row in manifest if row.get("asset_id", "").strip()}
     slide_usage: dict[str, list[str]] = {}
     issues: list[str] = []
     warnings: list[str] = []
+    _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    package_paths = current_delivery_paths(project, artifacts)
+    pptx_path = pptx_path or package_paths.get("pptx")
+    preview_path = preview_path or package_paths.get("preview")
+    if not pptx_path or not pptx_path.exists():
+        issues.append("缺少 exact current PPTX，visual-layout-gate 不能验证真实页面。")
+    else:
+        try:
+            pptx_stats = inspect_pptx(pptx_path)
+            if not pptx_stats["editable"]:
+                issues.append("exact current PPTX 缺少可编辑文本层。")
+            issues.extend(pptx_layout_findings(pptx_path))
+        except (OSError, zipfile.BadZipFile, ET.ParseError) as exc:
+            issues.append(f"exact current PPTX 无法解析: {exc}")
+    if not preview_path or not preview_path.exists():
+        issues.append("缺少 exact current preview，visual-layout-gate 不能验证真实渲染。")
+    else:
+        width, height, image_format = probe_image(preview_path)
+        if not width or not height or not image_format:
+            issues.append("exact current preview 不是可解析图片。")
     if not outline:
         issues.append("缺少 client_outline.csv，无法判断页面阅读顺序和素材角色。")
     for row in outline:
@@ -7765,10 +10786,14 @@ def review_visual_layout(project: Path, *, min_long_edge: int = 900, min_short_e
                     issues.append(f"{asset_id} 用于客户页但 sha256 过期: manifest={recorded_sha} actual={actual_sha}。")
                 elif previous_sha and previous_sha != actual_sha:
                     issues.append(f"{asset_id} 用于客户页但运行前 sha256 过期: manifest={previous_sha} actual={actual_sha}。")
-            approval = asset.get("approval", "").strip().lower()
-            if approval not in CLIENT_ASSET_APPROVAL_VALUES:
+            recorded_sha = asset.get("sha256", "").strip()
+            if not matching_asset_authorization(
+                project, asset_id, recorded_sha, authorization_rows
+            ):
                 slides = ",".join(usage_slides) or "direct_client_use"
-                issues.append(f"{asset_id} 用于客户页但 approval={asset.get('approval') or 'missing'}: {slides}。")
+                issues.append(
+                    f"{asset_id} 用于客户页但缺少匹配 asset hash/scope 的独立授权 receipt: {slides}。"
+                )
         if path.suffix.lower() in GENERATED_IMAGE_SUFFIXES and path.exists():
             width, height, image_format = probe_image(path)
             if width and height and (max(width, height) < min_long_edge or min(width, height) < min_short_edge):
@@ -7791,6 +10816,8 @@ visibility: internal_only
 
 - outline_rows: {len(outline)}
 - current_manifest_assets: {len(manifest)}
+- current_pptx: {safe_rel(project, pptx_path) if pptx_path else 'missing'}
+- current_preview: {safe_rel(project, preview_path) if preview_path else 'missing'}
 - min_long_edge: {min_long_edge}
 - min_short_edge: {min_short_edge}
 
@@ -7806,7 +10833,8 @@ visibility: internal_only
 
 - 检查图片拉伸、裁切、图像大小、页面拥挤、卡片套卡片、报告感、文字过短、客户阅读顺序。
 - 检查图片与文案/画面槽位匹配、同图重复误用、竖屏/横屏比例不当。
-- `direct_client_use=yes` 的图片必须 approval=PASS。
+- 没有 exact current PPTX 与真实 preview 时不得 PASS。
+- `direct_client_use=yes` 的图片还必须有与文件 hash 绑定的授权证据。
 """,
     )
     update_artifact(project, "ART-AUTO-VISUAL-LAYOUT-GATE", "visual_layout_gate_report", safe_rel(project, report_path), "ppt_gate", status="done" if status != "BLOCKED" else "blocked", visibility="internal_only", gate_status=status)
@@ -7816,32 +10844,7 @@ visibility: internal_only
 
 def final_delivery_lock(project: Path) -> tuple[list[dict[str, str]], Path]:
     migrate_control_plane(project)
-    lock_path = project / "AD-creative/orchestrator/final_delivery_lock.csv"
-    fields, rows = read_csv_rows(lock_path)
-    by_path = {row.get("path", ""): row for row in rows if row.get("path")}
-    final_dir = project / "05_最终交付_FinalDelivery"
-    for path in sorted(final_dir.rglob("*")) if final_dir.exists() else []:
-        if not path.is_file() or path.name == "目录索引.md" or path.name == "README.md":
-            continue
-        rel_path = safe_rel(project, path)
-        stat = path.stat()
-        row = by_path.get(rel_path, {})
-        row.update(
-            {
-                "lock_id": row.get("lock_id") or f"FDL-{len(by_path) + 1:03d}",
-                "path": rel_path,
-                "sha256": file_sha256(path),
-                "size_bytes": str(stat.st_size),
-                "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                "protected": "yes",
-                "registered_at": row.get("registered_at") or now_iso(),
-                "notes": row.get("notes") or "User-placed FinalDelivery file is protected by default; register only.",
-            }
-        )
-        by_path[rel_path] = row
-    locked = list(by_path.values())
-    write_csv_rows(lock_path, fields, locked)
-    return locked, lock_path
+    return final_delivery_lock_snapshot(project, protected_value="yes")
 
 
 def cleanup_category(path: Path) -> str:
@@ -8166,19 +11169,49 @@ def review_thread_discipline(project: Path) -> tuple[str, list[str], Path]:
         if not receipt_path:
             issues.append(f"{owner} 缺少 receipt_path。")
         else:
-            path = project / receipt_path if not Path(receipt_path).is_absolute() else Path(receipt_path)
-            if not path.exists():
+            try:
+                path = contained_project_path(project, receipt_path, "thread receipt")
+            except ValueError as exc:
+                issues.append(f"{owner} {exc}")
+                path = None
+            if path is None or not path.is_file():
                 issues.append(f"{owner} receipt 文件不存在: {receipt_path}")
             else:
                 receipt_text = path.read_text(encoding="utf-8", errors="ignore")
-        if receipt_text and "adoption_decision" not in receipt_text and "Adoption / Rejection" not in receipt_text:
-            issues.append(f"{owner} receipt 缺少 adoption/rejection 记录。")
+        if receipt_text:
+            payload = thread_receipt_json(receipt_text)
+            has_worker_recommendation = bool(
+                payload.get("specialist_recommendation")
+                if payload and payload.get("protocol_id") == SPECIALIST_EXCHANGE_PROTOCOL
+                else receipt_field_text(receipt_text, "worker_recommendation")
+            )
+            if not has_worker_recommendation:
+                issues.append(f"{owner} receipt 缺少 worker_recommendation。")
+        if not row.get("adoption_decision", "").strip():
+            issues.append(f"{owner} registry 缺少 main adoption_decision。")
+        if receipt_text:
+            identities = receipt_thread_ids(receipt_text)
+            expected_ids = {
+                value
+                for value in [
+                    row.get("real_thread_id", "").strip(),
+                    row.get("rescue_thread_id", "").strip(),
+                ]
+                if value
+            }
+            if len(identities) != 1 or identities[0] not in expected_ids:
+                issues.append(
+                    f"{owner} invalid_worker_thread_id: receipt={';'.join(identities) or 'missing'}。"
+                )
         cleanup_values = " ".join(
             row.get(key, "")
             for key in ["cleanup_action", "cleanup_reason", "archived_at", "notes"]
         ).strip()
         if not cleanup_values:
             issues.append(f"{owner} 缺少 cleanup 记录。")
+        archived = normalized_bool(row.get("archived"))
+        if not archived or not row.get("archived_at", "").strip():
+            issues.append(f"{owner} cleanup 尚未由 archived=true + archived_at 证实。")
     if not rows:
         warnings.append("thread_registry 为空；本项目未声称使用 Codex Threads 时可接受。")
     status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
@@ -8252,28 +11285,37 @@ def text_value_after_colon(line: str) -> str:
 
 
 def adversarial_report_paths(project: Path) -> list[Path]:
-    candidates: list[Path] = []
     gate_dir = project / "AD-creative/gates"
-    if gate_dir.exists():
-        candidates.extend(
-            path
-            for path in gate_dir.glob("*.md")
-            if "template" not in path.name.lower()
-        )
-    goal_dir = project / GOAL_ITERATIONS_REL
-    if goal_dir.exists():
-        candidates.extend(goal_dir.glob("*.md"))
-    return sorted(candidates)
+    if not gate_dir.exists():
+        return []
+    return sorted(gate_dir.glob("ADVERSARIAL_REVIEW_*.md"))
 
 
 def has_adversarial_row_for_stage(text: str, stage: str) -> bool:
     target_stage = normalize_stage(stage)
-    report_stage = ""
-    for line in text.splitlines():
-        if line.lower().startswith("stage:"):
-            report_stage = normalize_stage(text_value_after_colon(line))
-            break
-    if report_stage and report_stage != target_stage:
+    metadata = {
+        key.lower(): value.strip()
+        for line in text.splitlines()
+        if ":" in line
+        for key, value in [line.split(":", 1)]
+    }
+    report_stage = normalize_stage(metadata.get("stage", ""))
+    reviewer_id = metadata.get("reviewer_id", "").strip().lower()
+    if report_stage != target_stage:
+        return False
+    if reviewer_id in {"", "main controller", "ad_creative_operator", "automation", "worker"}:
+        return False
+    if not metadata.get("reviewer_role", "").strip():
+        return False
+    if metadata.get("independent", "").strip().lower() not in {"true", "yes"}:
+        return False
+    try:
+        parse_thread_timestamp(metadata.get("reviewed_at", ""), "reviewed_at")
+    except ValueError:
+        return False
+    if not metadata.get("target_ref", "").strip():
+        return False
+    if not re.fullmatch(r"[0-9a-f]{64}", metadata.get("target_sha256", "").strip(), re.IGNORECASE):
         return False
 
     for line in text.splitlines():
@@ -8291,27 +11333,132 @@ def has_adversarial_row_for_stage(text: str, stage: str) -> bool:
             rebuttal = cells[6]
             revision = cells[7]
             gate_status = cells[8]
-            if objection and rebuttal and revision and gate_status:
+            if (
+                objection
+                and rebuttal
+                and revision
+                and gate_status.strip().upper() in {"PASS", "APPROVED"}
+            ):
                 return True
         elif len(cells) >= 5:
             row_stage = normalize_stage(cells[0])
-            if row_stage and row_stage not in {target_stage, "all", "global"}:
+            if row_stage and row_stage != target_stage:
                 continue
             objection = cells[1]
             rebuttal = cells[2]
             revision = cells[3]
             gate_status = cells[4]
-            if objection and rebuttal and revision and gate_status:
+            if (
+                objection
+                and rebuttal
+                and revision
+                and gate_status.strip().upper() in {"PASS", "APPROVED"}
+            ):
                 return True
     return False
 
 
-def adversarial_council_evidence(project: Path, stage: str) -> tuple[bool, list[str]]:
+def default_adversarial_targets(project: Path, stage: str) -> list[Path]:
+    targets = {
+        "creative": [
+            "AD-creative/creative/creative_directions.md",
+            "AD-creative/proposal_architecture/proposal_structure.md",
+        ],
+        "reference_research": ["AD-creative/references/reference_cards.csv"],
+        "visual_review": [
+            "AD-creative/visual_assets/asset_current_manifest.csv",
+            "AD-creative/visual_assets/asset_manifest.csv",
+        ],
+        "film_quality": [
+            "AD-creative/film/treatment_packet.md",
+            "AD-creative/film/shot_list_storyboard_plan.md",
+        ],
+        "final_delivery": [
+            "AD-creative/delivery/client_pack_binding.json",
+        ],
+    }
+    return [
+        project / rel_path
+        for rel_path in targets.get(normalize_stage(stage), [])
+        if (project / rel_path).is_file()
+    ]
+
+
+def write_adversarial_target_snapshot(
+    project: Path,
+    *,
+    stage: str,
+    payload: dict[str, object],
+    target_digest: str,
+) -> Path:
+    path = (
+        project
+        / "AD-creative/gates/adversarial_targets"
+        / f"{normalize_stage(stage)}_{target_digest}.json"
+    )
+    if not path.exists():
+        write_json_object(
+            path,
+            {
+                "protocol_id": "adco.adversarial-review-target",
+                "version": "1.0",
+                "stage": normalize_stage(stage),
+                "target_digest": target_digest,
+                "payload": payload,
+                "created_at": now_iso(),
+            },
+        )
+    return path
+
+
+def adversarial_council_evidence(
+    project: Path,
+    stage: str,
+    *,
+    expected_targets: list[Path] | None = None,
+) -> tuple[bool, list[str]]:
     evidence: list[str] = []
+    allowed_targets = {
+        path.resolve()
+        for path in (
+            expected_targets
+            if expected_targets is not None
+            else default_adversarial_targets(project, stage)
+        )
+        if path.is_file()
+    }
+    if not allowed_targets:
+        return False, []
     for path in adversarial_report_paths(project):
         text = path.read_text(encoding="utf-8", errors="ignore")
-        if has_adversarial_row_for_stage(text, stage):
-            evidence.append(safe_rel(project, path))
+        if not has_adversarial_row_for_stage(text, stage):
+            continue
+        target_match = re.search(r"(?im)^target_ref:\s*(.+?)\s*$", text)
+        sha_match = re.search(r"(?im)^target_sha256:\s*([0-9a-f]{64})\s*$", text)
+        if not target_match or not sha_match:
+            continue
+        try:
+            target = contained_project_path(
+                project, target_match.group(1).strip(), "adversarial target_ref"
+            )
+        except ValueError:
+            continue
+        if target not in allowed_targets:
+            continue
+        if not target.is_file() or file_sha256(target) != sha_match.group(1).lower():
+            continue
+        reviewed_match = re.search(r"(?im)^reviewed_at:\s*(.+?)\s*$", text)
+        if not reviewed_match:
+            continue
+        try:
+            reviewed_at = parse_thread_timestamp(
+                reviewed_match.group(1), "reviewed_at"
+            )
+        except ValueError:
+            continue
+        if reviewed_at.timestamp() + 5 < target.stat().st_mtime:
+            continue
+        evidence.append(safe_rel(project, path))
     return bool(evidence), evidence
 
 
@@ -8321,8 +11468,12 @@ def enforce_adversarial_gate_policy(
     status: str,
     warnings: list[str],
     evidence: list[str],
+    *,
+    expected_targets: list[Path] | None = None,
 ) -> str:
-    has_record, records = adversarial_council_evidence(project, stage)
+    has_record, records = adversarial_council_evidence(
+        project, stage, expected_targets=expected_targets
+    )
     evidence.append(
         "adversarial_council="
         + (";".join(records) if has_record else "missing")
@@ -8372,6 +11523,7 @@ THREADOPS_REGISTRY_FIELDS = [
     "title",
     "role",
     "lane_id",
+    "lane_run_id",
     "work_id",
     "lifecycle_state",
     "pinned",
@@ -8403,7 +11555,37 @@ THREADOPS_REGISTRY_FIELDS = [
     "title_verified_at",
     "dispatch_receipt_path",
     "dispatch_evidence",
+    "scope_baseline_path",
+    "scope_baseline_sha256",
+    "scope_proof_path",
+    "scope_proof_sha256",
+    "rescue_dispatch_receipt_path",
+    "rescue_dispatch_evidence",
+    "convergence_state",
+    "last_progress_at",
+    "absolute_deadline_at",
+    "bounded_extension_used",
+    "extension_reason",
+    "convergence_reminder_at",
+    "convergence_reason",
+    "rescue_count",
+    "rescue_thread_id",
+    "receipt_thread_id",
+    "adoption_decision",
+    "rejection_reason",
 ]
+THREADOPS_PROGRESS_STATES = {"active_with_progress", "finalizing_receipt"}
+THREADOPS_OBSERVATION_STATES = {
+    *THREADOPS_PROGRESS_STATES,
+    "silent",
+    "thread_not_converged",
+    "rescue_dispatched",
+}
+THREADOPS_ADOPTION_DECISIONS = {"ADOPT", "PARTIAL_ADOPT", "REJECT", "BLOCKED"}
+THREADOPS_REAL_THREAD_ID_PATTERN = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 THREADOPS_AGENT_RUN_FIELDS = [
     "run_id",
     "work_id",
@@ -8459,7 +11641,7 @@ THREADOPS_ROLE_SPECS = {
         "Advertising copy lead for concepts, campaign lines, and tone.",
         "Review concept clarity, message hierarchy, headlines, and proposal language.",
         "isolated_workspace",
-        "AD-creative/workspaces/{work_id}/{lane_id}/copy_drafts.md; AD-creative/agents/receipts/{work_id}/{lane_id}_receipt.md",
+        "AD-creative/workspaces/{work_id}/{lane_id}",
         (
             "AD-creative/creative/creative_directions.md",
             "AD-creative/copywriting/message_line_candidates.md",
@@ -8489,7 +11671,7 @@ THREADOPS_ROLE_SPECS = {
         "Commercial film director focused on story logic and scene rhythm.",
         "Review treatment, story beats, timing, scene transitions, and dialogue labels.",
         "isolated_workspace",
-        "AD-creative/workspaces/{work_id}/{lane_id}/film_notes.md; AD-creative/agents/receipts/{work_id}/{lane_id}_receipt.md",
+        "AD-creative/workspaces/{work_id}/{lane_id}",
         (
             "AD-creative/film/treatment_packet.md",
             "AD-creative/film/shot_list_storyboard_plan.md",
@@ -8519,7 +11701,7 @@ THREADOPS_ROLE_SPECS = {
         "Art director for visual system, layout, typography, and image quality.",
         "Review visual direction, asset slots, layout risks, and client-visible image safety.",
         "isolated_workspace",
-        "AD-creative/workspaces/{work_id}/{lane_id}/art_direction_notes.md; AD-creative/agents/receipts/{work_id}/{lane_id}_receipt.md",
+        "AD-creative/workspaces/{work_id}/{lane_id}",
         (
             "AD-creative/ppt/ppt_visual_system.md",
             "AD-creative/visual_assets/asset_manifest.csv",
@@ -8629,6 +11811,10 @@ THREADOPS_ROLE_ALIASES = {
 READ_ONLY_THREADOPS_ROLES = {"brand_client", "producer_risk"}
 THREADOPS_DEFAULT_LOOP_MODE = "sequential"
 THREADOPS_LOOP_MODES = ("sequential", "rfc_dag", "continuous_pr", "infinite")
+THREADOPS_EXECUTION_MODES = {
+    "execution_worker",
+    "isolated_worktree_execution_worker",
+}
 THREADOPS_OBSERVATION_CONTRACT = (
     "status success|warning|error; summary one-line result; artifacts file paths or ids; "
     "next_actions actionable follow-ups; evidence_refs exact files, rows, or commands"
@@ -8971,6 +12157,8 @@ Goal id: {goal_id}
 Goal objective: {objective}
 Work item: {work_id}
 Lane id: {lane_id}
+Expected real thread id: TBD_DISPATCH_RECORD_REQUIRED
+Absolute deadline: TBD_DISPATCH_DEADLINE_REQUIRED
 
 Task signature details:
 {task_signature_text}
@@ -8982,7 +12170,8 @@ Loop mode contract:
 {threadops_loop_mode_contract()}
 
 Codex Thread contract:
-- Main/control must create or reuse a real Codex Thread for this prompt and replace the planned thread id in thread_registry.csv.
+- Main/control must create or reuse a real Codex Thread, then run `adco dispatch-record` to bind that id into this prompt and receipt envelope before work starts.
+- The worker must verify that `Expected real thread id` equals its own real thread id and return that exact id as `thread_id` in the receipt. `source_thread_id` is lineage only and cannot satisfy identity.
 - Codex Threads are not subagents and must not be simulated by role-play inside the control thread.
 - Writable work requires an execution_worker lane with isolated_workspace or worktree write_scope.
 - If real Codex Thread tooling or isolated writable scope is unavailable for writable work, stop with TOOL_BLOCKED instead of falling back.
@@ -9016,13 +12205,14 @@ Completion proof: {spec.validation_proof}
 
 Return format:
 - summary
+- thread_id: exact Expected real thread id from this prompt
 - write_scope: {write_scope}
 {execution_receipt}
 - evidence refs
 - QA/gate status
 - open questions
-- adoption_decision: ADOPT, PARTIAL_ADOPT, REJECT, or BLOCKED recommendation
-- rejection_reason: required when recommendation is not ADOPT
+- worker_recommendation: ADOPT, PARTIAL_ADOPT, REJECT, or BLOCKED
+- worker_rejection_reason: required when recommendation is not ADOPT
 - loop_state
 - replay_trigger
 - freeze_trigger
@@ -9074,7 +12264,8 @@ mode: {mode}
 environment: {spec.default_environment}
 workspace_path: {workspace_path}
 write_scope: {write_scope}
-thread_id: TBD
+thread_id: TBD_DISPATCH_RECORD_REQUIRED
+absolute_deadline_at: TBD_DISPATCH_DEADLINE_REQUIRED
 harness_id: HARN-{safe_artifact_suffix(work_id)}-{lane_id}
 loop_mode: {THREADOPS_DEFAULT_LOOP_MODE}
 prompt_only_output: invalid
@@ -9156,8 +12347,8 @@ pending
 
 ## Adoption / Rejection Recommendation
 
-adoption_decision: pending
-rejection_reason: pending_if_not_adopted
+worker_recommendation: pending
+worker_rejection_reason: pending_if_not_adopted
 files_merged: pending_main_control_decision
 
 ## Cleanup Actions
@@ -9280,6 +12471,8 @@ def render_thread_execution_plan(
     for index, role in enumerate(roles, 1):
         spec = THREADOPS_ROLE_SPECS[role]
         lane_id = f"LANE-{index:02d}-{spec.role_id}"
+        lane_run_id = f"{work_id}:{lane_id}"
+        planned_thread_id = f"planned:{lane_run_id}"
         mode = threadops_lane_mode(role, spec)
         workspace_path = threadops_workspace_path(work_id, lane_id, spec)
         write_scope = resolve_threadops_write_scope(work_id, lane_id, spec)
@@ -9348,7 +12541,8 @@ def render_thread_execution_plan(
         lane_rows.append(
             {
                 "lane_id": lane_id,
-                "thread_id": f"planned:{lane_id}",
+                "lane_run_id": lane_run_id,
+                "thread_id": planned_thread_id,
                 "thread_title": thread_title,
                 "thread_role": spec.role_id,
                 "professional_identity": spec.professional_identity,
@@ -9405,10 +12599,11 @@ def render_thread_execution_plan(
         )
         registry_rows.append(
             {
-                "thread_id": f"planned:{lane_id}",
+                "thread_id": planned_thread_id,
                 "title": thread_title,
                 "role": spec.role_id,
                 "lane_id": lane_id,
+                "lane_run_id": lane_run_id,
                 "work_id": work_id,
                 "lifecycle_state": "planned",
                 "pinned": "false",
@@ -9433,13 +12628,25 @@ def render_thread_execution_plan(
                 "cleanup_reason": "",
                 "last_seen_at": now,
                 "duplicate_of": "",
-                "planned_thread_id": f"planned:{lane_id}",
+                "planned_thread_id": planned_thread_id,
                 "dispatch_status": "planned",
                 "real_thread_id": "",
                 "title_action": "",
                 "title_verified_at": "",
                 "dispatch_receipt_path": "",
                 "dispatch_evidence": "",
+                "convergence_state": "",
+                "last_progress_at": "",
+                "absolute_deadline_at": "",
+                "bounded_extension_used": "false",
+                "extension_reason": "",
+                "convergence_reminder_at": "",
+                "convergence_reason": "",
+                "rescue_count": "0",
+                "rescue_thread_id": "",
+                "receipt_thread_id": "",
+                "adoption_decision": "",
+                "rejection_reason": "",
             }
         )
         update_or_append_csv_row(
@@ -9457,7 +12664,7 @@ def render_thread_execution_plan(
                 "gate_id": "",
                 "summary": f"Planned Codex Thread lane for {spec.role_id}.",
                 "next_action": "create_or_reuse_codex_thread",
-                "thread_id": f"planned:{lane_id}",
+                "thread_id": planned_thread_id,
                 "lane_id": lane_id,
                 "receipt_path": safe_rel(project, receipt_path),
                 "proof_status": "pending",
@@ -9482,6 +12689,7 @@ def render_thread_execution_plan(
 
     lane_header = [
         "lane_id",
+        "lane_run_id",
         "thread_id",
         "thread_title",
         "thread_role",
@@ -9575,10 +12783,19 @@ def render_thread_execution_plan(
         "role",
         "mode",
         "lane_id",
+        "lane_run_id",
         "lifecycle_state",
+        "convergence_state",
+        "absolute_deadline_at",
+        "bounded_extension_used",
+        "rescue_count",
+        "receipt_thread_id",
+        "adoption_decision",
         "receipt_status",
         "reconciliation_status",
         "pinned",
+        "archived",
+        "archived_at",
         "cleanup_action",
         "notes",
     ]
@@ -9630,6 +12847,11 @@ broad_council_requires_user_approval_over: 5
 main_thread_only_for: integration,current_truth,version_map,artifact_index,gate_log,final_export,final_status
 freeze_trigger: user reports thread confusion / high heat / wrong thread / cleanup request
 lane_modes: execution_worker requires exact write_scope; research/read_only_review/cold_review are read-only receipt lanes
+poll_rule: fixed poll counts are inspection budgets, not automatic failure
+progress_states: active_with_progress,finalizing_receipt
+deadline_rule: one reasoned bounded extension with an absolute deadline
+failure_rule: only silent/reminder evidence past the deadline may become thread_not_converged
+rescue_limit: 1
 ```
 
 ## Loop Mode Contract
@@ -9672,8 +12894,10 @@ worker_synthesis: L1 worker adopts/rejects helper output before returning receip
 1. Run `list_threads` with query `ADCO` and reuse/archive stale project worker threads before spawning.
 2. Create at most {max_active} active worker/reviewer Codex Threads at one time.
 3. Send each worker exactly one prompt from `AD-creative/agents/thread_prompts/{work_id}/`.
-4. Require each worker to return a receipt matching `AD-creative/agents/receipts/{work_id}/`.
-5. Main/control thread reads every receipt, merges only accepted changes, runs validation/gates, then archives reconciled workers.
+4. Run `adco dispatch-record` with work id, lane id, verified real thread id, and an absolute deadline before work starts.
+5. Record readbacks with `adco thread-observe`; progress is not failure and permits at most one reasoned extension.
+6. Require each worker to return a receipt matching `AD-creative/agents/receipts/{work_id}/` and its bound thread id.
+7. Run `adco thread-reconcile`; main/control records adoption/rejection and confirms archive cleanup.
 
 ## Role Briefs
 
@@ -9715,7 +12939,9 @@ Archives duplicate, stale, superseded, or reconciled employee threads.
 Uses execution_worker for scoped production/editing work; uses read_only only for explorer, reviewer, research, or cold-review lanes.
 Execution worker lanes must declare exact write_scope, files_changed, validation_result, dirty_state_impact, and cleanup_actions in the receipt.
 Production worker receipts cannot be prompt-only; execution_worker lanes must produce declared files or return BLOCKED with evidence.
-Records adoption_decision and rejection_reason before merging or discarding worker output.
+Treats worker_recommendation as advisory; records main adoption_decision and rejection_reason before merging or discarding worker output.
+Rejects receipt identity mismatches as invalid_worker_thread_id / rejected_evidence.
+Distinguishes active_with_progress, silent, and finalizing_receipt; allows one bounded extension and at most one rescue.
 Allows stateless secondary helper invocations only inside real worker threads; helpers are not Codex Threads and have no thread_id, registry row, write_scope, or adoption authority.
 Requires helper output to be synthesized and adopted/rejected by the worker, then adopted/rejected by main/control through the worker receipt.
 Uses replay_trigger for failed eval gates and freeze_trigger for thread confusion, repeated root cause, or budget breach.
@@ -9725,8 +12951,8 @@ Exports final PPT/PDF only from the main control thread.
 
 ## Reconciliation Log
 
-| lane_id | adoption_decision | rejection_reason | files_merged | gate_id | notes |
-|---|---|---|---|---|---|
+| lane_id | main_adoption_decision | main_rejection_reason | files_merged | gate_id | archived_at | notes |
+|---|---|---|---|---|---|---|
 
 ## Cleanup Log
 
@@ -9863,9 +13089,11 @@ loop_mode: {THREADOPS_DEFAULT_LOOP_MODE}
 
 ## Scope
 
-- 使用双泳道：品牌深度研究 / 图片功能。
+- 先完成客户可读文本框架与人工确认，再进入 PPT、客户包和发送准备。
+- 品牌研究、素材准备与 DIRcreative 等 specialist exchange 只作为按需支线，不拥有 ADCO 控制面。
 - 阶段完成后直接推进下一步低风险内部任务。
 - 每个 Gate 前必须有反驳性议会记录。
+- 默认不创建 Codex Thread；只有用户明确要求真实 Threads 或任务确需隔离执行证据时才启用。
 
 ## Loop Mode Contract
 
@@ -9898,18 +13126,19 @@ loop_mode: {THREADOPS_DEFAULT_LOOP_MODE}
 | B2 | 按双泳道推进下一阶段 | Main Controller | current_truth / work_items | updated artifacts | stage gate | queued | stage gate not BLOCKED |
 | B3 | 验证并写入下一轮队列 | Operations Council | gate_log / artifacts | verification evidence | validation | queued | VALIDATION=PASS |
 
-## Dual Lane Mapping
+## Text-First Delivery Mapping
 
-| phase | brand_research_lane | image_function_lane | dependency | exit_condition | next_phase |
+| phase | primary work | optional specialist / asset lane | dependency | exit_condition | next_phase |
 |---|---|---|---|---|---|
-| P0 | 需求、事实、缺口 | 图片/素材状态 | source_events | Brief Gate 非 BLOCKED | P1 |
-| P1 | 搜索计划、stop condition | 图片路线、asset lock 条件 | P0 gaps | Research Plan Gate 非 BLOCKED | P2 |
-| P2 | reference pack、visual DNA | asset slots、manifest skeleton | P1 plan | Reference/Slot Gate 非 BLOCKED | P3 |
-| P3 | 创意方向、proposal structure | image job spec、prompt pack | P2 evidence | Creative/Image Job Gate 非 BLOCKED | P4 |
-| P4 | 内部原型 | internal_only 图片探索 | P3 contract | Visual QA 非 BLOCKED | P5 |
-| P5 | 客户审阅包 | visual review、client flags | P4 assets | Client Pack Gate 非 BLOCKED | P6 |
-| P6 | final delivery | approved assets / PPT slots | P5 pack | Final Gate 非 BLOCKED，发送前人工确认 | P7 |
-| P7 | 反馈合并 | asset/job supersede | feedback | next_version_plan | next goal |
+| P0 | 需求、事实、缺口、FinalDelivery hash lock | 素材盘点 | source_events | 结构验证完成，FinalDelivery 未被覆盖/移动/删除 | P1 |
+| P1 | 客户可读页级文本框架 | 品牌研究、参考与素材缺口 | P0 truth | client_outline 内容完整且不含内部执行语言 | P2 |
+| P2 | 人工/客户确认当前 outline hash | 无 | P1 outline | hash-bound confirmation receipt 有效 | P3 |
+| P3 | 创意方向、reference pack、proposal architecture | DIRcreative 可通过 neutral specialist exchange 返回内部 film package；素材仅 internal_only | P2 confirmation | 各自质量 Gate 非 BLOCKED，specialist 仅给 recommendation | P4 |
+| P4 | 导出新的 immutable `client_review_vNNN.pptx` | 绑定 exact-current 素材 | P2-P3 | 新版本、editability proof、current_truth/version_map 一致 | P5 |
+| P5 | 客户语言、视觉版式、素材授权、PPT 可编辑性 | 独立 adversarial review | P4 exact current package | 所有对应 Gate 有新鲜证据 | P6 |
+| P6 | 生成 fresh client-pack manifest/binding | 无 | P5 | package digest 与 exact-current 输入一致且 Client Pack Gate PASS | P7 |
+| P7 | 独立人工审阅 + 本轮发送授权 + send-readiness | 无 | P6 binding | receipt/authorization 均绑定同一 package digest；Gate 只判准备，不执行发送 | P8 |
+| P8 | 反馈合并、supersede、下一版本计划 | specialist/asset 输出按需重新验证 | feedback | next_version_plan 写入且旧版本保持不变 | next goal |
 
 ## Adversarial Council
 
@@ -9971,11 +13200,12 @@ resume_when: 阻塞项关闭，Gate report 和 decisions/resolutions 已更新�
 
 def write_manual_review_checklist(project: Path) -> Path:
     path = project / "AD-creative/delivery/manual_review_checklist.md"
-    write_text(
-        path,
-        f"""# Manual Review Checklist
+    if not path.exists():
+        write_text(
+            path,
+            f"""# Manual Review Checklist
 
-status: ready_for_human_review
+status: pending_human_review
 visibility: internal_only
 created_at: {now_iso()}
 
@@ -9989,11 +13219,11 @@ created_at: {now_iso()}
 
 - [ ] 打开 `AD-creative/handoff/操作台.html` 的图片区，确认没有低质拼贴、contact sheet、假 logo。
 - [ ] 对 selected 图片做审美判断：构图、光线、产品真实感、品牌气质、文字/标志风险。
-- [ ] 客户可见生成图必须有 `client_visibility_approved` 记录。
+- [ ] 客户可见图片必须有绑定 exact asset hash/scope/确认者/时间/证据的独立授权 receipt；notes token 不算授权。
 
 ## Client Pack
 
-- [ ] 打开 `AD-creative/ppt/client_review_draft.pptx`，确认页面文本可编辑。
+- [ ] 打开 `current_truth.md` 指向的 exact current PPTX，确认每页文本可编辑。
 - [ ] 逐页读客户稿，确认没有内部注释、模拟标记、TODO/TBD、假案例。
 - [ ] 最终发送前由负责人确认发送对象、附件、版本号。
 
@@ -10001,18 +13231,219 @@ created_at: {now_iso()}
 
 本清单是人工审阅入口，不替代 `client-pack-gate`、`visual-quality-gate`、`search-quality-gate`。
 """,
-    )
+        )
     update_artifact(
         project,
         "ART-AUTO-MANUAL-REVIEW-CHECKLIST",
         "manual_review_checklist",
         safe_rel(project, path),
         "final_delivery",
-        status="done",
+        status="pending_human_review",
         visibility="internal_only",
-        gate_status="PASS",
+        gate_status="NOT_RUN",
     )
     return path
+
+
+def manual_review_receipt_errors(
+    project: Path,
+    artifacts: list[dict[str, str]],
+    *,
+    package_digest: str = "",
+) -> list[str]:
+    receipt_path = project / "AD-creative/delivery/manual_review_receipt.json"
+    if not receipt_path.exists():
+        return ["缺少独立人工审阅 receipt: AD-creative/delivery/manual_review_receipt.json"]
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return [f"独立人工审阅 receipt 无法解析: {exc}"]
+    errors: list[str] = []
+    truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    truth = truth_path.read_text(encoding="utf-8") if truth_path.exists() else ""
+    version_id = current_truth_value(truth, "current_version_id")
+    pptx_artifact_id = current_truth_value(truth, "current_pptx_artifact_id")
+    pptx_row = next(
+        (row for row in artifacts if row.get("artifact_id") == pptx_artifact_id),
+        None,
+    )
+    reviewer_id = str(receipt.get("reviewer_id", "")).strip().lower()
+    if reviewer_id in {"", "main controller", "ad_creative_operator", "automation", "worker"}:
+        errors.append("人工审阅 reviewer_id 缺失或不是独立审阅者")
+    if receipt.get("independent") is not True:
+        errors.append("人工审阅 receipt 未声明 independent=true")
+    if not str(receipt.get("review_id", "")).strip():
+        errors.append("人工审阅 receipt 缺少 review_id")
+    if not str(receipt.get("reviewer_role", "")).strip():
+        errors.append("人工审阅 receipt 缺少 reviewer_role")
+    try:
+        parse_thread_timestamp(str(receipt.get("reviewed_at", "")), "reviewed_at")
+    except ValueError as exc:
+        errors.append(str(exc))
+    evidence_ref = str(receipt.get("evidence_ref", "")).strip()
+    if not evidence_ref.startswith(
+        ("user_confirmation:", "client_confirmation:", "review_record:")
+    ):
+        errors.append("人工审阅 receipt 缺少可追溯 evidence_ref")
+    if receipt.get("decision") != "approved":
+        errors.append("人工审阅 decision 不是 approved")
+    if receipt.get("version_id") != version_id:
+        errors.append("人工审阅 receipt version_id 不是 exact current version")
+    if receipt.get("pptx_artifact_id") != pptx_artifact_id:
+        errors.append("人工审阅 receipt PPTX artifact 不是 exact current")
+    if not pptx_row or receipt.get("pptx_sha256") != pptx_row.get("sha256"):
+        errors.append("人工审阅 receipt 未绑定 exact current PPTX hash")
+    if not package_digest or receipt.get("package_digest") != package_digest:
+        errors.append("人工审阅 receipt 未绑定 fresh exact-current package digest")
+    checks = receipt.get("checks")
+    required_checks = {
+        "client_language",
+        "visual_layout",
+        "asset_authorization",
+        "ppt_editability",
+    }
+    if not isinstance(checks, dict) or any(
+        checks.get(key) is not True for key in required_checks
+    ):
+        errors.append("人工审阅 receipt 检查项不完整或存在未通过项")
+    return errors
+
+
+def send_authorization_errors(
+    project: Path,
+    artifacts: list[dict[str, str]],
+    *,
+    package_digest: str = "",
+) -> list[str]:
+    path = project / "AD-creative/delivery/send_authorization.json"
+    if not path.exists():
+        return ["缺少本轮发送授权: AD-creative/delivery/send_authorization.json"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"发送授权无法解析: {exc}"]
+    errors: list[str] = []
+    truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    truth = truth_path.read_text(encoding="utf-8") if truth_path.exists() else ""
+    version_id = current_truth_value(truth, "current_version_id")
+    pptx_artifact_id = current_truth_value(truth, "current_pptx_artifact_id")
+    pptx_row = next(
+        (row for row in artifacts if row.get("artifact_id") == pptx_artifact_id),
+        None,
+    )
+    authorized_by = str(payload.get("authorized_by", "")).strip().lower()
+    if authorized_by in {"", "ad_creative_operator", "automation", "worker", "main controller"}:
+        errors.append("发送授权 authorized_by 缺失或来自执行面")
+    if payload.get("decision") != "authorized":
+        errors.append("发送授权 decision 不是 authorized")
+    if not str(payload.get("authorization_id", "")).strip():
+        errors.append("发送授权缺少 authorization_id")
+    try:
+        parse_thread_timestamp(
+            str(payload.get("authorized_at", "")), "authorized_at"
+        )
+    except ValueError as exc:
+        errors.append(str(exc))
+    evidence_ref = str(payload.get("evidence_ref", "")).strip()
+    if not evidence_ref.startswith(
+        ("user_confirmation:", "client_confirmation:", "send_record:")
+    ):
+        errors.append("发送授权缺少可追溯 evidence_ref")
+    if not str(payload.get("recipient_scope", "")).strip():
+        errors.append("发送授权缺少 recipient_scope")
+    if payload.get("version_id") != version_id:
+        errors.append("发送授权 version_id 不是 exact current version")
+    if payload.get("pptx_artifact_id") != pptx_artifact_id:
+        errors.append("发送授权 PPTX artifact 不是 exact current")
+    if not pptx_row or payload.get("pptx_sha256") != pptx_row.get("sha256"):
+        errors.append("发送授权未绑定 exact current PPTX hash")
+    if not package_digest or payload.get("package_digest") != package_digest:
+        errors.append("发送授权未绑定 fresh exact-current package digest")
+    return errors
+
+
+def review_client_send_readiness(
+    project: Path,
+) -> tuple[str, list[str], Path]:
+    issues: list[str] = []
+    evidence: list[str] = []
+    _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    _, versions = read_csv_rows(project / "AD-creative/orchestrator/version_map.csv")
+    _, feedback = read_csv_rows(project / "AD-creative/feedback/feedback_map.csv")
+    validation_errors, _ = validate(project)
+    issues.extend(validation_errors)
+    issues.extend(validate_client_delivery_readiness(project, artifacts, versions, feedback))
+    client_pack_status = latest_gate_status(project, "GATE-AUTO-CLIENT-PACK-001")
+    evidence.append(f"client_pack_gate={client_pack_status or 'MISSING'}")
+    if client_pack_status != "PASS":
+        issues.append("client-pack-gate 不是 fresh PASS；先重跑当前包检查")
+    binding_errors, package_digest = current_client_pack_binding_errors(
+        project, artifacts
+    )
+    issues.extend(binding_errors)
+    evidence.append(f"package_digest={package_digest or 'MISSING'}")
+    evidence.append(f"client_pack_binding_errors={len(binding_errors)}")
+    manual_errors = manual_review_receipt_errors(
+        project, artifacts, package_digest=package_digest
+    )
+    authorization_errors = send_authorization_errors(
+        project, artifacts, package_digest=package_digest
+    )
+    issues.extend(manual_errors)
+    issues.extend(authorization_errors)
+    evidence.append(f"manual_review_errors={len(manual_errors)}")
+    evidence.append(f"send_authorization_errors={len(authorization_errors)}")
+    status = "PASS" if not issues else "BLOCKED"
+    report_path = project / "AD-creative/gates/GATE-AUTO-CLIENT-SEND-READINESS-001_report.md"
+    write_text(
+        report_path,
+        f"""# Client Send Readiness Gate
+
+status: {status}
+visibility: internal_only
+checked_at: {now_iso()}
+
+## Evidence
+
+{chr(10).join(f'- {item}' for item in evidence)}
+
+## Blocking Issues
+
+{chr(10).join(f'- {item}' for item in issues[:80]) or '- 无'}
+
+## Scope
+
+本 Gate 只判断 exact current package 是否具备结构、真实文件、哈希、客户语言、视觉、素材授权、独立人工审阅和本轮发送授权。它不会执行发送。
+""",
+    )
+    update_artifact(
+        project,
+        "ART-AUTO-CLIENT-SEND-READINESS-GATE",
+        "client_send_readiness_gate_report",
+        safe_rel(project, report_path),
+        "final_delivery",
+        status="done" if status == "PASS" else "blocked",
+        visibility="internal_only",
+        gate_status=status,
+    )
+    binding_path = project / "AD-creative/delivery/client_pack_binding.json"
+    gate_target = binding_path if binding_path.is_file() else report_path
+    append_gate(
+        project,
+        "GATE-AUTO-CLIENT-SEND-READINESS-001",
+        "final_delivery",
+        status,
+        "100" if status == "PASS" else "0",
+        "ART-AUTO-CLIENT-SEND-READINESS-GATE",
+        ";".join(issues[:8]),
+        "补齐 exact current package 的独立审阅与本轮发送授权后重跑。",
+        "",
+        "send_authorized_but_not_sent" if status == "PASS" else "not_send_ready",
+        "ad_creative_operator",
+        target_ref=safe_rel(project, gate_target),
+        target_sha256=file_sha256(gate_target),
+    )
+    return status, issues, report_path
 
 
 def review_handoff_readiness(project: Path) -> tuple[str, list[str], list[str], Path]:
@@ -10026,15 +13457,6 @@ def review_handoff_readiness(project: Path) -> tuple[str, list[str], list[str], 
         blockers.extend(errors[:12])
 
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
-    _, version_map = read_csv_rows(project / "AD-creative/orchestrator/version_map.csv")
-    _, feedback_rows = read_csv_rows(project / "AD-creative/feedback/feedback_map.csv")
-    delivery_errors = validate_client_delivery_readiness(
-        project, artifacts, version_map, feedback_rows
-    )
-    evidence.append(f"client_delivery_readiness_errors={len(delivery_errors)}")
-    if delivery_errors:
-        blockers.extend(delivery_errors[:12])
-
     dashboard = render_dashboard(project)
     dashboard_issues = audit_dashboard(project)
     evidence.append(f"dashboard={safe_rel(project, dashboard)}")
@@ -10044,24 +13466,25 @@ def review_handoff_readiness(project: Path) -> tuple[str, list[str], list[str], 
     checklist = write_manual_review_checklist(project)
     evidence.append(f"manual_review_checklist={safe_rel(project, checklist)}")
 
-    required_gates = {
+    content_gate_visibility = {
         "GATE-THREE-COUNCIL-READINESS": {"PASS"},
         "GATE-AUTO-CLIENT-PACK-001": {"PASS"},
         "GATE-AUTO-VISUAL-QUALITY-001": {"PASS"},
         "GATE-AUTO-SEARCH-QUALITY-001": {"PASS", "PARTIAL_PASS"},
         "GATE-AUTO-REFERENCE-PACK-001": {"PASS", "PARTIAL_PASS"},
     }
-    for gate_id, allowed in required_gates.items():
+    for gate_id, allowed in content_gate_visibility.items():
         status = latest_gate_status(project, gate_id)
         evidence.append(f"{gate_id}={status or 'MISSING'}")
         if not status:
             warnings.append(f"{gate_id} 尚未运行。")
         elif status not in allowed:
-            blockers.append(f"{gate_id} status={status}")
+            warnings.append(f"{gate_id} status={status}；内部交接可继续，但不得据此宣称交付/发送就绪。")
 
-    pptx, _ = current_pptx_path(project, artifacts)
-    pptx = pptx or project / "AD-creative/ppt/client_review_draft.pptx"
-    if pptx.exists():
+    pptx, pptx_declared = current_pptx_path(project, artifacts)
+    if pptx_declared and (not pptx or not pptx.exists()):
+        blockers.append("current_pptx_artifact_id 已声明但未解析到 exact-current PPTX。")
+    elif pptx and pptx.exists():
         pptx_stats = inspect_pptx(pptx)
         evidence.append(
             f"pptx={safe_rel(project, pptx)} slides={pptx_stats['slides']} editable_text_runs={pptx_stats['editable_text_runs']}"
@@ -10069,10 +13492,12 @@ def review_handoff_readiness(project: Path) -> tuple[str, list[str], list[str], 
         if not pptx_stats["editable"]:
             blockers.append("PPTX 缺少可编辑文本层。")
     else:
-        blockers.append("缺少 client_review_draft.pptx。")
+        warnings.append("尚未生成 PPTX；text-first 内部交接仍可进行，PPT/客户包/发送 Gate 均未就绪。")
 
     launcher = REPO_ROOT / "启动广告创意项目.command"
-    if launcher.exists() and os.access(launcher, os.X_OK):
+    if source_root() is None:
+        evidence.append("launcher=not_applicable_installed_package; use adco CLI entry point")
+    elif launcher.exists() and os.access(launcher, os.X_OK):
         evidence.append(f"launcher={launcher} executable=true")
     else:
         blockers.append("双击启动脚本不存在或不可执行。")
@@ -10081,12 +13506,9 @@ def review_handoff_readiness(project: Path) -> tuple[str, list[str], list[str], 
     evidence.append(f"skill_install_match={skill['match']}")
     evidence.append(f"skill_target={skill['target']}")
     if not skill["match"]:
-        blockers.append("全局 Skill 未安装或与项目草稿不一致。")
+        warnings.append("全局 Skill 未安装或与 canonical 草稿不一致；这不影响当前项目证据质量。")
 
     status = "PASS" if not blockers else "BLOCKED"
-    status = enforce_adversarial_gate_policy(
-        project, "final_delivery", status, warnings, evidence
-    )
     report_path = project / "AD-creative/gates/GATE-AUTO-HANDOFF-READINESS-001_report.md"
     evidence_text = "\n".join(f"- {item}" for item in evidence)
     blocker_text = "\n".join(f"- {item}" for item in blockers) or "- 无"
@@ -10114,7 +13536,8 @@ checked_at: {now_iso()}
 ## Scope
 
 此 Gate 证明项目可交给非开发广告创意者继续内部操作。
-它不代表已经发送客户稿，也不替代真实客户最终人工审稿。
+它不要求已有 PPT、client-pack PASS、manual review receipt 或 send authorization。
+它不代表客户包、最终交付或发送准备，后者只能由各自独立 Gate 证明。
 """,
     )
     update_artifact(
@@ -10122,7 +13545,7 @@ checked_at: {now_iso()}
         "ART-AUTO-HANDOFF-READINESS-GATE",
         "handoff_readiness_gate_report",
         safe_rel(project, report_path),
-        "final_delivery",
+        "operations_handoff",
         status="done" if status != "BLOCKED" else "blocked",
         visibility="internal_only",
         gate_status=status,
@@ -10130,14 +13553,14 @@ checked_at: {now_iso()}
     append_gate(
         project,
         "GATE-AUTO-HANDOFF-READINESS-001",
-        "final_delivery",
+        "operations_handoff",
         status,
         "95" if status == "PASS" else "65" if status == "PARTIAL_PASS" else "40",
         "ART-AUTO-HANDOFF-READINESS-GATE;ART-AUTO-MANUAL-REVIEW-CHECKLIST",
         ";".join(blockers[:8]),
         ";".join(warnings[:8]) or "保持 gate 定期重跑。",
         "",
-        "ready_for_non_developer_handoff" if status == "PASS" else "fix_handoff_blockers",
+        "internal_operator_handoff_ready" if status == "PASS" else "fix_handoff_blockers",
         "ad_creative_operator",
     )
     append_event(
@@ -10156,7 +13579,82 @@ checked_at: {now_iso()}
     return status, blockers, warnings, report_path
 
 
+def next_ppt_export_identity(project: Path) -> tuple[str, str, str, str, int]:
+    _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    _, versions = read_csv_rows(project / "AD-creative/orchestrator/version_map.csv")
+    highest = 0
+    for row in artifacts:
+        if row.get("artifact_type", "").strip().lower() != "pptx":
+            continue
+        match = re.fullmatch(r"v(\d+)", row.get("version", "").strip(), flags=re.IGNORECASE)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    export_root = project / "AD-creative/ppt/exports"
+    for path in export_root.glob("client_review_v*.pptx") if export_root.exists() else []:
+        match = re.search(r"_v(\d+)\.pptx$", path.name, flags=re.IGNORECASE)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    number = highest + 1
+    while True:
+        label = f"v{number:03d}"
+        version_id = f"VER-PPT-{number:03d}"
+        pptx_artifact_id = f"ART-PPTX-{number:03d}"
+        check_artifact_id = f"ART-PPT-EDITABILITY-{number:03d}"
+        used_ids = {row.get("artifact_id", "") for row in artifacts}
+        used_versions = {row.get("version_id", "") for row in versions}
+        if pptx_artifact_id not in used_ids and check_artifact_id not in used_ids and version_id not in used_versions:
+            return label, version_id, pptx_artifact_id, check_artifact_id, number
+        number += 1
+
+
+def pptx_editability_report_content(
+    project: Path,
+    pptx_path: Path,
+    stats: dict[str, int | bool | str],
+    *,
+    sha256: str = "",
+) -> str:
+    status = "PASS" if stats["editable"] else "BLOCKED"
+    return f"""# PPT Editability Check
+
+status: {status}
+visibility: internal_only
+checked_at: {now_iso()}
+pptx: {safe_rel(project, pptx_path)}
+sha256: {sha256 or file_sha256(pptx_path)}
+
+## Result
+
+| Check | Value |
+| --- | --- |
+| has_presentation_xml | {stats['has_presentation']} |
+| slides | {stats['slides']} |
+| editable_text_runs | {stats['editable_text_runs']} |
+| editable_slides | {stats.get('editable_slides', '')} |
+| flattened_slides | {stats.get('flattened_slides', '') or 'none'} |
+| embedded_media | {stats['embedded_media']} |
+| editable | {stats['editable']} |
+
+## Rules
+
+- `editable=true` 只代表 PPTX 内存在可编辑文本层。
+- 图片页若存在，必须在客户稿前说明用途、来源和可替换性。
+- 客户可见前仍需独立视觉、语言、授权与发送准备检查。
+"""
+
+
 def export_editable_pptx(project: Path, output: Path | None = None) -> Path:
+    lock_path = project / "AD-creative/orchestrator/.version.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            return _export_editable_pptx_locked(project, output)
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def _export_editable_pptx_locked(project: Path, output: Path | None = None) -> Path:
     try:
         from pptx import Presentation
         from pptx.util import Inches, Pt
@@ -10170,10 +13668,19 @@ def export_editable_pptx(project: Path, output: Path | None = None) -> Path:
             f"report={safe_rel(project, outline_report)} findings={'; '.join(outline_findings[:5])}"
         )
 
-    _, requirements = read_csv_rows(project / "AD-creative/orchestrator/requirements.csv")
-    _, gaps = read_csv_rows(project / "AD-creative/orchestrator/gaps.csv")
-    _, refs = read_csv_rows(project / "AD-creative/references/reference_cards.csv")
-    output = output or (project / "AD-creative/ppt/client_review_draft.pptx")
+    version_label, version_id, pptx_artifact_id, check_artifact_id, version_number = next_ppt_export_identity(project)
+    outline_rows = client_outline_rows(project)
+    canonical_output = (
+        project / f"AD-creative/ppt/exports/client_review_{version_label}.pptx"
+    ).resolve()
+    if output is not None and output.resolve() != canonical_output:
+        raise RuntimeError(
+            "PPTX output is immutable and must use the canonical version path: "
+            f"{canonical_output}"
+        )
+    output = canonical_output
+    if output.exists():
+        raise FileExistsError(f"refusing to overwrite immutable PPTX export: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
 
     prs = Presentation()
@@ -10207,13 +13714,15 @@ def export_editable_pptx(project: Path, output: Path | None = None) -> Path:
 
     blank = prs.slide_layouts[6]
     slide = prs.slides.add_slide(blank)
-    add_title(slide, f"{project.name} 第一轮广告创意整理", "自动生成 editable PPTX 草稿；客户可见前仍需人工审稿和 Delivery Gate。")
+    client_project_name = project.name if not find_client_language_hits(project.name) else ""
+    cover_title = f"{client_project_name} 广告创意方向提案" if client_project_name else "广告创意方向提案"
+    add_title(slide, cover_title, "用于方向讨论、关键判断与下一阶段深化。")
     add_bullets(
         slide,
         [
-            "当前用途：内部结构审阅",
-            "事实源：AD-creative/orchestrator/",
-            "边界：未自动发送客户稿，未声明最终视觉",
+            "从客户目标和传播问题出发",
+            "对比不同创意方向的核心信息与关键画面",
+            "锁定下一轮需要深化的内容与素材",
         ],
         0.8,
         2.0,
@@ -10221,66 +13730,191 @@ def export_editable_pptx(project: Path, output: Path | None = None) -> Path:
         2.8,
     )
 
-    slide = prs.slides.add_slide(blank)
-    add_title(slide, "已抽取需求", f"{len(requirements)} 条")
-    add_bullets(
-        slide,
-        [row.get("statement", "") for row in requirements[:8]] or ["暂无已抽取需求"],
-        0.8,
-        1.55,
-        11.4,
-        5.2,
-    )
+    for row in outline_rows:
+        slide = prs.slides.add_slide(blank)
+        add_title(
+            slide,
+            row.get("page_title", "方向讨论"),
+            f"本页希望对齐：{row.get('client_confirmation_point', '')}",
+        )
+        add_bullets(
+            slide,
+            [
+                row.get("body_copy", ""),
+                f"画面建议：{row.get('visual_slot', '')}",
+            ],
+            0.8,
+            1.7,
+            11.4,
+            4.8,
+        )
 
-    slide = prs.slides.add_slide(blank)
-    add_title(slide, "缺口与追问", f"{len(gaps)} 条")
-    add_bullets(
-        slide,
-        [
-            f"{row.get('impact', '')}: {row.get('description', '')}"
-            for row in gaps[:8]
-        ]
-        or ["暂无缺口"],
-        0.8,
-        1.55,
-        11.4,
-        5.2,
-    )
+    temp_output = output.with_name(f".{output.name}.{os.getpid()}.tmp.pptx")
+    try:
+        prs.save(temp_output)
+        stats = inspect_pptx(temp_output)
+        if not stats["editable"]:
+            raise RuntimeError("generated PPTX lacks editable text layers")
+        os.link(temp_output, output)
+    finally:
+        temp_output.unlink(missing_ok=True)
 
-    slide = prs.slides.add_slide(blank)
-    add_title(slide, "参考与资产状态", "只列已登记事实，不把模拟参考当真实来源。")
-    add_bullets(
-        slide,
-        [
-            f"{row.get('reference_id', '')}: {row.get('title', '')} ({row.get('platform', '')})"
-            for row in refs[:6]
-        ]
-        or ["暂无真实参考链接"],
-        0.8,
-        1.55,
-        11.4,
-        5.2,
-    )
+    pptx_sha = file_sha256(output)
+    check_path = project / f"AD-creative/ppt/exports/client_review_{version_label}_editability.md"
+    if check_path.exists():
+        output.unlink(missing_ok=True)
+        raise FileExistsError(f"refusing to overwrite immutable PPTX check: {check_path}")
 
-    slide = prs.slides.add_slide(blank)
-    add_title(slide, "下一步确认", "以下动作需要明确确认后才能进入客户可见稿。")
-    add_bullets(
-        slide,
-        [
-            "客户稿发送",
-            "付费/登录平台或上传客户资料",
-            "将 AI 图标记为客户可见",
-            "最终 PPTX 交付",
-        ],
-        0.8,
-        1.55,
-        11.4,
-        5.2,
-    )
-
-    prs.save(output)
-    stats = inspect_pptx(output)
-    write_pptx_check(project, output, stats)
+    artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+    version_path = project / "AD-creative/orchestrator/version_map.csv"
+    truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    gate_path = project / "AD-creative/orchestrator/gate_log.csv"
+    event_path = project / "AD-creative/orchestrator/events.jsonl"
+    transaction_paths = [artifact_path, version_path, truth_path, gate_path, event_path]
+    snapshots = {path: path.read_bytes() if path.exists() else None for path in transaction_paths}
+    try:
+        write_text(
+            check_path,
+            pptx_editability_report_content(project, output, stats, sha256=pptx_sha),
+        )
+        artifact_fields, artifact_rows = read_csv_rows(artifact_path)
+        version_fields, version_rows = read_csv_rows(version_path)
+        truth_text = truth_path.read_text(encoding="utf-8") if truth_path.exists() else ""
+        previous_version_id = current_truth_value(truth_text, "current_version_id")
+        previous_pptx_artifact_id = current_truth_value(truth_text, "current_pptx_artifact_id")
+        previous_pptx_path = ""
+        if previous_pptx_artifact_id:
+            for row in artifact_rows:
+                if row.get("artifact_id") == previous_pptx_artifact_id and row.get("artifact_type", "").lower() == "pptx":
+                    previous_pptx_path = row.get("path", "")
+                    row["status"] = "superseded"
+                    row["updated_at"] = now_iso()
+                    break
+        if previous_version_id:
+            for row in version_rows:
+                if row.get("version_id") == previous_version_id:
+                    row["status"] = "superseded"
+                    break
+        created_at = now_iso()
+        artifact_rows.extend(
+            [
+                {
+                    "artifact_id": pptx_artifact_id,
+                    "artifact_type": "pptx",
+                    "path": safe_rel(project, output),
+                    "stage": "ppt_gate",
+                    "version": version_label,
+                    "status": "done",
+                    "visibility": "internal_only",
+                    "source_event_ids": "",
+                    "linked_requirements": "",
+                    "linked_work_items": "",
+                    "linked_references": "",
+                    "linked_assets": "",
+                    "gate_status": "PASS",
+                    "supersedes_artifact_id": previous_pptx_artifact_id,
+                    "created_at": created_at,
+                    "updated_at": created_at,
+                    "sha256": pptx_sha,
+                    "size_bytes": str(output.stat().st_size),
+                },
+                {
+                    "artifact_id": check_artifact_id,
+                    "artifact_type": "ppt_editability_check",
+                    "path": safe_rel(project, check_path),
+                    "stage": "ppt_gate",
+                    "version": version_label,
+                    "status": "done",
+                    "visibility": "internal_only",
+                    "source_event_ids": "",
+                    "linked_requirements": "",
+                    "linked_work_items": "",
+                    "linked_references": "",
+                    "linked_assets": "",
+                    "gate_status": "PASS",
+                    "supersedes_artifact_id": "",
+                    "created_at": created_at,
+                    "updated_at": created_at,
+                    "sha256": file_sha256(check_path),
+                    "size_bytes": str(check_path.stat().st_size),
+                    "derived_from_artifact_id": pptx_artifact_id,
+                    "derived_from_sha256": pptx_sha,
+                },
+            ]
+        )
+        version_rows.append(
+            {
+                "version_id": version_id,
+                "artifact_id": pptx_artifact_id,
+                "version": version_label,
+                "status": "draft",
+                "created_at": created_at,
+                "source_event_ids": "",
+                "supersedes_version_id": previous_version_id,
+                "notes": f"immutable_pptx_export;sha256={pptx_sha}",
+            }
+        )
+        write_csv_rows(artifact_path, artifact_fields, artifact_rows)
+        write_csv_rows(version_path, version_fields, version_rows)
+        update_markdown_sections(
+            truth_path,
+            {
+                "Current Version Truth": f"""```text
+current_version_id: {version_id}
+current_pptx_artifact_id: {pptx_artifact_id}
+current_pdf_artifact_id:
+current_preview_artifact_id:
+current_text_extract_artifact_id:
+current_ppt_editability_artifact_id: {check_artifact_id}
+version_map_status: draft
+last_archive_before_edit: {('preserved:' + previous_pptx_path) if previous_pptx_path else 'not_required_first_immutable_export'}
+```""",
+                "Current Stage": "ppt_internal_review",
+                "Next Action": "完成视觉、客户语言、素材授权、PDF/preview/text extract 与人工复核后，方可进入 client-send readiness。",
+            },
+        )
+        append_gate(
+            project,
+            "GATE-AUTO-PPT-001",
+            "ppt_gate",
+            "PASS",
+            "90",
+            f"{pptx_artifact_id};{check_artifact_id}",
+            "",
+            "可编辑性只代表结构检查；客户可见前仍需独立视觉、语言、授权和发送准备检查。",
+            "",
+            "ready_for_internal_review",
+            "ad_creative_operator",
+        )
+        append_event(
+            project,
+            {
+                "event_id": f"EVT-PPTX-EXPORT-{version_number:03d}",
+                "event_type": "immutable_pptx_exported",
+                "created_at": created_at,
+                "version_id": version_id,
+                "artifact_id": pptx_artifact_id,
+                "pptx": safe_rel(project, output),
+                "sha256": pptx_sha,
+                "stats": stats,
+            },
+        )
+        validation_errors, _ = validate(project)
+        if validation_errors:
+            raise RuntimeError(
+                "PPTX export transaction would leave project invalid: "
+                + "; ".join(validation_errors[:12])
+            )
+    except Exception:
+        for path, snapshot in snapshots.items():
+            if snapshot is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(snapshot)
+        check_path.unlink(missing_ok=True)
+        output.unlink(missing_ok=True)
+        raise
     return output
 
 
@@ -10604,6 +14238,8 @@ def command_run(args: argparse.Namespace) -> int:
     print(f"DASHBOARD={dashboard}")
     print(f"COUNCIL={overall}")
     print(f"COUNCIL_REPORT={report}")
+    print(f"NEXT_COMMAND=adco creative-proposal {project}")
+    print("PPT_AUTO_GENERATED=0")
     for key, value in stats.items():
         print(f"{key.upper()}={value}")
     print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
@@ -11572,6 +15208,72 @@ def command_preflight_skill(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_specialist_handoff(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    descriptor = Path(args.descriptor).expanduser().resolve() if args.descriptor else None
+    try:
+        handoff, path = create_specialist_handoff(
+            project,
+            work_id=args.work_id,
+            profile_id=args.profile_id,
+            objective=args.objective,
+            input_artifact_ids=args.input_artifact,
+            expected_output_kinds=args.expected_output,
+            required_capabilities=args.require_capability,
+            descriptor_path=descriptor,
+            execution_mode=args.execution_mode,
+            workspace_mode=args.workspace_mode,
+            lane_id=args.lane_id,
+            generation_mode=args.generation_mode,
+            generation_authorized=args.generation_authorized,
+            authorization_ref=args.authorization_ref,
+        )
+    except (ValueError, OSError) as exc:
+        print("SPECIALIST_HANDOFF=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    print("SPECIALIST_HANDOFF=PASS")
+    print(f"HANDOFF_ID={handoff['handoff_id']}")
+    print(f"HANDOFF={path}")
+    print(f"COMPATIBILITY={'compatible' if handoff.get('descriptor_ref') else 'unverified'}")
+    print(f"EXECUTION_MODE={(handoff.get('execution') or {}).get('mode')}")
+    return 0
+
+
+def command_specialist_adopt(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    mappings: dict[str, str] = {}
+    try:
+        for item in args.map_output:
+            provider_artifact_id, target = item.split("=", 1)
+            if not provider_artifact_id.strip() or not target.strip():
+                raise ValueError
+            mappings[provider_artifact_id.strip()] = target.strip()
+    except ValueError:
+        print("SPECIALIST_ADOPTION=BLOCKED")
+        print("ERROR=--map-output must use PROVIDER_ARTIFACT_ID=project/relative/path")
+        return 1
+    try:
+        adoption, path = adopt_specialist_receipt(
+            project,
+            handoff_path=Path(args.handoff).expanduser().resolve(),
+            receipt_path=Path(args.receipt).expanduser().resolve(),
+            decision=args.decision,
+            reason=args.reason,
+            output_mappings=mappings,
+            dry_run=args.dry_run,
+        )
+    except (ValueError, OSError, StopIteration) as exc:
+        print("SPECIALIST_ADOPTION=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    print("SPECIALIST_ADOPTION=DRY_RUN" if args.dry_run else "SPECIALIST_ADOPTION=PASS")
+    print(f"DECISION={adoption['decision']}")
+    print(f"ADOPTION={path or 'not_written'}")
+    print(f"ADVANCE_ALLOWED={(adoption.get('gate_effect') or {}).get('advance_allowed')}")
+    return 0
+
+
 def command_preflight_asset(args: argparse.Namespace) -> int:
     project = Path(args.project).expanduser().resolve()
     browser_assets_exist = normalized_bool(args.browser_checked) or indicates_browser_held_assets(
@@ -11618,15 +15320,22 @@ def command_preflight_asset(args: argparse.Namespace) -> int:
 
 def command_dispatch_record(args: argparse.Namespace) -> int:
     project = Path(args.project).expanduser().resolve()
-    result = record_thread_dispatch(
-        project,
-        lane_id=args.lane_id,
-        real_thread_id=args.real_thread_id,
-        title_action=args.title_action,
-        title_verified_at=args.title_verified_at,
-        dispatch_evidence=args.dispatch_evidence,
-        dispatch_status=args.dispatch_status,
-    )
+    try:
+        result = record_thread_dispatch(
+            project,
+            lane_id=args.lane_id,
+            work_id=args.work_id,
+            real_thread_id=args.real_thread_id,
+            title_action=args.title_action,
+            title_verified_at=args.title_verified_at,
+            dispatch_evidence=args.dispatch_evidence,
+            dispatch_status=args.dispatch_status,
+            absolute_deadline_at=args.absolute_deadline_at,
+        )
+    except ValueError as exc:
+        print("DISPATCH_RECORD=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
     errors, stats = validate(project)
     print(f"DISPATCH_RECORD={result['dispatch_status']}")
     print(f"LANE_ID={result['lane_id']}")
@@ -11644,6 +15353,63 @@ def command_dispatch_record(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_thread_observe(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    try:
+        result = record_thread_observation(
+            project,
+            lane_id=args.lane_id,
+            work_id=args.work_id,
+            state=args.state,
+            observed_at=args.observed_at,
+            evidence=args.evidence,
+            absolute_deadline_at=args.absolute_deadline_at,
+            extension_reason=args.extension_reason,
+            convergence_reminder_sent=args.convergence_reminder_sent,
+            rescue_thread_id=args.rescue_thread_id,
+        )
+    except ValueError as exc:
+        print("THREAD_OBSERVE=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    print(f"THREAD_OBSERVE={result['state']}")
+    print(f"WORK_ID={result['work_id']}")
+    print(f"LANE_ID={result['lane_id']}")
+    print(f"ABSOLUTE_DEADLINE_AT={result['absolute_deadline_at']}")
+    print(f"BOUNDED_EXTENSION_USED={result['bounded_extension_used']}")
+    print(f"RESCUE_COUNT={result['rescue_count']}")
+    print(f"CONVERGENCE_LOG={result['log_path']}")
+    return 0
+
+
+def command_thread_reconcile(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    try:
+        result = reconcile_thread_receipt(
+            project,
+            lane_id=args.lane_id,
+            work_id=args.work_id,
+            receipt_path_value=args.receipt_path,
+            adoption_decision=args.adoption_decision,
+            rejection_reason=args.rejection_reason,
+            reconciled_at=args.reconciled_at,
+            cleanup_action=args.cleanup_action,
+            archived_at=args.archived_at,
+        )
+    except ValueError as exc:
+        print("THREAD_RECONCILE=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    print(f"THREAD_RECONCILE={result['status']}")
+    print(f"RECEIPT_THREAD_ID={result.get('receipt_thread_id', '')}")
+    print(f"ADOPTION_DECISION={result.get('adoption_decision', 'REJECT')}")
+    print(f"CONVERGENCE_LOG={result['log_path']}")
+    if result.get("error"):
+        print(f"ERROR={result['error']}")
+        return 1
+    return 0
+
+
 def command_client_outline_gate(args: argparse.Namespace) -> int:
     project = Path(args.project).expanduser().resolve()
     ensure_project(project)
@@ -11652,6 +15418,32 @@ def command_client_outline_gate(args: argparse.Namespace) -> int:
     print(f"REPORT={report}")
     print(f"ISSUES={len(issues)}")
     if status != "PASS":
+        for issue in issues:
+            print(f"- {issue}")
+        return 1
+    return 0
+
+
+def command_confirm_client_outline(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    ensure_project(project)
+    try:
+        receipt = confirm_client_outline(
+            project,
+            confirmed_by=args.confirmed_by,
+            confirmed_at=args.confirmed_at,
+            evidence_ref=args.evidence_ref,
+        )
+        status, issues, report = review_client_outline(project)
+    except ValueError as exc:
+        print("CLIENT_OUTLINE_CONFIRMATION=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    print(f"CLIENT_OUTLINE_CONFIRMATION={'PASS' if status == 'PASS' else 'BLOCKED'}")
+    print(f"RECEIPT={receipt}")
+    print(f"CLIENT_OUTLINE_GATE={status}")
+    print(f"REPORT={report}")
+    if issues:
         for issue in issues:
             print(f"- {issue}")
         return 1
@@ -11806,6 +15598,20 @@ def command_client_pack_gate(args: argparse.Namespace) -> int:
             print("ERRORS:")
             for error in errors:
                 print(f"- {error}")
+        return 1
+    return 0
+
+
+def command_client_send_readiness_gate(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    status, issues, report = review_client_send_readiness(project)
+    print(f"CLIENT_SEND_READINESS_GATE={status}")
+    print(f"REPORT={report}")
+    print(f"ISSUES={len(issues)}")
+    print("SEND_EXECUTED=0")
+    if status != "PASS":
+        for issue in issues[:80]:
+            print(f"- {issue}")
         return 1
     return 0
 
@@ -12128,6 +15934,51 @@ def build_parser() -> argparse.ArgumentParser:
     preflight_skill_parser.add_argument("--blocked-reason", default="")
     preflight_skill_parser.set_defaults(func=command_preflight_skill)
 
+    specialist_handoff_parser = subparsers.add_parser(
+        "specialist-handoff",
+        help="Create a versioned neutral specialist handoff; DIRcreative is one profile, not a runtime dependency.",
+    )
+    specialist_handoff_parser.add_argument("project", help="Project directory.")
+    specialist_handoff_parser.add_argument("--work-id", required=True)
+    specialist_handoff_parser.add_argument("--profile-id", default=DIRCREATIVE_PROFILE_ID)
+    specialist_handoff_parser.add_argument("--objective", required=True)
+    specialist_handoff_parser.add_argument("--input-artifact", action="append", default=[], required=True)
+    specialist_handoff_parser.add_argument("--expected-output", action="append", default=[], required=True)
+    specialist_handoff_parser.add_argument("--require-capability", action="append", default=[])
+    specialist_handoff_parser.add_argument("--descriptor", default="")
+    specialist_handoff_parser.add_argument(
+        "--execution-mode",
+        choices=["inline", "codex_thread", "external_handoff"],
+        default="inline",
+    )
+    specialist_handoff_parser.add_argument(
+        "--workspace-mode",
+        choices=["read_only", "isolated_workspace", "worktree"],
+        default="isolated_workspace",
+    )
+    specialist_handoff_parser.add_argument("--lane-id", default="")
+    specialist_handoff_parser.add_argument("--generation-mode", default="prompt_only")
+    specialist_handoff_parser.add_argument("--generation-authorized", action="store_true")
+    specialist_handoff_parser.add_argument("--authorization-ref", default="")
+    specialist_handoff_parser.set_defaults(func=command_specialist_handoff)
+
+    specialist_adopt_parser = subparsers.add_parser(
+        "specialist-adopt",
+        help="Validate a specialist receipt and record ADCO-owned adoption separately.",
+    )
+    specialist_adopt_parser.add_argument("project", help="Project directory.")
+    specialist_adopt_parser.add_argument("--handoff", required=True)
+    specialist_adopt_parser.add_argument("--receipt", required=True)
+    specialist_adopt_parser.add_argument(
+        "--decision",
+        choices=["adopt", "partial_adopt", "reject", "defer"],
+        required=True,
+    )
+    specialist_adopt_parser.add_argument("--reason", required=True)
+    specialist_adopt_parser.add_argument("--map-output", action="append", default=[])
+    specialist_adopt_parser.add_argument("--dry-run", action="store_true")
+    specialist_adopt_parser.set_defaults(func=command_specialist_adopt)
+
     preflight_asset_parser = subparsers.add_parser(
         "preflight-asset",
         help="Record local/browser/download/generated asset inventory before replacement generation.",
@@ -12144,6 +15995,20 @@ def build_parser() -> argparse.ArgumentParser:
     preflight_asset_parser.add_argument("--status", default="PASS")
     preflight_asset_parser.add_argument("--blocked-reason", default="")
     preflight_asset_parser.set_defaults(func=command_preflight_asset)
+
+    confirm_outline_parser = subparsers.add_parser(
+        "confirm-client-outline",
+        help="Record explicit human/client approval bound to the current client outline hash.",
+    )
+    confirm_outline_parser.add_argument("project", help="Project directory.")
+    confirm_outline_parser.add_argument("--confirmed-by", required=True)
+    confirm_outline_parser.add_argument("--confirmed-at", required=True)
+    confirm_outline_parser.add_argument(
+        "--evidence-ref",
+        required=True,
+        help="user_confirmation:<id> or client_confirmation:<id>",
+    )
+    confirm_outline_parser.set_defaults(func=command_confirm_client_outline)
 
     client_outline_parser = subparsers.add_parser(
         "client-outline-gate",
@@ -12222,12 +16087,49 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dispatch_record_parser.add_argument("project", help="Project directory.")
     dispatch_record_parser.add_argument("--lane-id", required=True)
+    dispatch_record_parser.add_argument("--work-id", required=True)
     dispatch_record_parser.add_argument("--real-thread-id", required=True)
     dispatch_record_parser.add_argument("--title-action", default="dispatcher_set")
     dispatch_record_parser.add_argument("--title-verified-at", required=True)
     dispatch_record_parser.add_argument("--dispatch-evidence", required=True)
     dispatch_record_parser.add_argument("--dispatch-status", default="dispatched")
+    dispatch_record_parser.add_argument("--absolute-deadline-at", required=True)
     dispatch_record_parser.set_defaults(func=command_dispatch_record)
+
+    thread_observe_parser = subparsers.add_parser(
+        "thread-observe",
+        help="Record bounded thread readback state without treating a fixed poll count as failure.",
+    )
+    thread_observe_parser.add_argument("project", help="Project directory.")
+    thread_observe_parser.add_argument("--lane-id", required=True)
+    thread_observe_parser.add_argument("--work-id", required=True)
+    thread_observe_parser.add_argument(
+        "--state", choices=sorted(THREADOPS_OBSERVATION_STATES), required=True
+    )
+    thread_observe_parser.add_argument("--observed-at", required=True)
+    thread_observe_parser.add_argument("--evidence", required=True)
+    thread_observe_parser.add_argument("--absolute-deadline-at", default="")
+    thread_observe_parser.add_argument("--extension-reason", default="")
+    thread_observe_parser.add_argument("--convergence-reminder-sent", action="store_true")
+    thread_observe_parser.add_argument("--rescue-thread-id", default="")
+    thread_observe_parser.set_defaults(func=command_thread_observe)
+
+    thread_reconcile_parser = subparsers.add_parser(
+        "thread-reconcile",
+        help="Validate worker receipt identity and record main adoption/rejection plus cleanup.",
+    )
+    thread_reconcile_parser.add_argument("project", help="Project directory.")
+    thread_reconcile_parser.add_argument("--lane-id", required=True)
+    thread_reconcile_parser.add_argument("--work-id", required=True)
+    thread_reconcile_parser.add_argument("--receipt-path", required=True)
+    thread_reconcile_parser.add_argument(
+        "--adoption-decision", choices=sorted(THREADOPS_ADOPTION_DECISIONS), required=True
+    )
+    thread_reconcile_parser.add_argument("--rejection-reason", default="")
+    thread_reconcile_parser.add_argument("--reconciled-at", required=True)
+    thread_reconcile_parser.add_argument("--cleanup-action", required=True)
+    thread_reconcile_parser.add_argument("--archived-at", default="")
+    thread_reconcile_parser.set_defaults(func=command_thread_reconcile)
 
     asset_parser = subparsers.add_parser("add-asset", help="Register a real/generated visual asset file.")
     asset_parser.add_argument("project", help="Project directory.")
@@ -12298,6 +16200,13 @@ def build_parser() -> argparse.ArgumentParser:
     client_gate_parser.add_argument("project", help="Project directory.")
     client_gate_parser.add_argument("--pptx", default="", help="Optional PPTX file to inspect.")
     client_gate_parser.set_defaults(func=command_client_pack_gate)
+
+    client_send_parser = subparsers.add_parser(
+        "client-send-readiness-gate",
+        help="Fail closed unless the exact current package has independent review and explicit send authorization; never sends.",
+    )
+    client_send_parser.add_argument("project", help="Project directory.")
+    client_send_parser.set_defaults(func=command_client_send_readiness_gate)
 
     handoff_gate_parser = subparsers.add_parser(
         "handoff-readiness-gate",

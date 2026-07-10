@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 import tempfile
 from pathlib import Path
 
 from ad_creative_operator import (
+    ARTIFACT_INDEX_FIELDS,
     CLIENT_OUTLINE_FIELDS,
     add_reference,
     add_visual_asset,
@@ -17,26 +19,44 @@ from ad_creative_operator import (
     build_parser,
     command_thread_plan,
     cleanup_plan,
+    client_outline_confirmed_content_sha256,
+    confirm_client_outline,
     creative_doctor_report,
     ensure_project,
     ensure_profile_work,
+    export_editable_pptx,
+    file_sha256,
     final_delivery_lock,
     import_creative_production_run,
+    inspect_pptx,
     migrate_control_plane,
+    now_iso,
+    perform_intake,
     register_materials,
     render_goal_iteration_plan,
     render_handoff,
     render_human_workspace_indexes,
+    render_creative_proposal,
     render_thread_execution_plan,
+    record_thread_dispatch,
+    record_thread_observation,
+    reconcile_thread_receipt,
+    declared_thread_changed_paths,
     refresh_asset_current_manifest,
+    read_csv_rows,
     review_client_language,
     review_client_outline,
     review_film_quality,
     review_reference_pack,
     review_visual_layout,
     run_goal,
+    specialist_manifest_digest,
+    specialist_scope_manifest,
+    validate_thread_receipt_scope_and_semantics,
     workspace_hygiene_report,
+    write_pptx_check,
     write_csv_rows,
+    write_json_object,
 )
 from init_project import AGENTS_MERGE_SUGGESTION_REL, agents_policy_status
 from run_checks import cleanup_python_caches
@@ -75,6 +95,28 @@ def add_clean_reference(project: Path) -> None:
     )
 
 
+def add_independent_adversarial_review(project: Path, stage: str, target: Path) -> None:
+    report = project / f"AD-creative/gates/ADVERSARIAL_REVIEW_{stage.upper()}.md"
+    report.write_text(
+        f"""# Independent Adversarial Review
+
+stage: {stage}
+status: PASS
+reviewer_id: regression-cold-reviewer
+reviewer_role: independent evidence reviewer
+independent: true
+reviewed_at: {now_iso()}
+target_ref: {target.relative_to(project)}
+target_sha256: {file_sha256(target)}
+
+| stage | objection | rebuttal | revision | gate_status |
+|---|---|---|---|---|
+| {stage} | Source could be too generic. | The reference record is traceable and scoped. | Keep scope-only use and forbid identity copying. | PASS |
+""",
+        encoding="utf-8",
+    )
+
+
 def mark_first_execution_receipt_received(project: Path) -> Path:
     registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
     with registry_path.open(newline="", encoding="utf-8") as handle:
@@ -87,9 +129,12 @@ def mark_first_execution_receipt_received(project: Path) -> Path:
             real_thread_id = "019f1111-2222-7333-8444-555555555555"
             row["receipt_status"] = "received"
             row["reconciliation_status"] = "reconciled"
-            row["lifecycle_state"] = "returned"
+            row["lifecycle_state"] = "archived"
             row["returned_at"] = "2026-06-27T00:00:00Z"
             row["reconciled_at"] = "2026-06-27T00:01:00Z"
+            row["archived"] = "true"
+            row["archived_at"] = "2026-06-27T00:02:00Z"
+            row["cleanup_action"] = "archived_after_receipt_reconcile"
             row["planned_thread_id"] = row.get("planned_thread_id") or row.get("thread_id", "")
             row["thread_id"] = real_thread_id
             row["real_thread_id"] = real_thread_id
@@ -98,7 +143,49 @@ def mark_first_execution_receipt_received(project: Path) -> Path:
             row["title_verified_at"] = "2026-06-27T00:00:30Z"
             row["dispatch_receipt_path"] = "AD-creative/orchestrator/thread_dispatch_TEST.md"
             row["dispatch_evidence"] = "read_thread title matched execution worker lane"
+            baseline_path = (
+                project
+                / "AD-creative/orchestrator/thread_scope_baselines"
+                / f"{row['work_id']}_{row['lane_id']}.json"
+            )
+            baseline_exclusions = [
+                "AD-creative/orchestrator/thread_scope_baselines",
+                "AD-creative/orchestrator/thread_scope_proofs",
+                "AD-creative/orchestrator/thread_registry.csv",
+                "AD-creative/orchestrator/agent_runs.csv",
+                "AD-creative/orchestrator/thread_dispatch_TEST.md",
+                row["receipt_path"],
+            ]
+            baseline_files = specialist_scope_manifest(
+                project, excluded_roots=baseline_exclusions
+            )
+            write_json_object(
+                baseline_path,
+                {
+                    "protocol_id": "adco.thread-scope-baseline",
+                    "version": "1.0",
+                    "work_id": row["work_id"],
+                    "lane_id": row["lane_id"],
+                    "real_thread_id": real_thread_id,
+                    "write_scope": row["write_scope"],
+                    "excluded_roots": baseline_exclusions,
+                    "files": baseline_files,
+                    "manifest_sha256": specialist_manifest_digest(baseline_files),
+                    "created_at": "2026-06-27T00:00:30Z",
+                },
+            )
+            row["scope_baseline_path"] = str(baseline_path.relative_to(project))
+            row["scope_baseline_sha256"] = file_sha256(baseline_path)
+            row["absolute_deadline_at"] = "2026-06-27T00:05:00Z"
+            row["convergence_state"] = "receipt_received"
+            row["bounded_extension_used"] = "false"
+            row["rescue_count"] = "0"
+            row["receipt_thread_id"] = real_thread_id
+            row["adoption_decision"] = "ADOPT"
+            row["rejection_reason"] = ""
             receipt_path = project / row["receipt_path"]
+            lane_id = row["lane_id"]
+            work_id = row["work_id"]
             break
     else:
         raise AssertionError("expected execution_worker row")
@@ -107,12 +194,59 @@ def mark_first_execution_receipt_received(project: Path) -> Path:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+    agent_runs_path = project / "AD-creative/orchestrator/agent_runs.csv"
+    with agent_runs_path.open(newline="", encoding="utf-8") as handle:
+        agent_reader = csv.DictReader(handle)
+        agent_fields = list(agent_reader.fieldnames or [])
+        agent_rows = list(agent_reader)
+    for row in agent_rows:
+        if row.get("lane_id") == lane_id and row.get("work_id") == work_id:
+            row["thread_id"] = real_thread_id
+            row["status"] = "reconciled"
+            row["completed_at"] = "2026-06-27T00:01:00Z"
+            row["proof_status"] = "receipt_identity_verified"
+            row["reconciliation_status"] = "reconciled"
+            break
+    else:
+        raise AssertionError("expected matching agent_runs row")
+    with agent_runs_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=agent_fields)
+        writer.writeheader()
+        writer.writerows(agent_rows)
     (project / "AD-creative/orchestrator/thread_dispatch_TEST.md").write_text(
         "real_thread_id: 019f1111-2222-7333-8444-555555555555\n"
         "title_verified_at: 2026-06-27T00:00:30Z\n",
         encoding="utf-8",
     )
     return receipt_path
+
+
+def attach_host_scope_proof_fixture(project: Path, receipt_path: Path) -> None:
+    registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
+    fields, rows = read_csv_rows(registry_path)
+    target = next(row for row in rows if row.get("receipt_path") == str(receipt_path.relative_to(project)))
+    receipt_text = receipt_path.read_text(encoding="utf-8")
+    for rel_path in declared_thread_changed_paths(receipt_text):
+        output = project / rel_path
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("host-observed fixture output", encoding="utf-8")
+    proof = validate_thread_receipt_scope_and_semantics(
+        project,
+        target,
+        receipt_text,
+        decision="ADOPT",
+        cleanup_action=target["cleanup_action"],
+        archived_at=target["archived_at"],
+    )
+    proof_path = (
+        project
+        / "AD-creative/orchestrator/thread_scope_proofs"
+        / f"{target['work_id']}_{target['lane_id']}.json"
+    )
+    write_json_object(proof_path, proof)
+    target["scope_proof_path"] = str(proof_path.relative_to(project))
+    target["scope_proof_sha256"] = file_sha256(proof_path)
+    write_csv_rows(registry_path, fields, rows)
 
 
 def test_project_agents_policy_created_and_validated() -> None:
@@ -231,6 +365,174 @@ def test_agents_policy_status_clears_after_manual_merge() -> None:
         assert_valid(project)
 
 
+def test_intake_preserves_version_truth_and_custom_sections() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-intake-merge-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        truth_path = project / "AD-creative/orchestrator/current_truth.md"
+        truth_path.write_text(
+            """# Current Truth
+
+## Project
+old
+
+## Confirmed
+- old
+
+## Current Version Truth
+
+```text
+current_version_id: VER-007
+current_pptx_artifact_id: ART-PPTX-007
+version_map_status: active
+```
+
+## Custom Operator Notes
+keep-this-note
+""",
+            encoding="utf-8",
+        )
+        material = project / "incoming.md"
+        material.write_text("客户需要一份可编辑的广告创意提案。", encoding="utf-8")
+        source_ids = register_materials(project, [material], "整理客户资料")
+        perform_intake(project, source_ids, "整理客户资料")
+        text = truth_path.read_text(encoding="utf-8")
+        assert "current_version_id: VER-007" in text
+        assert "current_pptx_artifact_id: ART-PPTX-007" in text
+        assert "version_map_status: active" in text
+        assert "## Custom Operator Notes\nkeep-this-note" in text
+        assert "## Project\n" + project.name in text
+
+
+def test_pptx_export_uses_immutable_version_transaction() -> None:
+    if not optional_module("pptx"):
+        return
+    with tempfile.TemporaryDirectory(prefix="adco-ppt-version-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        material = project / "brief.md"
+        material.write_text(
+            "客户需要面向城市通勤人群的广告创意提案，强调轻便产品优势，并保留可编辑文本。",
+            encoding="utf-8",
+        )
+        source_ids = register_materials(project, [material], "整理客户资料")
+        perform_intake(project, source_ids, "整理客户资料")
+        render_creative_proposal(project)
+        confirm_client_outline(
+            project,
+            confirmed_by="fixture-project-owner",
+            confirmed_at="2026-07-05T00:00:00Z",
+            evidence_ref="user_confirmation:ppt-version-fixture",
+        )
+
+        first = export_editable_pptx(project)
+        first_bytes = first.read_bytes()
+        second = export_editable_pptx(project)
+        assert first.name == "client_review_v001.pptx"
+        assert second.name == "client_review_v002.pptx"
+        assert first.read_bytes() == first_bytes
+        assert first != second
+
+        truth = (project / "AD-creative/orchestrator/current_truth.md").read_text(encoding="utf-8")
+        assert "current_version_id: VER-PPT-002" in truth
+        assert "current_pptx_artifact_id: ART-PPTX-002" in truth
+        assert "current_pdf_artifact_id:\n" in truth
+        with (project / "AD-creative/orchestrator/version_map.csv").open(newline="", encoding="utf-8") as handle:
+            versions = list(csv.DictReader(handle))
+        assert next(row for row in versions if row["version_id"] == "VER-PPT-001")["status"] == "superseded"
+        assert next(row for row in versions if row["version_id"] == "VER-PPT-002")["status"] == "draft"
+        with (project / "AD-creative/orchestrator/artifact_index.csv").open(newline="", encoding="utf-8") as handle:
+            artifacts = list(csv.DictReader(handle))
+        assert any(row["artifact_id"] == "ART-PPTX-001" and row["path"].endswith(first.name) for row in artifacts)
+        assert any(row["artifact_id"] == "ART-PPTX-002" and row["path"].endswith(second.name) for row in artifacts)
+        assert_valid(project)
+
+        control_paths = [
+            project / "AD-creative/orchestrator/current_truth.md",
+            project / "AD-creative/orchestrator/version_map.csv",
+            project / "AD-creative/orchestrator/artifact_index.csv",
+        ]
+        before_check = {path: path.read_bytes() for path in control_paths}
+        diagnostic = write_pptx_check(project, first, inspect_pptx(first))
+        assert diagnostic.exists()
+        assert {path: path.read_bytes() for path in control_paths} == before_check
+
+        first.write_bytes(first_bytes + b"tamper")
+        errors, _ = validate(project)
+        assert any("ART-PPTX-001 content changed after registration" in error for error in errors), errors
+        first.write_bytes(first_bytes)
+        assert_valid(project)
+
+        try:
+            export_editable_pptx(project, first)
+        except RuntimeError as exc:
+            assert "canonical version path" in str(exc)
+        else:
+            raise AssertionError("export-pptx must reject a non-current canonical target")
+
+
+def test_pptx_export_blocks_unconfirmed_generated_outline() -> None:
+    if not optional_module("pptx"):
+        return
+    with tempfile.TemporaryDirectory(prefix="adco-ppt-unconfirmed-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        material = project / "brief.md"
+        material.write_text(
+            "客户需要一份城市轻户外广告创意提案，先确认客户可读文本，再制作可编辑演示稿。",
+            encoding="utf-8",
+        )
+        source_ids = register_materials(project, [material], "整理客户资料")
+        perform_intake(project, source_ids, "整理客户资料")
+        render_creative_proposal(project)
+        status, findings, _ = review_client_outline(project)
+        assert status == "BLOCKED"
+        assert any("确认" in item or "pending" in item for item in findings), findings
+        try:
+            export_editable_pptx(project)
+        except RuntimeError as exc:
+            assert "client-outline-gate BLOCKED" in str(exc)
+        else:
+            raise AssertionError("unconfirmed generated outline must not reach PPT export")
+
+
+def test_outline_confirmation_binds_presented_bytes_and_stable_content_digest() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-outline-confirmation-basis-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        material = project / "brief.md"
+        material.write_text(
+            "客户需要城市轻户外广告提案，先确认客户可读文本，再制作可编辑演示稿。",
+            encoding="utf-8",
+        )
+        source_ids = register_materials(project, [material], "整理客户资料")
+        perform_intake(project, source_ids, "整理客户资料")
+        render_creative_proposal(project)
+        outline_path = project / "AD-creative/client_review/client_outline.csv"
+        fields, rows = read_csv_rows(outline_path)
+        presented_sha = file_sha256(outline_path)
+        content_sha = client_outline_confirmed_content_sha256(fields, rows)
+        receipt_path = confirm_client_outline(
+            project,
+            confirmed_by="fixture-project-owner",
+            confirmed_at="2026-07-05T00:00:00Z",
+            evidence_ref="user_confirmation:outline-basis-fixture",
+        )
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        assert receipt["presented_outline_sha256"] == presented_sha
+        assert receipt["confirmed_content_sha256"] == content_sha
+        assert receipt["outline_sha256"] == file_sha256(outline_path)
+        assert receipt["outline_sha256"] != presented_sha
+        fields, rows = read_csv_rows(outline_path)
+        assert client_outline_confirmed_content_sha256(fields, rows) == content_sha
+
+        rows[0]["body_copy"] += " 未经再次确认的改动。"
+        write_csv_rows(outline_path, fields, rows)
+        status, findings, _ = review_client_outline(project)
+        assert status == "BLOCKED"
+        assert any("内容 digest" in item for item in findings), findings
+
+
 def test_gate_downgrades_without_adversarial_record() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-goal-no-adv-") as raw_project:
         project = Path(raw_project)
@@ -242,18 +544,16 @@ def test_gate_downgrades_without_adversarial_record() -> None:
         assert_valid(project)
 
 
-def test_goal_plan_allows_clean_gate_pass() -> None:
+def test_independent_adversarial_review_allows_clean_gate_pass() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-goal-with-adv-") as raw_project:
         project = Path(raw_project)
         ensure_project(project)
-        render_goal_iteration_plan(
-            project,
-            goal_id="GOAL-REGRESSION-001",
-            title="Goal regression",
-            objective="Verify adversarial council record allows clean Gate PASS.",
-            owner="Regression",
-        )
         add_clean_reference(project)
+        add_independent_adversarial_review(
+            project,
+            "reference_research",
+            project / "AD-creative/references/reference_cards.csv",
+        )
         status, findings, _ = review_reference_pack(project)
         assert status == "PASS", (status, findings)
         assert not findings, findings
@@ -291,7 +591,7 @@ def test_thread_plan_creates_control_plane() -> None:
         assert all(Path(path).exists() for path in payload["prompts"])
         assert all(Path(path).exists() for path in payload["role_briefs"])
         registry = (project / "AD-creative/orchestrator/thread_registry.csv").read_text(encoding="utf-8")
-        assert "planned:LANE-01-BRAND_CLIENT" in registry
+        assert "planned:WORK-GOAL-THREAD-001-THREADS:LANE-01-BRAND_CLIENT" in registry
         assert "mode" in registry
         assert "write_scope" in registry
         assert "receipt_status" in registry
@@ -300,7 +600,7 @@ def test_thread_plan_creates_control_plane() -> None:
         assert "execution_worker" in registry
         assert "isolated_workspace" in registry
         assert (
-            "AD-creative/workspaces/WORK-GOAL-THREAD-001-THREADS/LANE-02-COPY_CREATIVE/copy_drafts.md"
+            "AD-creative/workspaces/WORK-GOAL-THREAD-001-THREADS/LANE-02-COPY_CREATIVE"
             in registry
         )
         assert "AD-creative/agents/receipts/WORK-GOAL-THREAD-001-THREADS/LANE-02-COPY_CREATIVE_receipt.md" in registry
@@ -314,7 +614,7 @@ def test_thread_plan_creates_control_plane() -> None:
         assert "COPY_CREATIVE" in plan_text
         assert "execution_worker | isolated_workspace" in plan_text
         assert (
-            "AD-creative/workspaces/WORK-GOAL-THREAD-001-THREADS/LANE-02-COPY_CREATIVE/copy_drafts.md"
+            "AD-creative/workspaces/WORK-GOAL-THREAD-001-THREADS/LANE-02-COPY_CREATIVE"
             in plan_text
         )
         assert "AD-creative/agents/receipts/WORK-GOAL-THREAD-001-THREADS/LANE-02-COPY_CREATIVE_receipt.md" in plan_text
@@ -339,7 +639,7 @@ def test_thread_plan_creates_control_plane() -> None:
         role_brief_text = (project / "AD-creative/agents/role_briefs/COPY_CREATIVE_WORK-GOAL-THREAD-001-THREADS.md").read_text(encoding="utf-8")
         for generated_text in (prompt_text, receipt_text, role_brief_text):
             assert (
-                "AD-creative/workspaces/WORK-GOAL-THREAD-001-THREADS/LANE-02-COPY_CREATIVE/copy_drafts.md"
+                "AD-creative/workspaces/WORK-GOAL-THREAD-001-THREADS/LANE-02-COPY_CREATIVE"
                 in generated_text
             )
             assert "{work_id}" not in generated_text
@@ -419,6 +719,84 @@ def test_thread_plan_includes_harness_loop_and_adoption_contracts() -> None:
         assert_valid(project)
 
 
+def test_thread_progress_invalidates_stale_convergence_reminder() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-stale-reminder-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        payload = render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-STALE-REMINDER",
+            title="Thread progress freshness",
+            objective="A stale reminder must not kill a worker after new progress.",
+            roles=["copy_creative"],
+        )
+        work_id = str(payload["work_id"])
+        _, registry = read_csv_rows(
+            project / "AD-creative/orchestrator/thread_registry.csv"
+        )
+        lane_id = next(row["lane_id"] for row in registry if row["work_id"] == work_id)
+        record_thread_dispatch(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            real_thread_id="019f1234-5678-7000-8000-000000000001",
+            title_action="dispatcher_set",
+            title_verified_at="2026-07-05T00:00:00Z",
+            dispatch_evidence="read_thread title and id matched fixture",
+            dispatch_status="dispatched",
+            absolute_deadline_at="2026-07-05T00:05:00Z",
+        )
+        record_thread_observation(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            state="silent",
+            observed_at="2026-07-05T00:04:00Z",
+            evidence="initial silence",
+            convergence_reminder_sent=True,
+        )
+        progress = record_thread_observation(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            state="active_with_progress",
+            observed_at="2026-07-05T00:04:30Z",
+            evidence="worker produced new analysis",
+        )
+        assert progress["convergence_reminder_at"] == "", progress
+        try:
+            record_thread_observation(
+                project,
+                lane_id=lane_id,
+                work_id=work_id,
+                state="thread_not_converged",
+                observed_at="2026-07-05T00:05:01Z",
+                evidence="stale reminder must not count",
+            )
+        except ValueError as exc:
+            assert "fresh prior silent" in str(exc), exc
+        else:
+            raise AssertionError("new progress must invalidate a stale reminder")
+        record_thread_observation(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            state="silent",
+            observed_at="2026-07-05T00:05:02Z",
+            evidence="fresh silence after latest progress",
+            convergence_reminder_sent=True,
+        )
+        result = record_thread_observation(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            state="thread_not_converged",
+            observed_at="2026-07-05T00:05:03Z",
+            evidence="fresh reminder produced no receipt",
+        )
+        assert result["state"] == "thread_not_converged", result
+
+
 def test_execution_worker_receipt_cannot_be_prompt_only() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-receipt-") as raw_project:
         project = Path(raw_project)
@@ -478,6 +856,7 @@ def test_threadops_validation_rejects_prompt_only_received_execution_receipt() -
             """# LANE-01-COPY_CREATIVE Receipt
 
 status: received
+thread_id: 019f1111-2222-7333-8444-555555555555
 
 ## Summary
 
@@ -492,6 +871,74 @@ Completed the prompt and recommend adoption.
             and "evidence_refs" in error
             for error in errors
         ), errors
+
+
+def test_thread_reconcile_rejects_failed_or_out_of_scope_self_report() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-reconcile-forged-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        payload = render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-FORGED",
+            title="Reject forged thread receipt",
+            objective="Host proof must override worker self-report.",
+            roles=["copy_creative"],
+        )
+        work_id = str(payload["work_id"])
+        _, registry = read_csv_rows(
+            project / "AD-creative/orchestrator/thread_registry.csv"
+        )
+        lane_id = next(row["lane_id"] for row in registry if row["work_id"] == work_id)
+        real_thread_id = "019f6666-7777-7888-8999-aaaaaaaaaaaa"
+        record_thread_dispatch(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            real_thread_id=real_thread_id,
+            title_action="dispatcher_set",
+            title_verified_at="2026-07-05T00:00:00Z",
+            dispatch_evidence="read_thread title matched forged-receipt fixture",
+            dispatch_status="dispatched",
+            absolute_deadline_at="2026-07-05T00:05:00Z",
+        )
+        _, registry = read_csv_rows(
+            project / "AD-creative/orchestrator/thread_registry.csv"
+        )
+        row = next(item for item in registry if item["lane_id"] == lane_id)
+        receipt = project / row["receipt_path"]
+        receipt.write_text(
+            f"""# Forged Receipt
+
+thread_id: {real_thread_id}
+files_changed: /tmp/outside-scope-does-not-exist
+validation_result: FAILED all tests
+dirty_state_impact: unknown
+worker_recommendation: ADOPT
+loop_state: blocked
+cleanup_actions: did not clean
+evidence_refs: made-up
+""",
+            encoding="utf-8",
+        )
+        result = reconcile_thread_receipt(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            receipt_path_value=row["receipt_path"],
+            adoption_decision="ADOPT",
+            rejection_reason="",
+            reconciled_at="2026-07-05T00:02:00Z",
+            cleanup_action="archived_after_rejected_evidence",
+            archived_at="2026-07-05T00:02:10Z",
+        )
+        assert result["status"] == "rejected_evidence", result
+        assert "project-relative path" in result["error"], result
+        _, registry = read_csv_rows(
+            project / "AD-creative/orchestrator/thread_registry.csv"
+        )
+        row = next(item for item in registry if item["lane_id"] == lane_id)
+        assert row["adoption_decision"] == "REJECT"
+        assert row["reconciliation_status"] == "rejected_evidence"
 
 
 def test_threadops_validation_rejects_missing_helper_evidence() -> None:
@@ -510,10 +957,11 @@ def test_threadops_validation_rejects_missing_helper_evidence() -> None:
             """# LANE-01-COPY_CREATIVE Receipt
 
 status: received
+thread_id: 019f1111-2222-7333-8444-555555555555
 files_changed: AD-creative/workspaces/WORK-GOAL-THREAD-HELPER-MISSING-THREADS/LANE-01-COPY_CREATIVE/copy_drafts.md
 validation_result: PASS - PYTHONDONTWRITEBYTECODE=1 python3 tools/test_goal_workflow.py
 dirty_state_impact: only declared isolated workspace and receipt were changed
-adoption_decision: ADOPT
+worker_recommendation: ADOPT
 loop_state: reconciled
 cleanup_actions: archived worker thread after receipt reconciliation
 evidence_refs: thread_registry.csv row LANE-01-COPY_CREATIVE; receipt path; validation command above
@@ -558,10 +1006,11 @@ def test_threadops_validation_rejects_helper_thread_id_claim() -> None:
             """# LANE-01-COPY_CREATIVE Receipt
 
 status: received
+thread_id: 019f1111-2222-7333-8444-555555555555
 files_changed: AD-creative/workspaces/WORK-GOAL-THREAD-HELPER-THREAD-ID-THREADS/LANE-01-COPY_CREATIVE/copy_drafts.md
 validation_result: PASS - PYTHONDONTWRITEBYTECODE=1 python3 tools/test_goal_workflow.py
 dirty_state_impact: only declared isolated workspace and receipt were changed
-adoption_decision: ADOPT
+worker_recommendation: ADOPT
 loop_state: reconciled
 cleanup_actions: archived worker thread after receipt reconciliation
 evidence_refs: thread_registry.csv row LANE-01-COPY_CREATIVE; receipt path; validation command above
@@ -597,10 +1046,11 @@ def test_threadops_validation_rejects_observation_only_evidence_refs() -> None:
             """# LANE-01-COPY_CREATIVE Receipt
 
 status: received
+thread_id: 019f1111-2222-7333-8444-555555555555
 files_changed: AD-creative/workspaces/WORK-GOAL-THREAD-OBSERVATION-EVIDENCE-THREADS/LANE-01-COPY_CREATIVE/copy_drafts.md
 validation_result: PASS - PYTHONDONTWRITEBYTECODE=1 python3 tools/test_goal_workflow.py
 dirty_state_impact: only declared isolated workspace and receipt were changed
-adoption_decision: ADOPT
+worker_recommendation: ADOPT
 loop_state: reconciled
 cleanup_actions: archived worker thread after receipt reconciliation
 evidence_refs: pending
@@ -635,10 +1085,11 @@ def test_threadops_validation_rejects_adopt_without_file_output() -> None:
             """# LANE-01-COPY_CREATIVE Receipt
 
 status: received
+thread_id: 019f1111-2222-7333-8444-555555555555
 files_changed: no files changed
 validation_result: PASS - PYTHONDONTWRITEBYTECODE=1 python3 tools/test_goal_workflow.py
 dirty_state_impact: no tracked or untracked files changed
-adoption_decision: ADOPT
+worker_recommendation: ADOPT
 loop_state: reconciled
 cleanup_actions: archived worker thread after receipt reconciliation
 evidence_refs: thread_registry.csv row LANE-01-COPY_CREATIVE; receipt path; validation command above
@@ -672,10 +1123,11 @@ def test_threadops_validation_accepts_received_execution_receipt_with_proof() ->
             """# LANE-01-COPY_CREATIVE Receipt
 
 status: received
+thread_id: 019f1111-2222-7333-8444-555555555555
 files_changed: AD-creative/workspaces/WORK-GOAL-THREAD-PROOF-RECEIPT-THREADS/LANE-01-COPY_CREATIVE/copy_drafts.md
 validation_result: PASS - PYTHONDONTWRITEBYTECODE=1 python3 tools/test_goal_workflow.py
 dirty_state_impact: only declared isolated workspace and receipt were changed
-adoption_decision: ADOPT
+worker_recommendation: ADOPT
 loop_state: reconciled
 cleanup_actions: archived worker thread after receipt reconciliation
 evidence_refs: thread_registry.csv row LANE-01-COPY_CREATIVE; receipt path; validation command above
@@ -686,6 +1138,7 @@ Production worker returned file-level proof and validation evidence.
 """,
             encoding="utf-8",
         )
+        attach_host_scope_proof_fixture(project, receipt_path)
         assert_valid(project)
 
 
@@ -705,10 +1158,11 @@ def test_threadops_validation_accepts_received_execution_receipt_with_helper_pro
             """# LANE-01-COPY_CREATIVE Receipt
 
 status: received
+thread_id: 019f1111-2222-7333-8444-555555555555
 files_changed: AD-creative/workspaces/WORK-GOAL-THREAD-HELPER-PROOF-THREADS/LANE-01-COPY_CREATIVE/copy_drafts.md
 validation_result: PASS - PYTHONDONTWRITEBYTECODE=1 python3 tools/test_goal_workflow.py
 dirty_state_impact: only declared isolated workspace and receipt were changed
-adoption_decision: ADOPT
+worker_recommendation: ADOPT
 loop_state: reconciled
 cleanup_actions: archived worker thread after receipt reconciliation
 evidence_refs: thread_registry.csv row LANE-01-COPY_CREATIVE; receipt path; validation command above
@@ -728,6 +1182,7 @@ Production worker returned file-level proof, helper evidence, and validation evi
 """,
             encoding="utf-8",
         )
+        attach_host_scope_proof_fixture(project, receipt_path)
         assert_valid(project)
 
 
@@ -776,11 +1231,11 @@ def test_thread_plan_production_roles_use_isolated_workspaces() -> None:
         assert "LANE-02-ART_DESIGN |" in plan_text
         assert "execution_worker | isolated_workspace" in plan_text
         assert (
-            "AD-creative/workspaces/WORK-GOAL-THREAD-PRODUCTION-THREADS/LANE-01-FILM_DIRECTOR/film_notes.md"
+            "AD-creative/workspaces/WORK-GOAL-THREAD-PRODUCTION-THREADS/LANE-01-FILM_DIRECTOR"
             in combined
         )
         assert (
-            "AD-creative/workspaces/WORK-GOAL-THREAD-PRODUCTION-THREADS/LANE-02-ART_DESIGN/art_direction_notes.md"
+            "AD-creative/workspaces/WORK-GOAL-THREAD-PRODUCTION-THREADS/LANE-02-ART_DESIGN"
             in combined
         )
         producer_lane = next(
@@ -1029,6 +1484,9 @@ def test_duffy_hardening_cli_commands_are_exposed() -> None:
         "preflight-skill",
         "preflight-asset",
         "dispatch-record",
+        "thread-observe",
+        "thread-reconcile",
+        "confirm-client-outline",
         "client-outline-gate",
         "client-language-gate",
         "asset-current-manifest",
@@ -1064,6 +1522,12 @@ def test_client_outline_gate_blocks_until_page_framework_exists() -> None:
                 "status": "ready",
                 "notes": "",
             },
+        )
+        confirm_client_outline(
+            project,
+            confirmed_by="fixture-project-owner",
+            confirmed_at="2026-07-05T00:00:00Z",
+            evidence_ref="user_confirmation:outline-gate-fixture",
         )
         status, findings, _ = review_client_outline(project)
         assert status == "PASS", findings
@@ -1137,10 +1601,38 @@ def test_final_delivery_lock_protects_user_placed_files() -> None:
         locked, lock_path = final_delivery_lock(project)
         assert lock_path.exists()
         assert any(row.get("path", "").endswith("client_final.pdf") and row.get("protected") == "yes" for row in locked)
+        original_hash = next(
+            row["sha256"] for row in locked if row.get("path", "").endswith("client_final.pdf")
+        )
         plan_path, actions = cleanup_plan(project)
         assert plan_path.exists()
         assert any("LOCKED_DO_NOT_MOVE_OR_DELETE" in action for action in actions)
         assert_valid(project)
+
+        final_file.write_bytes(b"%PDF-1.4\nchanged\n")
+        errors, _ = validate(project)
+        assert any("FinalDelivery protected file changed" in error for error in errors), errors
+        try:
+            final_delivery_lock(project)
+        except RuntimeError as exc:
+            assert "protected file changed" in str(exc)
+        else:
+            raise AssertionError("FinalDelivery lock must not refresh a changed baseline")
+        with lock_path.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        assert next(row["sha256"] for row in rows if row.get("path", "").endswith("client_final.pdf")) == original_hash
+
+        final_file.write_bytes(b"%PDF-1.4\n")
+        assert_valid(project)
+        final_file.unlink()
+        errors, _ = validate(project)
+        assert any("FinalDelivery locked file missing" in error for error in errors), errors
+        try:
+            final_delivery_lock(project)
+        except RuntimeError as exc:
+            assert "protected file missing" in str(exc)
+        else:
+            raise AssertionError("FinalDelivery lock must not hide a missing protected file")
 
 
 def test_migrate_control_plane_creates_new_gate_files() -> None:
@@ -1160,6 +1652,77 @@ def test_migrate_control_plane_creates_new_gate_files() -> None:
         assert result["warnings"] == []
         assert (project / "AD-creative/client_review/client_outline.csv").exists()
         assert (project / "AD-creative/orchestrator/agency/specialist_preflight.csv").exists()
+        assert_valid(project)
+
+
+def test_migrate_control_plane_normalizes_legacy_short_rows() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-migrate-short-row-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+        legacy_fields = ARTIFACT_INDEX_FIELDS[:-4]
+        legacy_row = {field: "" for field in legacy_fields}
+        legacy_row.update(
+            {
+                "artifact_id": "ART-LEGACY-001",
+                "artifact_type": "legacy_fixture",
+                "path": "AD-creative/orchestrator/current_truth.md",
+                "stage": "migration_test",
+                "version": "v001",
+                "status": "internal_review",
+                "visibility": "internal_only",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            }
+        )
+        write_csv_rows(artifact_path, legacy_fields, [legacy_row])
+        header = artifact_path.read_text(encoding="utf-8").splitlines()[0]
+        artifact_path.write_text(
+            ",".join(ARTIFACT_INDEX_FIELDS) + "\n" + artifact_path.read_text(encoding="utf-8").splitlines()[1] + "\n",
+            encoding="utf-8",
+        )
+        assert header == ",".join(legacy_fields)
+
+        dry = migrate_control_plane(project, dry_run=True)
+        assert "normalize_csv_rows:AD-creative/orchestrator/artifact_index.csv" in dry["changes"]
+        migrate_control_plane(project, dry_run=False)
+        fields, rows = read_csv_rows(artifact_path)
+        assert fields == ARTIFACT_INDEX_FIELDS
+        assert all(row.get(field) is not None for row in rows for field in fields)
+        assert None not in rows[0]
+
+
+def test_migrate_control_plane_adds_missing_current_truth_keys_without_overwrite() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-migrate-truth-keys-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        truth_path = project / "AD-creative/orchestrator/current_truth.md"
+        truth = truth_path.read_text(encoding="utf-8").replace(
+            "version_map_status:\n", "version_map_status: legacy-preserve\n"
+        )
+        removed = {
+            "current_pdf_artifact_id",
+            "current_preview_artifact_id",
+            "current_text_extract_artifact_id",
+        }
+        truth_path.write_text(
+            "\n".join(
+                line
+                for line in truth.splitlines()
+                if line.partition(":")[0].strip() not in removed
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        dry = migrate_control_plane(project, dry_run=True)
+        assert any(
+            item.startswith("add_current_truth_keys:") for item in dry["changes"]
+        ), dry
+        migrate_control_plane(project)
+        migrated = truth_path.read_text(encoding="utf-8")
+        assert "version_map_status: legacy-preserve" in migrated
+        for key in removed:
+            assert migrated.count(f"{key}:") == 1
         assert_valid(project)
 
 
@@ -1185,6 +1748,12 @@ def test_duffy_v2_regression_allows_long_low_density_client_outline() -> None:
                 }
             )
         write_csv_rows(project / "AD-creative/client_review/client_outline.csv", CLIENT_OUTLINE_FIELDS, rows)
+        confirm_client_outline(
+            project,
+            confirmed_by="fixture-project-owner",
+            confirmed_at="2026-07-05T00:00:00Z",
+            evidence_ref="user_confirmation:duffy-outline-fixture",
+        )
         status, findings, _ = review_client_outline(project)
         assert status == "PASS", findings
 
@@ -1239,15 +1808,21 @@ def main() -> int:
     test_validate_rejects_missing_project_agents_policy()
     test_existing_agents_policy_is_not_overwritten()
     test_human_workspace_indexes_mirror_control_plane()
+    test_intake_preserves_version_truth_and_custom_sections()
+    test_pptx_export_uses_immutable_version_transaction()
+    test_pptx_export_blocks_unconfirmed_generated_outline()
+    test_outline_confirmation_binds_presented_bytes_and_stable_content_digest()
     test_agents_policy_status_clears_after_manual_merge()
     test_gate_downgrades_without_adversarial_record()
-    test_goal_plan_allows_clean_gate_pass()
+    test_independent_adversarial_review_allows_clean_gate_pass()
     test_goal_run_stops_without_material()
     test_thread_plan_creates_control_plane()
     test_thread_plan_includes_harness_loop_and_adoption_contracts()
+    test_thread_progress_invalidates_stale_convergence_reminder()
     test_execution_worker_receipt_cannot_be_prompt_only()
     test_threadops_validation_allows_pending_execution_worker_receipt_template()
     test_threadops_validation_rejects_prompt_only_received_execution_receipt()
+    test_thread_reconcile_rejects_failed_or_out_of_scope_self_report()
     test_threadops_validation_rejects_missing_helper_evidence()
     test_threadops_validation_rejects_helper_thread_id_claim()
     test_threadops_validation_rejects_observation_only_evidence_refs()
@@ -1271,6 +1846,8 @@ def main() -> int:
     test_asset_current_manifest_and_visual_layout_gate_use_real_assets()
     test_final_delivery_lock_protects_user_placed_files()
     test_migrate_control_plane_creates_new_gate_files()
+    test_migrate_control_plane_normalizes_legacy_short_rows()
+    test_migrate_control_plane_adds_missing_current_truth_keys_without_overwrite()
     test_duffy_v2_regression_allows_long_low_density_client_outline()
     test_browser_asset_current_manifest_records_platform_conversation_and_qa_flags()
     if OPTIONAL_SKIPS:

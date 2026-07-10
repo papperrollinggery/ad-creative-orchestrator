@@ -16,13 +16,16 @@ REQUIRED_PATHS = [
     "check_docs_commands.py",
     "check_gate_fixtures.py",
     "check_packaged_assets.py",
+    "check_specialist_schemas.py",
     "init_project.py",
     "render_demo_transcript.py",
     "validate_project.py",
     "run_checks.py",
     "runtime_paths.py",
+    "specialist_schema_validation.py",
     "test_gates.py",
     "test_goal_workflow.py",
+    "test_specialist_exchange.py",
     "adco_resources/templates/project/AGENTS.md",
     "adco_resources/templates/project/AD-creative/orchestrator/project.yml",
     "adco_resources/templates/project/AD-creative/orchestrator/thread_registry.csv",
@@ -32,6 +35,10 @@ REQUIRED_PATHS = [
     "adco_resources/templates/project/AD-creative/handoff/项目看板.md",
     "adco_resources/templates/project/AD-creative/gates/adversarial_council_gate_template.md",
     "adco_resources/skill_drafts/ad-creative-orchestrator/SKILL.md",
+    "adco_resources/contracts/specialist_exchange/v1/descriptor.schema.json",
+    "adco_resources/contracts/specialist_exchange/v1/handoff.schema.json",
+    "adco_resources/contracts/specialist_exchange/v1/receipt.schema.json",
+    "adco_resources/contracts/specialist_exchange/v1/adoption.schema.json",
 ]
 REQUIRED_ENTRY_POINTS = [
     "adco = ad_creative_operator:main",
@@ -41,11 +48,14 @@ REQUIRED_ENTRY_POINTS = [
 ]
 REQUIRED_PYPROJECT_SNIPPETS = [
     'name = "ad-creative-orchestrator"',
-    'version = "0.1.0"',
+    'version = "0.2.0"',
     'adco = "ad_creative_operator:main"',
     'adco-check = "run_checks:main"',
     'adco-init = "init_project:main"',
     'adco-validate = "validate_project:main"',
+    '"check_specialist_schemas",',
+    '"specialist_schema_validation",',
+    '"contracts/specialist_exchange/v1/*.schema.json"',
 ]
 WHEEL_BUILD_TIMEOUT_SECONDS = 120
 
@@ -143,7 +153,7 @@ def main() -> int:
                     metadata_text = archive.read(metadata_path).decode("utf-8")
                     if "Name: ad-creative-orchestrator" not in metadata_text:
                         issues.append("wheel metadata missing package name")
-                    if "Version: 0.1.0" not in metadata_text:
+                    if "Version: 0.2.0" not in metadata_text:
                         issues.append("wheel metadata missing version")
 
                 if entry_points_path:

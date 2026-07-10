@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ad-creative-orchestrator"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first Codex workflow for advertising creative project orchestration."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -56,17 +56,21 @@ py-modules = [
   "check_docs_commands",
   "check_gate_fixtures",
   "check_packaged_assets",
+  "check_specialist_schemas",
   "init_project",
   "validate_project",
   "run_checks",
   "runtime_paths",
+  "specialist_schema_validation",
   "render_demo_transcript",
   "test_gates",
-  "test_goal_workflow"
+  "test_goal_workflow",
+  "test_specialist_exchange"
 ]
 
 [tool.setuptools.package-data]
 adco_resources = [
   "templates/project/**/*",
-  "skill_drafts/ad-creative-orchestrator/*"
+  "skill_drafts/ad-creative-orchestrator/*",
+  "contracts/specialist_exchange/v1/*.schema.json"
 ]

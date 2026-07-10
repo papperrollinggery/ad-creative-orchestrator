@@ -7,6 +7,7 @@ These rules apply to this project root and every subdirectory.
 - Use `ad-creative-orchestrator` for this project.
 - Work through `AD-creative/orchestrator/` and `AD-creative/handoff/`.
 - Do not rely on chat memory as the operating record. Durable decisions, gaps, gates, artifacts, and handoff state must be written into project files.
+- Keep the six top-level human folders (`00_项目资料_ProjectMaterials/` through `05_最终交付_FinalDelivery/`) useful. If source files or artifacts live under `AD-creative/`, update the matching `目录索引.md` so a human can find the current material, WIP, client-review, and final-delivery entries without digging through the control plane.
 
 ## Source Of Truth
 
@@ -25,11 +26,17 @@ Client-visible materials must not contain internal comments, prompts, thread nam
 
 Client-visible versions must not overwrite old versions. Before changing a client-visible PPTX, PDF, preview, or text extract, archive the old file under `AD-creative/ppt/exports/version_archive/` and update `version_map.csv` plus `artifact_index.csv`.
 
+Do not replace all of `current_truth.md` during intake. Update owned sections and preserve Current Version Truth plus user-added sections. `adco export-pptx` writes a new immutable `client_review_vNNN.pptx`; it must never refresh or overwrite an existing version.
+
 `VALIDATION=PASS` only means the project structure and traceability checks passed. It does not mean creative quality, visual taste, strategic quality, or client-ready quality passed.
 
-Real search, imagegen, and final send actions still require human confirmation.
+Private/paid/login search, image generation, external upload, and final send actions require explicit authorization. Public official-source research may follow the project search plan.
 
-Video, commercial-film, storyboard, and video-prompt modules should be handed to `dircreative` or a dedicated specialist film workflow instead of being forced through the normal deck workflow.
+Video, commercial-film, storyboard, and video-prompt modules should use the versioned `adco.specialist-exchange` handoff when delegating to `dircreative` or another specialist. ADCO remains the only owner of client truth, adoption, version files, PPT, FinalDelivery, and send readiness. Specialist QA or recommendation is never client approval.
+
+Before PPT, complete the customer-readable text framework and pass `client-outline-gate`. The launcher stops at this text checkpoint and does not auto-generate PPT.
+
+`approval=PASS` is not asset authorization. Client-visible asset use requires a receipt in `asset_authorizations.csv` bound to the exact asset hash and scope. An unchecked manual review checklist is `NOT_RUN`, not PASS.
 
 ## Gates Before Handoff
 
@@ -41,12 +48,16 @@ Run stage gates when relevant:
 - `adco reference-pack-gate <project>`
 - `adco creative-quality-gate <project>`
 - `adco visual-quality-gate <project>`
+- `adco visual-layout-gate <project>`
 - `adco client-pack-gate <project>`
+- `adco client-send-readiness-gate <project>`
 - `adco handoff-readiness-gate <project>`
 
 ## Codex Threads
 
-When using Codex Threads, the main thread is the only integration owner. Workers must have explicit write scope, return worker receipts, and stop after their assigned task. The main thread must review receipts before adopting work.
+Default to no Thread. When isolation, bounded parallelism, independent review, or an explicit user request justifies Codex Threads, the main thread is the only integration owner. Workers must have explicit write scope, return receipts containing their real thread_id, and stop after their assigned task. The main thread records adoption/rejection separately.
+
+Fixed poll counts are observation budgets, not automatic failure. Distinguish active_with_progress, silent, and finalizing_receipt; allow at most one reasoned bounded extension with an absolute deadline and one bounded rescue.
 
 Workers should not directly publish, send client materials, update final status, or overwrite final files unless the main thread explicitly assigned that exact file scope.
 

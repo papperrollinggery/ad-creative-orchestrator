@@ -18,6 +18,33 @@ AD-creative/handoff/
 
 Keep user-facing summaries clear and low-density.
 
+## Default Lightweight Spine
+
+Use one control thread and project files by default. Complexity alone does not justify worker Threads, a council, or a fixed role roster.
+
+Shortest safe path:
+
+```text
+messy materials -> intake/current truth -> requirements + gaps
+-> creative-proposal (customer-readable text framework + proposal skeleton)
+-> human review of the text framework
+-> confirm-client-outline (pre-approval file hash + canonical content digest + current-state hash)
+-> client-outline-gate PASS
+-> immutable export-pptx version
+-> exact-current PDF/preview/text extract
+-> client language + visual layout + hash-bound asset authorization
+-> client-pack-gate (ready for independent review, not send-ready)
+-> independent manual review receipt
+-> explicit exact-version send authorization
+-> client-send-readiness-gate (never sends)
+```
+
+The double-click launcher stops after the text framework. It must not create PPT automatically.
+
+Runtime phases are fixed: `P0 truth/lock -> P1 client outline -> P2 hash confirmation -> P3 creative/reference/neutral specialist -> P4 immutable PPT -> P5 language/visual/authorization/editability -> P6 fresh Client Pack binding -> P7 independent review/send readiness (never sends) -> P8 feedback/next version`. Do not merge P4, P6, or P7 into one delivery stage.
+
+Use `inline` work unless isolation, genuinely parallel specialist work, or independent cold review materially improves the result. Use real Codex Threads only when explicitly requested or when a bounded isolated worker/reviewer is necessary. A thread ceiling is not a staffing target.
+
 ## Non-Negotiable Safety Rules
 
 ### Completion Rule
@@ -36,6 +63,11 @@ all received user/client/Pro-review diff comments are fixed, explicitly deferred
 project validation passes with ERRORS=0 and VALIDATION=PASS
 thread cleanup / active-thread audit is done when Codex threads were used
 open client-send blockers are recorded in 待你确认.md
+client-visible assets have independent authorization receipts bound to their exact file hash and scope
+the client outline confirmation is bound to the exact current outline hash
+the current Client Pack binding still matches every exact-current package input
+independent manual review is bound to the exact current version, PPTX hash, and package digest
+client-send readiness has a separate explicit send authorization bound to the same package digest
 ```
 
 If new user feedback arrives after completion, reopen the stage as revision work. Do not keep claiming the previous goal is still complete.
@@ -44,7 +76,7 @@ If new user feedback arrives after completion, reopen the stage as revision work
 
 Never overwrite a client-visible version file as the only copy of that version.
 
-Before changing any exported file whose name includes a version such as `v1`, `v2`, or `final`:
+`adco export-pptx` writes a new immutable `AD-creative/ppt/exports/client_review_vNNN.pptx` and refuses to overwrite an existing target. Before changing any legacy exported file whose name includes a version such as `v1`, `v2`, or `final`:
 
 ```text
 1. Compute hash and stat for the existing PPTX/PDF.
@@ -61,6 +93,8 @@ If a client-visible file exists only as `v1` or `final`, stop and archive it bef
 ### Thread Budget Rule
 
 Codex threads are expensive. Use them deliberately.
+
+Default decision: `no thread`. Select only the minimum bounded worker/reviewer needed for an explicit isolation, parallelism, or independence reason. Do not start a broad team for ordinary intake, proposal drafting, gates, or status work.
 
 Default limits:
 
@@ -88,9 +122,9 @@ resume production only after cleanup verification
 
 After a worker receipt is consumed, update the lane lifecycle, archive or close the worker thread, and keep the receipt as the durable evidence. Do not leave consumed workers active.
 
-### Fixed Role Roster
+### Optional Role Roster
 
-For advertising creative work, prefer a stable role roster rather than one-off task threads.
+Only after Thread mode is justified, prefer a stable role roster rather than one-off task threads. Do not instantiate the roster by default.
 
 Default roster:
 
@@ -141,8 +175,8 @@ error_recovery_contract
 context_budget
 iteration_budget
 eval_gate
-adoption_decision
-rejection_reason
+worker_recommendation
+worker_recommendation_reason
 loop_state
 replay_trigger
 freeze_trigger
@@ -218,13 +252,13 @@ AD-creative/ppt/exports/
 
 ### Agent Agency Integration
 
-If `/Users/jinjungao/.claude/agents` exists, treat it as a reusable staff library.
+If an optional reusable staff library such as `$HOME/.claude/agents` exists, it may be used as source material. It is never required for ADCO operation.
 
 Use it this way:
 
 ```text
 1. Build a task signature from the current project: brand, product, talent, platform, deliverable, stage, risk, and required evidence.
-2. Search `/Users/jinjungao/.claude/agents/*.md` by filename and frontmatter description for matching staff.
+2. Search the discovered staff library by filename and frontmatter description for matching staff.
 3. Select 2-4 source staff files per lane, not a fixed global list.
 4. Record selected and rejected candidates in `AD-creative/orchestrator/agency_staff_selection_*.md`.
 5. Generate a project-specific role brief in `AD-creative/agents/role_briefs/<role>_<work_id>.md`.
@@ -296,9 +330,16 @@ missing_adoption_proof: main/control must record adoption_decision and rejection
 named_skill_skip: when the user names a local skill or specialist skill, read that SKILL.md before production and convert its rules into current-task gates with `adco preflight-skill`
 browser_asset_skip: before declaring images missing or generating replacements, inspect both local files and browser-held Grok/ChatGPT/ImageGen assets and record with `adco preflight-asset` or `adco browser-asset-intake`
 fake_thread_dispatch: planned:* thread ids are placeholders only; real execution requires real_thread_id, title verification, dispatch receipt, worker receipt, adoption/rejection, and cleanup evidence
+worker_self_report_as_proof: worker-declared files_changed/write_scope is not host proof; reconcile against the host-captured dispatch baseline and persist a hash-bound host scope proof
 missing_client_outline: no PPT builder before `adco client-outline-gate <project>` passes
+unconfirmed_client_outline: a complete outline is still blocked until `confirm-client-outline` records explicit user/client confirmation bound to its exact hash
 client_language_leak: client export is blocked by `adco client-language-gate <project>` if prompt/thread/worker/AI/gate/internal execution language appears
 asset_source_drift: PPT images must appear in `asset_current_manifest.csv` with source, platform, conversation, local_file, hash, original_or_processed, approval, direct_client_use, used_in_slide, and qa_flags
+asset_authorization_self_stamp: approval=PASS or a notes token is not authorization; require asset_authorizations.csv receipt bound to asset hash, scope, approver, time, and evidence
+fake_package_format: extensions and hand-filled gate_status are not evidence; exact current PPTX/PDF/preview/text extract must parse and match registered hash/size/derivation
+stale_client_pack_binding: any exact-current package input change invalidates the previous package digest; rerun client-pack-gate before manual review/send readiness
+manual_review_self_stamp: generating an unchecked checklist is NOT_RUN, not PASS; require a separate independent receipt bound to current version/hash
+goal_plan_self_review: a goal plan or main-thread council row is not independent adversarial review evidence
 Duffy_v2_regression: customer decks may be 22-45+ low-density decision pages; never collapse them into short pitch cards or production tables
 validation_scope_misuse: `VALIDATION=PASS` means structure and traceability only; it is not creative quality, client language, visual taste, asset authorization, or send approval
 final_delivery_overwrite: user-placed files in `05_最终交付_FinalDelivery` are protected by default; only hash-register with `adco final-delivery-lock <project>`
@@ -351,14 +392,19 @@ adco creative-proposal <project_dir> --work-id <WORK-ID>
 adco creative-proposal <project_dir> --json
 adco creative-quality-gate <project_dir>
 adco preflight-skill <project_dir> --work-id <WORK-ID> --requested-skill <skill> --skill-path <SKILL.md> --rules-read "<rules>" --derived-gates "<gates>"
+adco specialist-handoff <project_dir> --work-id <WORK-ID> --profile-id dircreative.film-preproduction --objective "<objective>" --input-artifact <ART-ID> --expected-output film.story_package --descriptor <descriptor.json>
+adco specialist-adopt <project_dir> --handoff <handoff.json> --receipt <receipt.json> --decision <adopt|partial_adopt|reject|defer> --reason "<reason>" --map-output <PROVIDER-ID=AD-creative/path>
 adco preflight-asset <project_dir> --work-id <WORK-ID> --source-scope "<local/browser/download/generated scope>"
+adco confirm-client-outline <project_dir> --confirmed-by "<human/client>" --confirmed-at <iso_time> --evidence-ref "<user_confirmation:id|client_confirmation:id>"
 adco client-outline-gate <project_dir>
 adco client-language-gate <project_dir>
 adco asset-current-manifest <project_dir>
 adco browser-asset-intake <project_dir> --work-id <WORK-ID> --source Grok --browser-evidence "<evidence>"
 adco goal-plan <project_dir> --title <goal_title> --objective <goal_objective>
 adco thread-plan <project_dir> --title <goal_title> --objective <goal_objective> --roles brand_client,copy_creative,qa_review
-adco dispatch-record <project_dir> --lane-id <LANE-ID> --real-thread-id <thread_id> --title-verified-at <iso_time> --dispatch-evidence "<readback evidence>"
+adco dispatch-record <project_dir> --work-id <WORK-ID> --lane-id <LANE-ID> --real-thread-id <thread_id> --title-verified-at <iso_time> --dispatch-evidence "<readback evidence>" --absolute-deadline-at <iso_time>
+adco thread-observe <project_dir> --work-id <WORK-ID> --lane-id <LANE-ID> --state <active_with_progress|silent|finalizing_receipt|thread_not_converged|rescue_dispatched> --observed-at <iso_time> --evidence "<readback>"
+adco thread-reconcile <project_dir> --work-id <WORK-ID> --lane-id <LANE-ID> --receipt-path <receipt> --adoption-decision <ADOPT|PARTIAL_ADOPT|REJECT|BLOCKED> --reconciled-at <iso_time> --cleanup-action "<action>"
 adco profile-analyze <project_dir> --source-id <SRC-ID> --brand <brand> --company <company>
 adco hygiene <project_dir>
 adco intake <project_dir>
@@ -372,6 +418,7 @@ adco visual-layout-gate <project_dir>
 adco export-pptx <project_dir>
 adco check-pptx <project_dir> --file <pptx_file>
 adco client-pack-gate <project_dir>
+adco client-send-readiness-gate <project_dir>
 adco final-delivery-lock <project_dir>
 adco dedupe-audit <project_dir>
 adco cleanup-plan <project_dir>
@@ -415,16 +462,26 @@ adco migrate-control-plane <project_dir> --dry-run
 adco migrate-control-plane <project_dir>
 adco agency-audit <project_dir>
 adco preflight-skill <project_dir> --work-id <WORK-ID> --requested-skill <skill> --skill-path <SKILL.md> --rules-read "<rules>" --derived-gates "<gate>"
+adco specialist-handoff <project_dir> --work-id <WORK-ID> --profile-id dircreative.film-preproduction --objective "<objective>" --input-artifact <ART-ID> --expected-output film.story_package --descriptor <descriptor.json>
+adco specialist-adopt <project_dir> --handoff <handoff.json> --receipt <receipt.json> --decision <adopt|partial_adopt|reject|defer> --reason "<reason>" --map-output <PROVIDER-ID=AD-creative/path>
 adco preflight-asset <project_dir> --work-id <WORK-ID> --source-scope "<local/browser/download/generated scope>"
+adco confirm-client-outline <project_dir> --confirmed-by "<human/client>" --confirmed-at <iso_time> --evidence-ref "<user_confirmation:id|client_confirmation:id>"
 adco client-outline-gate <project_dir>
 adco client-language-gate <project_dir>
 adco asset-current-manifest <project_dir>
 adco browser-asset-intake <project_dir> --work-id <WORK-ID> --source Grok --browser-evidence "<evidence>"
 adco visual-layout-gate <project_dir>
+adco export-pptx <project_dir>
+adco check-pptx <project_dir> --file <pptx_file>
+adco client-pack-gate <project_dir>
+adco client-send-readiness-gate <project_dir>
+adco handoff-readiness-gate <project_dir>
 adco final-delivery-lock <project_dir>
 adco dedupe-audit <project_dir>
 adco cleanup-plan <project_dir>
-adco dispatch-record <project_dir> --lane-id <LANE-ID> --real-thread-id <thread_id> --title-verified-at <iso_time> --dispatch-evidence "<readback evidence>"
+adco dispatch-record <project_dir> --work-id <WORK-ID> --lane-id <LANE-ID> --real-thread-id <thread_id> --title-verified-at <iso_time> --dispatch-evidence "<readback evidence>" --absolute-deadline-at <iso_time>
+adco thread-observe <project_dir> --work-id <WORK-ID> --lane-id <LANE-ID> --state <active_with_progress|silent|finalizing_receipt|thread_not_converged|rescue_dispatched> --observed-at <iso_time> --evidence "<readback>"
+adco thread-reconcile <project_dir> --work-id <WORK-ID> --lane-id <LANE-ID> --receipt-path <receipt> --adoption-decision <ADOPT|PARTIAL_ADOPT|REJECT|BLOCKED> --reconciled-at <iso_time> --cleanup-action "<action>"
 adco profile-analyze <project_dir> --source-id <SRC-ID> --brand <brand> --company <company>
 adco hygiene <project_dir>
 adco-check
@@ -436,24 +493,26 @@ make release-check
 Gate commands:
 
 ```text
-creative-quality-gate / client-outline-gate / client-language-gate / reference-pack-gate / search-quality-gate / visual-quality-gate / visual-layout-gate / client-pack-gate / handoff-readiness-gate
+creative-quality-gate / client-outline-gate / client-language-gate / reference-pack-gate / search-quality-gate / visual-quality-gate / visual-layout-gate / client-pack-gate / client-send-readiness-gate / handoff-readiness-gate
 ```
 
-Creative/reference/search/visual/client-pack/handoff stage gates downgrade clean PASS to PARTIAL_PASS when the adversarial council note is missing. Client outline, client language, visual layout, asset manifest, dedupe, cleanup, and final delivery lock gates hard-block on their own evidence rules.
+Creative/reference/search/visual/client-pack stage gates downgrade clean PASS to PARTIAL_PASS when independent adversarial evidence for the exact stage target is missing. Client outline, client language, visual layout, asset manifest, send readiness, dedupe, cleanup, and final delivery lock gates hard-block on their own evidence rules. Handoff readiness is an internal-operations continuity check and treats content-stage gaps as warnings.
 
 Use `sample` when a new user needs a runnable local project without real client materials.
 
 Before PPT builder or client export:
 
 ```text
-client-outline-gate must PASS before PPT builder; every row needs page_title, body_copy, client_confirmation_point, material_role, visual_slot, and visual_asset_status. Detailed Duffy V2-style customer decks may be 22-45+ pages, but every page must stay low-density and decision-readable.
+The human/client reviews the text framework first. `confirm-client-outline` then binds that explicit confirmation to the exact current outline hash; `client-outline-gate` must PASS before PPT builder. Every row needs page_title, body_copy, client_confirmation_point, material_role, visual_slot, and visual_asset_status. Detailed Duffy V2-style customer decks may be 22-45+ pages, but every page must stay low-density and decision-readable.
 client-language-gate must PASS before client-visible export.
-asset-current-manifest must list source, platform, conversation, local_file, hash, original_or_processed, approval, direct_client_use, used_in_slide, and qa_flags for PPT images.
+asset-current-manifest must list source, platform, conversation, local_file, hash, original_or_processed, direct_client_use, used_in_slide, and qa_flags for PPT images. `approval=PASS` alone is never authorization; client use requires a hash-bound row in asset_authorizations.csv.
 browser-asset-intake or preflight-asset must run before replacement generation when the user says Grok/ChatGPT/ImageGen/browser assets exist.
-visual-layout-gate must run before client-pack-gate and must check distortion/crop/small image/crowding/nested-card/report-feel/short copy/image-copy mismatch/repeated-image misuse/portrait-landscape mismatch.
+visual-layout-gate must run before client-pack-gate and cannot PASS without the exact current PPTX plus a real preview. It checks distortion/crop/small image/crowding/nested-card/report-feel/short copy/image-copy mismatch/repeated-image misuse/portrait-landscape mismatch.
 final-delivery-lock must hash-register user-placed `05_最终交付_FinalDelivery` files before cleanup/final status.
 dedupe-audit and cleanup-plan are review-only; they never delete, move, or overwrite files.
 VALIDATION=PASS is structure/traceability only, not creative quality, client language, visual approval, asset authorization, or send approval.
+client-pack-gate can only mean ready for independent human review. It writes an immutable input manifest plus current package binding; any bound input change makes that binding stale. Only client-send-readiness-gate may report send readiness, and it requires manual review and send authorization bound to the same fresh package digest. It never sends.
+handoff-readiness-gate means only that a non-developer operator can continue the project internally. It does not require or prove PPT, Client Pack, FinalDelivery, or send readiness.
 ```
 
 Then use:
@@ -484,13 +543,13 @@ Steps:
 1. If project files are missing, initialize from /Users/jinjungao/work/ad-creative-orchestrator/templates/project without overwriting existing files.
 2. Register provided materials as source events.
 3. Classify each source as initial, supplement, change, feedback, approval, rejection, director_note, or unknown.
-4. Update current_truth, requirements, gaps, work_items, artifact_index, gate_log, and handoff files.
-5. Update the six top-level `目录索引.md` files so Project Materials, References, Key Assets, Work In Progress, Client Review, and Final Delivery show where the current files live.
-6. Decide whether search is needed and write search_plan if needed.
-7. Continue through the next safe internal stage only if no human decision is blocking.
-8. Stop at any required user decision and update 待你确认.md.
-9. Before any client-visible version change, archive the previous version and update version_map.csv.
-10. Run `adco validate` before reporting status.
+4. Merge owned sections into current_truth without replacing Current Version Truth or user-added sections.
+5. Create the customer-readable text framework/proposal skeleton with `creative-proposal`; record material gaps and client questions.
+6. Stop for human/client review of the text framework; record explicit confirmation with `confirm-client-outline`, then require `client-outline-gate` PASS before any PPT.
+7. Update the six top-level `目录索引.md` files so Project Materials, References, Key Assets, Work In Progress, Client Review, and Final Delivery show where the current files live.
+8. Decide whether search is needed and write search_plan if needed.
+9. Continue through the next safe internal stage only if no human decision is blocking.
+10. Run `adco validate` before reporting status. Do not auto-export PPT.
 ```
 
 User only needs to provide:
@@ -541,16 +600,34 @@ Rules:
 Use the generated prompts to create or reuse Codex Threads.
 Keep at most 3 active worker/reviewer threads by default.
 Workers return receipts; the main/control thread merges only accepted results.
-Receipts must include action_space, observation_contract, error_recovery_contract, context_budget, iteration_budget, eval_gate, adoption_decision, rejection_reason, loop_state, replay_trigger, freeze_trigger, stop_condition, files_changed, validation_result, dirty_state_impact, manifest/index updates, QA/gate status, open questions, recurrence guard, and cleanup actions.
+Receipts must include the real thread_id plus action_space, observation_contract, error_recovery_contract, context_budget, iteration_budget, eval_gate, worker_recommendation, loop_state, replay_trigger, freeze_trigger, stop_condition, files_changed, validation_result, dirty_state_impact, manifest/index updates, QA/gate status, open questions, recurrence guard, and cleanup actions. Main/control records adoption_decision or rejection_reason separately.
 Receipts that set helper_mode to stateless_secondary_helper must include helper_invocations, helper_input_refs, helper_output_refs, helper_artifacts, helper_validation_result, helper_adopted_by_worker, helper_failure_reason, and worker_synthesis.
 Production worker receipts cannot be prompt-only; execution workers must produce declared files or return BLOCKED with evidence.
+Dispatch captures a host-side scope baseline after the real thread id is bound. Reconciliation compares the actual host diff to the receipt and exact write_scope, then persists a hash-bound host scope proof. Worker self-report alone is never adoption evidence.
 The lane plan defaults to loop_mode sequential. rfc_dag and continuous_pr require explicit dependency/check contracts. infinite is allowed only as bounded internal exploration.
 Replay failed lanes with tighter acceptance criteria. Freeze new worker creation on thread confusion, wrong-thread behavior, repeated same root cause, budget breach, or cleanup request.
 Live Codex Thread creation remains main/control responsibility; this repo only generates contract artifacts and prompts. If real Threads or isolated writable scope are unavailable, stop with TOOL_BLOCKED instead of falling back to subagents or role-play.
 Stateless secondary helper invocations may be used only inside a real worker for bounded local subtasks; they are not Threads, have no thread id or registry row, and cannot make adoption decisions.
 After receipt reconciliation, archive the worker and update thread_registry.csv.
 Client-visible material must not mention prompts, threads, workers, lane plans, or execution steps.
+Fixed poll count is only an observation budget. Record active_with_progress, silent, or finalizing_receipt; allow at most one reasoned extension with an absolute deadline and at most one rescue. Rescue gets its own dispatch proof and receipt path. New visible activity cannot extend forever. Only silence past the deadline or no receipt after convergence reminder becomes thread_not_converged.
 ```
+
+### ADCO ↔ DIRcreative Specialist Exchange
+
+ADCO owns client/business truth, adoption, versions, PPT, FinalDelivery, and send readiness. DIRcreative owns film story/script/shot/visual-bible/prompt/QA specialist output. DIRcreative recommendations never become ADCO adoption automatically.
+
+Use the neutral protocol:
+
+```text
+protocol_id: adco.specialist-exchange
+contract_version: 1.0
+profile_id: dircreative.film-preproduction
+default execution_mode: inline
+nested_dispatch_allowed: false
+```
+
+Create a handoff with `specialist-handoff`, then validate the returned receipt and record a separate ADCO decision with `specialist-adopt`. Input and output artifacts must be project-relative, indexed, hash-bound, and inside exact scopes. Provider outputs must be non-empty single-link files, never symlinks or hardlinks; provider id, kind, canonical path, and physical inode are each unique. `needs_user` question ids must be non-empty and unique. A `read_only` handoff grants only its exact receipt path and can close only as receipt-only `needs_user` / `blocked` / `failed` plus ADCO `defer` / `reject`, with no adopted output or Gate advance. `prompt_only` keeps generation unauthorized with no ref; `real_media` requires project-contained structured user/client authorization evidence bound to the host baseline. A descriptor must explicitly advertise `real_media`; omission defaults to `prompt_only`, so DIRcreative v1 remains prompt-only without a DIR-side change. Packaged canonical JSON Schemas are executed before adoption and again by project validation; an index/hash update cannot legalize a schema-invalid receipt or adoption. Descriptor versions may evolve within compatible `1.x` while explicitly supporting base contract `1.0`. A provider may declare a required receipt extension; ADCO copies its id/version into handoff acceptance and rejects receipts that omit the negotiated extension. This lets DIRcreative evolve its domain receipt independently without changing ADCO ownership. `needs_user` returns structured questions to ADCO; the specialist does not contact the client. Domain QA PASS never means client-ready, PPT-ready, FinalDelivery-ready, send-ready, project-complete, or control-plane-updated. Use `codex_thread` only when explicitly selected and only with a verified ThreadOps lane/real thread id/host scope proof. Never hardcode a DIR repository path, DIR package version, `.dircreative/runs`, or DIR validator path.
 
 ### ad-creative:profile-analyze
 
@@ -708,6 +785,7 @@ AD-creative/orchestrator/artifact_index.csv
 AD-creative/orchestrator/gate_log.csv
 AD-creative/orchestrator/version_map.csv
 AD-creative/orchestrator/thread_registry.csv
+AD-creative/orchestrator/specialist_exchange/exchange_index.csv
 AD-creative/orchestrator/profile_knowledge/profile_subjects.csv
 AD-creative/orchestrator/profile_knowledge/meeting_voice_map.csv
 AD-creative/orchestrator/profile_knowledge/profile_insights.csv
@@ -715,6 +793,7 @@ AD-creative/orchestrator/profile_knowledge/profile_conflicts.csv
 AD-creative/orchestrator/profile_knowledge/profile_current_truth.md
 AD-creative/handoff/项目看板.md
 AD-creative/handoff/待你确认.md
+AD-creative/visual_assets/asset_authorizations.csv
 ```
 
 ## Gate Rules
@@ -785,6 +864,8 @@ Before a client-review deck:
 ```text
 create client_review_outline
 create slide_spec
+record explicit user/client confirmation with confirm-client-outline, bound to the exact outline hash
+require client-outline-gate PASS
 define PPT visual system
 run PPT Gate on the actual exported PPTX/PDF package
 keep unapproved images as placeholders

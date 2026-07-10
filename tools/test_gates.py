@@ -3,18 +3,35 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 import tempfile
+import types
 from pathlib import Path
+from unittest.mock import patch
 
 from ad_creative_operator import (
+    adversarial_council_evidence,
     add_visual_asset,
+    confirm_client_outline,
+    current_client_pack_binding_errors,
+    build_client_pack_input_manifest,
+    client_language_text_for_path,
+    default_adversarial_targets,
     ensure_project,
     export_editable_pptx,
+    file_sha256,
+    has_gate,
+    inspect_pptx,
+    now_iso,
     read_csv_rows,
     render_goal_iteration_plan,
     render_creative_proposal,
     register_materials,
     review_client_pack,
+    review_client_outline,
+    review_client_send_readiness,
     review_creative_quality,
     review_handoff_readiness,
     review_reference_pack,
@@ -22,8 +39,12 @@ from ad_creative_operator import (
     review_visual_quality,
     write_csv_rows,
     write_text,
+    update_markdown_sections,
+    write_manual_review_checklist,
+    write_json_object,
+    write_adversarial_target_snapshot,
 )
-from validate_project import validate
+from validate_project import current_truth_value, validate
 
 
 OPTIONAL_SKIPS: list[str] = []
@@ -45,16 +66,49 @@ def add_row(project: Path, rel_path: str, row: dict[str, str]) -> None:
 
 
 def add_adversarial_record(project: Path, stage: str = "global") -> None:
-    render_goal_iteration_plan(
-        project,
-        goal_id=f"GOAL-GATE-{stage.upper()}",
-        title=f"Gate regression {stage}",
-        objective="Verify Gate policy has an adversarial council record.",
-        owner="Regression",
+    stages = (
+        ["creative", "reference_research", "visual_review", "film_quality"]
+        if stage == "global"
+        else [stage]
     )
+    for current_stage in stages:
+        if current_stage == "final_delivery":
+            _, artifacts = read_csv_rows(
+                project / "AD-creative/orchestrator/artifact_index.csv"
+            )
+            payload, digest, _ = build_client_pack_input_manifest(project, artifacts)
+            target = write_adversarial_target_snapshot(
+                project,
+                stage=current_stage,
+                payload=payload,
+                target_digest=digest,
+            )
+        else:
+            targets = default_adversarial_targets(project, current_stage)
+            if not targets:
+                continue
+            target = targets[0]
+        write_text(
+            project
+            / f"AD-creative/gates/ADVERSARIAL_REVIEW_{current_stage.upper()}.md",
+            f"""# Independent Adversarial Review
+
+stage: {current_stage}
+reviewer_id: fixture-independent-reviewer
+reviewer_role: cold reviewer
+independent: true
+reviewed_at: {now_iso()}
+target_ref: {target.relative_to(project)}
+target_sha256: {file_sha256(target)}
+
+| stage | objection | rebuttal_path | revision_decision | gate_status |
+|---|---|---|---|---|
+| {current_stage} | Challenge the happy path | review evidence | retain only verified claims | PASS |
+""",
+        )
 
 
-def add_client_outline(project: Path) -> None:
+def add_client_outline(project: Path, *, visibility: str = "internal_only") -> None:
     add_row(
         project,
         "AD-creative/client_review/client_outline.csv",
@@ -67,11 +121,18 @@ def add_client_outline(project: Path) -> None:
             "visual_slot": "横屏低密度画面占位。",
             "visual_asset_status": "placeholder",
             "asset_ids": "",
-            "visibility": "internal_only",
+            "visibility": visibility,
             "status": "ready",
             "notes": "",
         },
     )
+    if visibility == "client_visible_ready":
+        confirm_client_outline(
+            project,
+            confirmed_by="fixture-project-owner",
+            confirmed_at="2026-07-05T00:00:00Z",
+            evidence_ref="user_confirmation:test-fixture",
+        )
 
 
 def write_safe_client_review_files(project: Path) -> None:
@@ -136,6 +197,10 @@ def add_delivery_artifact(
     artifact_type: str,
     rel_path: str,
     visibility: str = "internal_only",
+    *,
+    version: str = "v001",
+    derived_from_artifact_id: str = "",
+    derived_from_sha256: str = "",
 ) -> None:
     target = project / rel_path
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -149,7 +214,7 @@ def add_delivery_artifact(
             "artifact_type": artifact_type,
             "path": rel_path,
             "stage": "final_delivery",
-            "version": "v001",
+            "version": version,
             "status": "done",
             "visibility": visibility,
             "source_event_ids": "",
@@ -161,6 +226,10 @@ def add_delivery_artifact(
             "supersedes_artifact_id": "",
             "created_at": "",
             "updated_at": "",
+            "sha256": file_sha256(target),
+            "size_bytes": str(target.stat().st_size),
+            "derived_from_artifact_id": derived_from_artifact_id,
+            "derived_from_sha256": derived_from_sha256,
         },
     )
 
@@ -349,25 +418,86 @@ last_archive_before_edit: n/a
     )
 
 
-def add_current_delivery_package(project: Path, version_id: str = "VER-CURRENT") -> None:
-    add_delivery_artifact(project, "ART-CURRENT-PDF", "pdf", "AD-creative/ppt/client_review_draft.pdf")
-    add_delivery_artifact(project, "ART-CURRENT-PREVIEW", "preview", "AD-creative/ppt/preview/client_review_draft.png")
-    add_delivery_artifact(project, "ART-CURRENT-TEXT", "text_extract", "AD-creative/ppt/client_review_draft.txt")
-    add_row(
+def add_current_delivery_package(project: Path, version_id: str = "") -> None:
+    truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    truth = truth_path.read_text(encoding="utf-8")
+    version_id = version_id or current_truth_value(truth, "current_version_id")
+    pptx_artifact_id = current_truth_value(truth, "current_pptx_artifact_id")
+    editability_artifact_id = current_truth_value(
+        truth, "current_ppt_editability_artifact_id"
+    )
+    artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+    artifact_fields, artifact_rows = read_csv_rows(artifact_path)
+    pptx_row = next(row for row in artifact_rows if row.get("artifact_id") == pptx_artifact_id)
+    pptx_sha = pptx_row["sha256"]
+    version = pptx_row["version"]
+    pptx_row["visibility"] = "client_visible_ready"
+
+    from reportlab.pdfgen import canvas
+
+    pdf_path = project / f"AD-creative/ppt/exports/client_review_{version}.pdf"
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    pdf = canvas.Canvas(str(pdf_path))
+    pdf.drawString(72, 760, "Morning trail product benefit and client review story")
+    pdf.save()
+    preview_path = project / f"AD-creative/ppt/exports/client_review_{version}.png"
+    create_png(preview_path)
+    text_path = project / f"AD-creative/ppt/exports/client_review_{version}.txt"
+    text_path.write_text(
+        "Morning trail product benefit and client review story with a clear decision path.",
+        encoding="utf-8",
+    )
+    write_csv_rows(artifact_path, artifact_fields, artifact_rows)
+    add_delivery_artifact(
         project,
-        "AD-creative/orchestrator/version_map.csv",
+        f"ART-PDF-{version[1:]}",
+        "pdf",
+        str(pdf_path.relative_to(project)),
+        "client_visible_ready",
+        version=version,
+        derived_from_artifact_id=pptx_artifact_id,
+        derived_from_sha256=pptx_sha,
+    )
+    add_delivery_artifact(
+        project,
+        f"ART-PREVIEW-{version[1:]}",
+        "preview",
+        str(preview_path.relative_to(project)),
+        "client_visible_ready",
+        version=version,
+        derived_from_artifact_id=pptx_artifact_id,
+        derived_from_sha256=pptx_sha,
+    )
+    add_delivery_artifact(
+        project,
+        f"ART-TEXT-{version[1:]}",
+        "text_extract",
+        str(text_path.relative_to(project)),
+        "client_visible_ready",
+        version=version,
+        derived_from_artifact_id=pptx_artifact_id,
+        derived_from_sha256=pptx_sha,
+    )
+    version_path = project / "AD-creative/orchestrator/version_map.csv"
+    version_fields, version_rows = read_csv_rows(version_path)
+    version_row = next(row for row in version_rows if row.get("version_id") == version_id)
+    version_row["status"] = "current"
+    write_csv_rows(version_path, version_fields, version_rows)
+    update_markdown_sections(
+        truth_path,
         {
-            "version_id": version_id,
-            "artifact_id": "ART-AUTO-PPTX",
-            "version": "v001",
-            "status": "active",
-            "created_at": "",
-            "source_event_ids": "",
-            "supersedes_version_id": "",
-            "notes": "current delivery fixture",
+            "Current Version Truth": f"""```text
+current_version_id: {version_id}
+current_pptx_artifact_id: {pptx_artifact_id}
+current_pdf_artifact_id: ART-PDF-{version[1:]}
+current_preview_artifact_id: ART-PREVIEW-{version[1:]}
+current_text_extract_artifact_id: ART-TEXT-{version[1:]}
+current_ppt_editability_artifact_id: {editability_artifact_id}
+version_map_status: current
+last_archive_before_edit: fixture
+```""",
         },
     )
-    write_current_delivery_truth(project, version_id)
 
 
 def create_png(path: Path, size: tuple[int, int] = (960, 640)) -> None:
@@ -497,10 +627,64 @@ def test_visual_quality_passes_real_internal_selected_asset() -> None:
             "fixture image for positive visual gate regression",
             selected=True,
         )
+        add_adversarial_record(project, "visual_review")
         status, findings, _ = review_visual_quality(project)
         assert status == "PASS", (status, findings)
         assert findings == [], findings
         assert_valid(project)
+
+
+def test_visual_quality_rejects_asset_self_stamp_without_hash_bound_authorization() -> None:
+    if not optional_module("PIL"):
+        return
+    with tempfile.TemporaryDirectory(prefix="adco-gate-visual-auth-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_adversarial_record(project)
+        add_requirement(project)
+        source = project / "fixture/client-visible.png"
+        create_png(source)
+        add_visual_asset(
+            project,
+            source,
+            "SLOT-CLIENT-001",
+            "REQ-001",
+            "",
+            "uploaded_image",
+            "client_visible_ready",
+            "PASS",
+            "low",
+            "",
+            "client_visibility_approved",
+            selected=True,
+        )
+        status, findings, _ = review_visual_quality(project)
+        assert status == "BLOCKED", (status, findings)
+        assert any("独立授权 receipt" in item for item in findings), findings
+        _, current_assets = read_csv_rows(
+            project / "AD-creative/visual_assets/asset_current_manifest.csv"
+        )
+        current = next(row for row in current_assets if row.get("asset_id"))
+        add_row(
+            project,
+            "AD-creative/visual_assets/asset_authorizations.csv",
+            {
+                "authorization_id": "AUTH-FAKE-001",
+                "asset_id": current["asset_id"],
+                "asset_sha256": current["sha256"],
+                "approval_scope": "client_review",
+                "approved_by": "made_up_person",
+                "approved_at": "never-validated",
+                "evidence_ref": "missing/path.md",
+                "evidence_sha256": "0" * 64,
+                "status": "approved",
+                "revoked_at": "",
+                "notes": "must not count as authorization",
+            },
+        )
+        status, findings, _ = review_visual_quality(project)
+        assert status == "BLOCKED", (status, findings)
+        assert any("独立授权 receipt" in item for item in findings), findings
 
 
 def test_client_pack_blocks_without_editable_pptx() -> None:
@@ -521,68 +705,507 @@ def test_client_pack_passes_editable_internal_pptx() -> None:
         project = Path(raw_project)
         ensure_project(project)
         add_adversarial_record(project)
-        add_client_outline(project)
+        add_client_outline(project, visibility="client_visible_ready")
         write_safe_client_review_files(project)
         pptx_path = export_editable_pptx(project)
         add_current_delivery_package(project)
+        add_adversarial_record(project, "final_delivery")
         status, findings, _ = review_client_pack(project, pptx_path)
         assert status == "PASS", (status, findings)
         assert findings == [], findings
         assert_valid(project)
 
 
+def test_client_pack_blocks_fake_preview_even_with_updated_hash() -> None:
+    if not optional_module("pptx") or not optional_module("PIL") or not optional_module("reportlab"):
+        return
+    with tempfile.TemporaryDirectory(prefix="adco-client-fake-preview-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_adversarial_record(project)
+        add_client_outline(project, visibility="client_visible_ready")
+        write_safe_client_review_files(project)
+        export_editable_pptx(project)
+        add_current_delivery_package(project)
+        truth = (project / "AD-creative/orchestrator/current_truth.md").read_text(encoding="utf-8")
+        preview_id = current_truth_value(truth, "current_preview_artifact_id")
+        artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+        fields, rows = read_csv_rows(artifact_path)
+        preview_row = next(row for row in rows if row.get("artifact_id") == preview_id)
+        preview = project / preview_row["path"]
+        preview.write_bytes(b"delivery fixture")
+        preview_row["sha256"] = file_sha256(preview)
+        preview_row["size_bytes"] = str(preview.stat().st_size)
+        write_csv_rows(artifact_path, fields, rows)
+        status, findings, _ = review_client_pack(project)
+        assert status == "BLOCKED", (status, findings)
+        assert any("preview is not a valid PNG/JPEG" in item for item in findings), findings
+
+
+def test_client_pack_scans_exact_current_text_extract() -> None:
+    if not optional_module("pptx") or not optional_module("PIL") or not optional_module("reportlab"):
+        return
+    with tempfile.TemporaryDirectory(prefix="adco-client-language-package-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_adversarial_record(project)
+        add_client_outline(project, visibility="client_visible_ready")
+        write_safe_client_review_files(project)
+        export_editable_pptx(project)
+        add_current_delivery_package(project)
+        truth = (project / "AD-creative/orchestrator/current_truth.md").read_text(encoding="utf-8")
+        text_id = current_truth_value(truth, "current_text_extract_artifact_id")
+        artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+        fields, rows = read_csv_rows(artifact_path)
+        text_row = next(row for row in rows if row.get("artifact_id") == text_id)
+        text_path = project / text_row["path"]
+        write_text(text_path, "Client page with internal Gate worker notes.")
+        text_row["sha256"] = file_sha256(text_path)
+        text_row["size_bytes"] = str(text_path.stat().st_size)
+        write_csv_rows(artifact_path, fields, rows)
+        status, findings, _ = review_client_pack(project)
+        assert status == "BLOCKED", (status, findings)
+        assert any("Client Language Gate" in item and "gate" in item.lower() for item in findings), findings
+
+
+def test_internal_outline_cannot_satisfy_client_pack_readiness() -> None:
+    if not optional_module("pptx") or not optional_module("PIL") or not optional_module("reportlab"):
+        return
+    with tempfile.TemporaryDirectory(prefix="adco-client-internal-outline-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_adversarial_record(project)
+        add_client_outline(project)
+        write_safe_client_review_files(project)
+        try:
+            export_editable_pptx(project)
+        except RuntimeError as exc:
+            assert "client-outline-gate BLOCKED" in str(exc)
+        else:
+            raise AssertionError("unconfirmed/internal outline must not reach PPT export")
+
+
+def test_pptx_editability_rejects_flattened_slide() -> None:
+    if not optional_module("pptx") or not optional_module("PIL"):
+        return
+    from PIL import Image
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    with tempfile.TemporaryDirectory(prefix="adco-flat-slide-") as raw_project:
+        project = Path(raw_project)
+        image_path = project / "flat.png"
+        Image.new("RGB", (1600, 900), color=(20, 40, 60)).save(image_path)
+        deck = project / "flat.pptx"
+        presentation = Presentation()
+        first = presentation.slides.add_slide(presentation.slide_layouts[6])
+        first.shapes.add_textbox(Inches(1), Inches(1), Inches(5), Inches(1)).text = "Editable title"
+        second = presentation.slides.add_slide(presentation.slide_layouts[6])
+        second.shapes.add_picture(str(image_path), Inches(0), Inches(0), width=Inches(10))
+        presentation.save(deck)
+        stats = inspect_pptx(deck)
+        assert stats["editable"] is False
+        assert stats["flattened_slides"] == "2"
+
+
+def test_client_send_readiness_requires_hash_bound_human_and_send_authorization() -> None:
+    if not optional_module("pptx") or not optional_module("PIL") or not optional_module("reportlab"):
+        return
+    with tempfile.TemporaryDirectory(prefix="adco-send-readiness-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_adversarial_record(project)
+        add_client_outline(project, visibility="client_visible_ready")
+        write_safe_client_review_files(project)
+        export_editable_pptx(project)
+        add_current_delivery_package(project)
+        add_adversarial_record(project, "final_delivery")
+        pack_status, findings, _ = review_client_pack(project)
+        assert pack_status == "PASS", findings
+        status, issues, _ = review_client_send_readiness(project)
+        assert status == "BLOCKED"
+        assert any("人工审阅" in item for item in issues)
+        assert any("发送授权" in item for item in issues)
+
+        truth = (project / "AD-creative/orchestrator/current_truth.md").read_text(encoding="utf-8")
+        version_id = current_truth_value(truth, "current_version_id")
+        pptx_id = current_truth_value(truth, "current_pptx_artifact_id")
+        _, artifacts = read_csv_rows(
+            project / "AD-creative/orchestrator/artifact_index.csv"
+        )
+        pptx_row = next(row for row in artifacts if row.get("artifact_id") == pptx_id)
+        binding = json.loads(
+            (project / "AD-creative/delivery/client_pack_binding.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        common = {
+            "version_id": version_id,
+            "pptx_artifact_id": pptx_id,
+            "pptx_sha256": pptx_row["sha256"],
+            "package_digest": binding["package_digest"],
+        }
+        write_json_object(
+            project / "AD-creative/delivery/manual_review_receipt.json",
+            {
+                **common,
+                "review_id": "REVIEW-001",
+                "reviewer_id": "independent-human-reviewer",
+                "reviewer_role": "creative cold reviewer",
+                "independent": True,
+                "reviewed_at": "2026-07-05T01:00:00Z",
+                "evidence_ref": "review_record:test-fixture",
+                "decision": "approved",
+                "checks": {
+                    "client_language": True,
+                    "visual_layout": True,
+                    "asset_authorization": True,
+                    "ppt_editability": True,
+                },
+            },
+        )
+        write_json_object(
+            project / "AD-creative/delivery/send_authorization.json",
+            {
+                **common,
+                "authorization_id": "SEND-001",
+                "authorized_by": "project-owner",
+                "authorized_at": "2026-07-05T01:10:00Z",
+                "evidence_ref": "user_confirmation:send-fixture",
+                "recipient_scope": "approved client review group",
+                "decision": "authorized",
+            },
+        )
+        status, issues, _ = review_client_send_readiness(project)
+        assert status == "PASS", issues
+
+        authorization_path = project / "AD-creative/delivery/send_authorization.json"
+        payload = json.loads(authorization_path.read_text(encoding="utf-8"))
+        payload["pptx_sha256"] = "0" * 64
+        write_json_object(authorization_path, payload)
+        status, issues, _ = review_client_send_readiness(project)
+        assert status == "BLOCKED"
+        assert any("exact current PPTX hash" in item for item in issues)
+
+        payload["pptx_sha256"] = common["pptx_sha256"]
+        write_json_object(authorization_path, payload)
+        truth = (project / "AD-creative/orchestrator/current_truth.md").read_text(
+            encoding="utf-8"
+        )
+        text_id = current_truth_value(truth, "current_text_extract_artifact_id")
+        artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+        fields, artifacts = read_csv_rows(artifact_path)
+        text_row = next(row for row in artifacts if row.get("artifact_id") == text_id)
+        text_path = project / text_row["path"]
+        write_text(text_path, "Internal worker gate prompt TODO")
+        text_row["sha256"] = file_sha256(text_path)
+        text_row["size_bytes"] = str(text_path.stat().st_size)
+        write_csv_rows(artifact_path, fields, artifacts)
+        status, issues, _ = review_client_send_readiness(project)
+        assert status == "BLOCKED"
+        assert any("binding 已过期" in item for item in issues), issues
+
+
+def test_client_pack_manifest_tamper_cannot_be_rebound_by_rerunning_gate() -> None:
+    if not optional_module("pptx") or not optional_module("PIL") or not optional_module("reportlab"):
+        return
+    with tempfile.TemporaryDirectory(prefix="adco-client-pack-immutable-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_adversarial_record(project)
+        add_client_outline(project, visibility="client_visible_ready")
+        write_safe_client_review_files(project)
+        export_editable_pptx(project)
+        add_current_delivery_package(project)
+        add_adversarial_record(project, "final_delivery")
+        status, findings, _ = review_client_pack(project)
+        assert status == "PASS", findings
+
+        binding_path = project / "AD-creative/delivery/client_pack_binding.json"
+        binding_before = json.loads(binding_path.read_text(encoding="utf-8"))
+        manifest_path = project / str(binding_before["manifest_path"])
+        mutate = json.loads(manifest_path.read_text(encoding="utf-8"))
+        mutate["files"] = []
+        write_json_object(manifest_path, mutate)
+        _, artifacts = read_csv_rows(
+            project / "AD-creative/orchestrator/artifact_index.csv"
+        )
+        binding_errors, _ = current_client_pack_binding_errors(project, artifacts)
+        assert any(
+            "immutable manifest content" in issue for issue in binding_errors
+        ), binding_errors
+        try:
+            review_client_pack(project)
+        except ValueError as exc:
+            assert "immutable client pack manifest collision" in str(exc), exc
+        else:
+            raise AssertionError("a tampered immutable manifest must not be rebound")
+        binding_after = json.loads(binding_path.read_text(encoding="utf-8"))
+        assert binding_after == binding_before
+
+
 def test_validate_blocks_mismatched_current_delivery_version() -> None:
+    if (
+        not optional_module("pptx")
+        or not optional_module("PIL")
+        or not optional_module("reportlab")
+    ):
+        return
     with tempfile.TemporaryDirectory(prefix="adco-gate-current-version-") as raw_project:
         project = Path(raw_project)
         ensure_project(project)
-        add_delivery_artifact(
-            project,
-            "ART-AUTO-PPTX",
-            "pptx",
-            "AD-creative/ppt/client_review_draft.pptx",
-            visibility="client_visible_ready",
+        add_client_outline(project, visibility="client_visible_ready")
+        export_editable_pptx(project)
+        add_current_delivery_package(project)
+        truth_path = project / "AD-creative/orchestrator/current_truth.md"
+        truth = truth_path.read_text(encoding="utf-8").replace(
+            "current_version_id: VER-PPT-001",
+            "current_version_id: VER-UNKNOWN",
         )
-        add_delivery_artifact(project, "ART-AUTO-PPT-EDITABILITY", "ppt_editability_check", "AD-creative/ppt/ppt_editability_check.md")
-        add_current_delivery_package(project, version_id="VER-OTHER")
-        write_current_delivery_truth(project, version_id="VER-CURRENT")
+        write_text(truth_path, truth)
         errors, _ = validate(project)
         assert any("current_version_id" in error for error in errors), errors
 
 
+def test_validate_rejects_ambiguous_current_version_truth() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-current-truth-ambiguity-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        truth_path = project / "AD-creative/orchestrator/current_truth.md"
+        original = truth_path.read_text(encoding="utf-8")
+        truth_path.write_text(
+            original.replace(
+                "current_version_id:\n",
+                "current_version_id:\ncurrent_version_id: VER-FORGED\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        errors, _ = validate(project)
+        assert any(
+            "current_version_id appears 2 times" in error for error in errors
+        ), errors
+
+        truth_path.write_text(
+            original
+            + "\n## Current Version Truth\n\n"
+            + "current_version_id: VER-FORGED\n",
+            encoding="utf-8",
+        )
+        errors, _ = validate(project)
+        assert any("exactly one '## Current Version Truth'" in error for error in errors), errors
+
+
+def test_pdf_text_extraction_falls_back_after_pdftotext_failure() -> None:
+    class FakeDocument:
+        def __enter__(self) -> list[object]:
+            return [types.SimpleNamespace(get_text=lambda: "fallback client copy")]
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    fake_fitz = types.SimpleNamespace(open=lambda _path: FakeDocument())
+    with tempfile.TemporaryDirectory(prefix="adco-pdf-fallback-") as raw_project:
+        path = Path(raw_project) / "fixture.pdf"
+        path.write_bytes(b"%PDF-1.4\n")
+        failed = subprocess.CompletedProcess(
+            ["pdftotext", str(path), "-"], 1, stdout="", stderr="parse failed"
+        )
+        with (
+            patch("ad_creative_operator.shutil.which", return_value="/fake/pdftotext"),
+            patch("ad_creative_operator.subprocess.run", return_value=failed),
+            patch.dict(sys.modules, {"fitz": fake_fitz}),
+        ):
+            assert client_language_text_for_path(path) == "fallback client copy"
+
+
+def test_validate_rejects_artifact_path_outside_project_even_with_matching_hash() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-artifact-path-scope-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        outside = Path("/etc/hosts")
+        add_row(
+            project,
+            "AD-creative/orchestrator/artifact_index.csv",
+            {
+                "artifact_id": "ART-OUTSIDE-001",
+                "artifact_type": "text_extract",
+                "path": str(outside),
+                "stage": "scope_test",
+                "version": "v001",
+                "status": "done",
+                "visibility": "internal_only",
+                "gate_status": "PASS",
+                "sha256": file_sha256(outside),
+                "size_bytes": str(outside.stat().st_size),
+            },
+        )
+        errors, _ = validate(project)
+        assert any("project-relative path" in error for error in errors), errors
+
+
 def test_client_pack_blocks_missing_exact_current_pptx_without_crashing() -> None:
+    if (
+        not optional_module("pptx")
+        or not optional_module("PIL")
+        or not optional_module("reportlab")
+    ):
+        return
     with tempfile.TemporaryDirectory(prefix="adco-gate-missing-current-pptx-") as raw_project:
         project = Path(raw_project)
         ensure_project(project)
         add_adversarial_record(project)
-        add_delivery_artifact(
-            project,
-            "ART-AUTO-PPTX",
-            "pptx",
-            "AD-creative/ppt/missing_current.pptx",
-            visibility="client_visible_ready",
-        )
-        missing_pptx = project / "AD-creative/ppt/missing_current.pptx"
-        missing_pptx.unlink()
-        add_delivery_artifact(project, "ART-AUTO-PPT-EDITABILITY", "ppt_editability_check", "AD-creative/ppt/ppt_editability_check.md")
+        add_client_outline(project, visibility="client_visible_ready")
+        write_safe_client_review_files(project)
+        missing_pptx = export_editable_pptx(project)
         add_current_delivery_package(project)
+        missing_pptx.unlink()
         status, findings, report = review_client_pack(project)
         assert status == "BLOCKED", (status, findings)
         assert report.exists(), report
         assert any("PPTX 文件不存在" in item for item in findings), findings
 
 
-def test_handoff_readiness_blocks_incomplete_project() -> None:
+def test_handoff_readiness_is_internal_operation_gate_not_send_gate() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-gate-handoff-") as raw_project:
         project = Path(raw_project)
         ensure_project(project)
         add_adversarial_record(project)
         status, blockers, warnings, _ = review_handoff_readiness(project)
-        assert status == "BLOCKED", (status, blockers, warnings)
-        assert any("PPTX" in item or "GATE-" in item for item in blockers + warnings), (
-            blockers,
-            warnings,
-        )
+        assert status == "PASS", (status, blockers, warnings)
+        assert blockers == []
+        assert any("PPTX" in item for item in warnings), warnings
+        assert any("GATE-" in item for item in warnings), warnings
         assert_valid(project)
+
+
+def test_goal_plan_cannot_self_stamp_adversarial_review() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-adversarial-self-stamp-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        render_goal_iteration_plan(
+            project,
+            goal_id="GOAL-SELF-STAMP",
+            title="Self stamp must fail",
+            objective="A plan is not an independent review.",
+            owner="Main Controller",
+        )
+        found, evidence = adversarial_council_evidence(project, "final_delivery")
+        assert found is False
+        assert evidence == []
+
+
+def test_blocked_gate_does_not_count_as_completed_goal_stage() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-blocked-gate-stage-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_row(
+            project,
+            "AD-creative/orchestrator/gate_log.csv",
+            {
+                "gate_id": "GATE-AUTO-VISUAL-QUALITY-001",
+                "stage": "visual_review",
+                "status": "BLOCKED",
+                "score": "0",
+                "checked_artifacts": "",
+                "blocking_issues": "fixture blocker",
+                "revision_items": "fix fixture",
+                "questions": "",
+                "next_state": "fix_visual_assets",
+                "created_at": now_iso(),
+                "owner": "fixture",
+            },
+        )
+        assert has_gate(project, "GATE-AUTO-VISUAL-QUALITY-001") is False
+
+
+def test_gate_history_is_append_only_and_latest_target_must_be_fresh() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-gate-history-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        add_client_outline(project, visibility="client_visible_ready")
+        status, findings, report = review_client_outline(project)
+        assert status == "PASS", findings
+        _, first_rows = read_csv_rows(
+            project / "AD-creative/orchestrator/gate_log.csv"
+        )
+        first = next(
+            row
+            for row in first_rows
+            if row.get("gate_id") == "GATE-AUTO-CLIENT-OUTLINE-001"
+        )
+        first_snapshot = project / first["evidence_snapshot_ref"]
+        first_snapshot_sha = file_sha256(first_snapshot)
+        write_text(report, report.read_text(encoding="utf-8") + "\ntampered\n")
+        assert not has_gate(
+            project, "GATE-AUTO-CLIENT-OUTLINE-001", {"PASS"}
+        )
+        errors, _ = validate(project)
+        assert errors == [], errors
+
+        status, findings, _ = review_client_outline(project)
+        assert status == "PASS", findings
+        _, rows = read_csv_rows(project / "AD-creative/orchestrator/gate_log.csv")
+        runs = [
+            row
+            for row in rows
+            if row.get("gate_id") == "GATE-AUTO-CLIENT-OUTLINE-001"
+        ]
+        assert len(runs) == 2
+        assert runs[1]["supersedes_gate_run_id"] == runs[0]["gate_run_id"]
+        assert first_snapshot.is_file()
+        assert file_sha256(first_snapshot) == first_snapshot_sha
+        assert runs[1]["evidence_snapshot_ref"] != runs[0]["evidence_snapshot_ref"]
+        assert has_gate(project, "GATE-AUTO-CLIENT-OUTLINE-001", {"PASS"})
+        assert_valid(project)
+
+
+def test_adversarial_review_rejects_global_irrelevant_or_nonpass_evidence() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-adversarial-forged-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        unrelated = project / "irrelevant.txt"
+        write_text(unrelated, "not the reference gate target")
+        write_text(
+            project / "AD-creative/gates/ADVERSARIAL_REVIEW_FORGED.md",
+            f"""# Forged Review
+
+stage: global
+reviewer_id: made_up_person
+reviewer_role: reviewer
+independent: true
+reviewed_at: {now_iso()}
+target_ref: {unrelated.relative_to(project)}
+target_sha256: {file_sha256(unrelated)}
+
+| stage | objection | rebuttal | revision | gate_status |
+|---|---|---|---|---|
+| global | fake objection | fake rebuttal | no revision | BLOCKED |
+""",
+        )
+        found, evidence = adversarial_council_evidence(
+            project, "reference_research"
+        )
+        assert found is False
+        assert evidence == []
+
+
+def test_manual_review_checklist_starts_pending_not_passed() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-manual-review-pending-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        checklist = write_manual_review_checklist(project)
+        assert "status: pending_human_review" in checklist.read_text(encoding="utf-8")
+        _, artifacts = read_csv_rows(
+            project / "AD-creative/orchestrator/artifact_index.csv"
+        )
+        row = next(
+            item
+            for item in artifacts
+            if item.get("artifact_id") == "ART-AUTO-MANUAL-REVIEW-CHECKLIST"
+        )
+        assert row["status"] == "pending_human_review"
+        assert row["gate_status"] == "NOT_RUN"
 
 
 def test_creative_proposal_writes_required_internal_fields() -> None:
@@ -679,8 +1302,8 @@ def test_creative_quality_passes_complete_structured_fixture() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-creative-pass-") as raw_project:
         project = Path(raw_project)
         ensure_project(project)
-        add_adversarial_record(project, "creative")
         write_complete_creative_fixture(project)
+        add_adversarial_record(project, "creative")
         status, findings, _ = review_creative_quality(project)
         assert status == "PASS", (status, findings)
         assert findings == [], findings
@@ -737,11 +1360,26 @@ def main() -> int:
     test_search_quality_passes_clean_plan_with_adversarial_record()
     test_visual_quality_blocks_missing_selected_asset_file()
     test_visual_quality_passes_real_internal_selected_asset()
+    test_visual_quality_rejects_asset_self_stamp_without_hash_bound_authorization()
     test_client_pack_blocks_without_editable_pptx()
     test_client_pack_passes_editable_internal_pptx()
+    test_client_pack_blocks_fake_preview_even_with_updated_hash()
+    test_client_pack_scans_exact_current_text_extract()
+    test_internal_outline_cannot_satisfy_client_pack_readiness()
+    test_pptx_editability_rejects_flattened_slide()
+    test_client_send_readiness_requires_hash_bound_human_and_send_authorization()
+    test_client_pack_manifest_tamper_cannot_be_rebound_by_rerunning_gate()
     test_validate_blocks_mismatched_current_delivery_version()
+    test_validate_rejects_ambiguous_current_version_truth()
+    test_pdf_text_extraction_falls_back_after_pdftotext_failure()
+    test_validate_rejects_artifact_path_outside_project_even_with_matching_hash()
     test_client_pack_blocks_missing_exact_current_pptx_without_crashing()
-    test_handoff_readiness_blocks_incomplete_project()
+    test_handoff_readiness_is_internal_operation_gate_not_send_gate()
+    test_goal_plan_cannot_self_stamp_adversarial_review()
+    test_blocked_gate_does_not_count_as_completed_goal_stage()
+    test_gate_history_is_append_only_and_latest_target_must_be_fresh()
+    test_adversarial_review_rejects_global_irrelevant_or_nonpass_evidence()
+    test_manual_review_checklist_starts_pending_not_passed()
     test_creative_proposal_writes_required_internal_fields()
     test_creative_quality_blocks_generic_proposal()
     test_creative_quality_passes_complete_structured_fixture()

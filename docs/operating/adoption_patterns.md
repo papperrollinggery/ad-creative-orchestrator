@@ -66,7 +66,7 @@ adco visual-quality-gate <project_dir>
 Default rule:
 
 ```text
-AI/generated images stay internal_only until visual QA and explicit client visibility approval.
+AI/generated images stay internal_only until visual QA and an independent authorization receipt bind the exact asset hash, use scope, approver, time, and evidence. `approval=PASS` or a notes token is not authorization.
 ```
 
 ## Pattern 4: Client Review Pack
@@ -74,16 +74,27 @@ AI/generated images stay internal_only until visual QA and explicit client visib
 Use when preparing an editable PPT review package.
 
 ```bash
+adco creative-proposal <project_dir>
+adco confirm-client-outline <project_dir> --confirmed-by "<human/client>" --confirmed-at <iso_time> --evidence-ref "<user_confirmation:id|client_confirmation:id>"
+adco client-outline-gate <project_dir>
 adco export-pptx <project_dir>
-adco check-pptx <project_dir> --file <project_dir>/AD-creative/ppt/client_review_draft.pptx
+adco check-pptx <project_dir> --file <project_dir>/AD-creative/ppt/exports/client_review_vNNN.pptx
 adco client-pack-gate <project_dir>
 ```
 
 Gate:
 
 ```text
-Client Pack Gate must PASS before any human sends material externally.
+`client-pack-gate` only creates a package digest that is ready for independent review. Any exact-current input change invalidates it.
 ```
+
+Only when preparing an actual send, collect an independent review receipt and explicit send authorization bound to that same fresh digest, then run:
+
+```bash
+adco client-send-readiness-gate <project_dir>
+```
+
+The command never sends.
 
 ## Pattern 5: Non-Developer Handoff
 
@@ -102,6 +113,19 @@ AD-creative/handoff/项目看板.md
 AD-creative/handoff/待你确认.md
 AD-creative/delivery/manual_review_checklist.md
 ```
+
+This Gate proves internal operator continuity only. It does not require or prove PPT, Client Pack, FinalDelivery, or send readiness.
+
+## Pattern 6: DIRcreative Specialist Exchange
+
+Use when film-preproduction judgment is needed without coupling ADCO to DIR internals.
+
+```bash
+adco specialist-handoff <project_dir> --work-id <WORK-ID> --profile-id dircreative.film-preproduction --objective "<objective>" --input-artifact <ART-ID> --expected-output film.story_package --descriptor <descriptor.json>
+adco specialist-adopt <project_dir> --handoff <handoff.json> --receipt <receipt.json> --decision partial_adopt --reason "<reason>" --map-output <PROVIDER-ID=AD-creative/film/output.md>
+```
+
+The base contract stays `adco.specialist-exchange` `1.0`. DIR may evolve a compatible descriptor `1.x` and a profile receipt extension; ADCO negotiates the exact extension id/version and keeps adoption, version, PPT, FinalDelivery, and send authority.
 
 ## Stop Rules
 

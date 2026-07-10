@@ -6,6 +6,14 @@ stage:
 status:
 owner:
 date:
+reviewer_id:
+reviewer_role:
+independent: true
+reviewed_at:
+target_ref:
+target_sha256:
+
+`reviewer_id` must identify an independent reviewer, not the main controller, automation, or the execution worker. `target_ref` and `target_sha256` must bind this review to the exact checked artifact.
 
 ## Checked Artifacts
 

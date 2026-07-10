@@ -53,6 +53,22 @@ adco check
 
 Compatibility entrypoints remain available: `adco-init`, `adco-check`, `adco-validate`.
 
+## Install the Codex Skill
+
+After the operator explicitly approves a global Skill update, install the packaged canonical copy and verify its hash:
+
+```bash
+adco install-skill
+```
+
+If the environment also loads the compatibility Skillshub catalog, synchronize that mirror through the same verified command:
+
+```bash
+adco install-skill --target ~/.skillshub/ad-creative-orchestrator
+```
+
+Both commands print the packaged source path plus source and target SHA-256 values. A successful install requires matching hashes.
+
 ## Development Install
 
 Use editable mode while changing templates or code:
@@ -79,7 +95,7 @@ Expected:
 
 ```text
 RUN_CHECKS=PASS
-adco 0.1.0
+adco 0.2.0
 ADCO_DOCTOR=PASS
 INSTALL_SMOKE=PASS
 PACKAGE_SMOKE=PASS

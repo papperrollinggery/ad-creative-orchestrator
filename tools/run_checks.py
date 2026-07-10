@@ -19,6 +19,7 @@ from runtime_paths import source_root, template_root
 SOURCE_ROOT = source_root()
 ROOT = SOURCE_ROOT or Path(__file__).resolve().parent
 SOURCE_MODE = SOURCE_ROOT is not None
+EXPECTED_CLI_VERSION = "adco 0.2.0"
 
 
 def run(args: list[str]) -> None:
@@ -26,6 +27,28 @@ def run(args: list[str]) -> None:
     env = os.environ.copy()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     subprocess.run(args, cwd=ROOT, check=True, env=env)
+
+
+def run_exact_output(args: list[str], expected: str) -> None:
+    print("+ " + " ".join(args))
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    completed = subprocess.run(
+        args,
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+    if completed.stderr:
+        print(completed.stderr, end="", file=sys.stderr)
+    actual = completed.stdout.strip()
+    print(actual)
+    if actual != expected:
+        raise AssertionError(
+            f"Expected exact output from {' '.join(args)}: {expected!r}; got {actual!r}"
+        )
 
 
 def run_json(args: list[str]) -> None:
@@ -71,20 +94,24 @@ def main() -> int:
                 "tools/check_distribution.py",
                 "tools/check_gate_fixtures.py",
                 "tools/check_packaged_assets.py",
+                "tools/check_specialist_schemas.py",
                 "tools/check_docs_commands.py",
                 "tools/render_demo_transcript.py",
                 "tools/test_gates.py",
                 "tools/test_goal_workflow.py",
+                "tools/test_specialist_exchange.py",
                 "tools/validate_project.py",
                 "tools/init_project.py",
                 "tools/runtime_paths.py",
+                "tools/specialist_schema_validation.py",
             ]
         )
         run([python, "tools/check_packaged_assets.py"])
+        run([python, "tools/check_specialist_schemas.py"])
         run([python, "tools/check_docs_commands.py"])
         run([python, "tools/check_gate_fixtures.py"])
         run([python, "tools/render_demo_transcript.py", "--check"])
-        run([python, "tools/ad_creative_operator.py", "--version"])
+        run_exact_output([python, "tools/ad_creative_operator.py", "--version"], EXPECTED_CLI_VERSION)
         run([python, "tools/ad_creative_operator.py", "doctor"])
         run_json([python, "tools/ad_creative_operator.py", "doctor", "--json"])
         run([python, "tools/ad_creative_operator.py", "release-status"])
@@ -93,6 +120,7 @@ def main() -> int:
         run_json([python, "tools/ad_creative_operator.py", "docs", "--json"])
         run([python, "tools/test_gates.py"])
         run([python, "tools/test_goal_workflow.py"])
+        run([python, "tools/test_specialist_exchange.py"])
     else:
         run(
             [
@@ -103,15 +131,18 @@ def main() -> int:
                 "check_docs_commands.py",
                 "check_gate_fixtures.py",
                 "check_packaged_assets.py",
+                "check_specialist_schemas.py",
                 "render_demo_transcript.py",
                 "test_gates.py",
                 "test_goal_workflow.py",
+                "test_specialist_exchange.py",
                 "validate_project.py",
                 "init_project.py",
                 "runtime_paths.py",
             ]
         )
-        run([python, "-m", "ad_creative_operator", "--version"])
+        run_exact_output([python, "-m", "ad_creative_operator", "--version"], EXPECTED_CLI_VERSION)
+        run([python, "-m", "check_specialist_schemas"])
         run([python, "-m", "check_docs_commands"])
         run([python, "-m", "check_gate_fixtures"])
         run([python, "-m", "ad_creative_operator", "doctor"])
@@ -122,6 +153,7 @@ def main() -> int:
         run_json([python, "-m", "ad_creative_operator", "docs", "--json"])
         run([python, "-m", "test_gates"])
         run([python, "-m", "test_goal_workflow"])
+        run([python, "-m", "test_specialist_exchange"])
     if SOURCE_MODE:
         run([python, "tools/validate_project.py", str(template_root())])
         run([python, "tools/validate_project.py", "examples/moncler_protocol_dry_run"])

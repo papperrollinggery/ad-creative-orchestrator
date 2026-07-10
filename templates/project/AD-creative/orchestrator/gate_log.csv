@@ -1,1 +1,1 @@
-gate_id,stage,status,score,checked_artifacts,blocking_issues,revision_items,questions,next_state,created_at,owner
+gate_id,gate_run_id,stage,status,score,checked_artifacts,target_ref,target_sha256,evidence_snapshot_ref,evidence_snapshot_sha256,blocking_issues,revision_items,questions,next_state,created_at,owner,supersedes_gate_run_id

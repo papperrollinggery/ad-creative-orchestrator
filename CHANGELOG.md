@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-07-10
+
+- Made client-readable proposal structure and explicit client confirmation first-class, with fail-closed outline, language, visual, package, and send-readiness Gates.
+- Hardened ThreadOps dispatch, worker identity, receipt adoption, bounded convergence, and cleanup evidence so incomplete or mismatched work cannot be reported as complete.
+- Added immutable version-chain checks and FinalDelivery protection to prevent stale aliases, silent overwrites, and unsafe cleanup of user deliverables.
+- Added a neutral DIRcreative specialist exchange with scoped handoff, receipt, adoption, authorization, host-integrity, and read-only return validation.
+- Expanded installation, packaged-resource parity, diagnostics, support bundles, release checks, and post-install verification for non-developer operation.
+
 - Added `goal-plan` command for durable goal iteration records.
 - Added adversarial council Gate policy: clean Gates without council evidence downgrade to `PARTIAL_PASS`.
 - Added Goal tab to the local dashboard.

@@ -35,11 +35,20 @@ evidence_needed:
 
 ```text
 max_active_worker_reviewer: 3
+default_thread_mode: off; use real Threads only for bounded isolation, parallelism, or independent review
 broad_council_requires_user_approval_over: 5
 main_thread_only_for: integration,current_truth,version_map,artifact_index,gate_log,final_export,final_status
 freeze_trigger: user reports thread confusion / high heat / wrong thread / cleanup request
 replay_trigger: validation_result FAIL / missing receipt schema / stale evidence / out-of-scope edit / reopened feedback
 stop_condition: receipt reconciled, eval_gate passed or blocker recorded, adoption_decision recorded, cleanup action planned
+poll_rule: fixed poll counts are inspection budgets, never automatic failure
+progress_states: active_with_progress,finalizing_receipt
+no_progress_state: silent
+deadline_rule: one reasoned bounded extension with an absolute deadline
+failure_rule: thread_not_converged only after silent/reminder evidence past the absolute deadline
+rescue_limit: 1
+rescue_proof_rule: rescue has a separate dispatch receipt and rescue-bound receipt path
+scope_proof_rule: host captures dispatch baseline; reconciliation compares actual diff with receipt + write_scope and writes host proof
 ```
 
 ## Loop Mode Contract
@@ -75,8 +84,8 @@ error_recovery_contract:
 context_budget:
 iteration_budget:
 eval_gate:
-adoption_decision:
-rejection_reason:
+worker_recommendation:
+worker_recommendation_reason:
 loop_state:
 replay_trigger:
 freeze_trigger:
@@ -97,7 +106,7 @@ worker_synthesis: L1 worker adopts/rejects helper output before main/control rev
 
 ## Lane Harness Matrix
 
-| lane_id | action_space | observation_contract | error_recovery_contract | context_budget | iteration_budget | eval_gate | adoption_decision | rejection_reason | loop_state | replay_trigger | freeze_trigger | stop_condition |
+| lane_id | action_space | observation_contract | error_recovery_contract | context_budget | iteration_budget | eval_gate | worker_recommendation | worker_recommendation_reason | loop_state | replay_trigger | freeze_trigger | stop_condition |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 
 ## Lane Helper Matrix
@@ -107,8 +116,8 @@ worker_synthesis: L1 worker adopts/rejects helper output before main/control rev
 
 ## Lane Map
 
-| lane_id | thread_id | thread_title | thread_role | professional_identity | agent_role_md | agency_selection_id | agency_role_brief | agency_source_agents | source_staff_count | work_id | purpose | spawn_mode | mode | environment | workspace_path | read_first | write_scope | receipt_path | receipt_status | reconciliation_status | stop_condition | validation_proof | required_output | merge_owner | final_export_allowed | lifecycle_status | cleanup_note |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| lane_id | lane_run_id | thread_id | thread_title | thread_role | professional_identity | agent_role_md | agency_selection_id | agency_role_brief | agency_source_agents | source_staff_count | work_id | purpose | spawn_mode | mode | environment | workspace_path | read_first | write_scope | receipt_path | receipt_status | reconciliation_status | stop_condition | validation_proof | required_output | merge_owner | final_export_allowed | lifecycle_status | cleanup_note |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 
 Spawn mode values:
 
@@ -131,14 +140,16 @@ main_only: use for integration, version truth, final export, and final status
 
 ## Thread Registry
 
-| thread_id | title | role | lane_id | lifecycle_state | receipt_status | reconciliation_status | pinned | cleanup_action | notes |
-|---|---|---|---|---|---|---|---|---|---|
+| thread_id | title | role | lane_id | lane_run_id | lifecycle_state | convergence_state | absolute_deadline_at | bounded_extension_used | rescue_count | receipt_thread_id | adoption_decision | scope_baseline_path | scope_baseline_sha256 | scope_proof_path | scope_proof_sha256 | rescue_dispatch_receipt_path | rescue_dispatch_evidence | receipt_status | reconciliation_status | pinned | archived | archived_at | cleanup_action | notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 
 ## Master Thread Rules
 
 ```text
 Owns current_truth, work_items, agent_runs, gate_log, artifact_index, and final answer.
 Reads every worker result before accepting it.
+Requires the receipt thread_id to equal the real dispatched thread id.
+Captures the host scope baseline at dispatch and requires a successful hash-bound host scope proof before adoption.
 Does not copy worker output blindly.
 Runs or records the relevant validation/gate before advancing state.
 Lists existing ADCO threads before creating a new employee thread.
@@ -175,10 +186,13 @@ Allowed actions:
 Forbidden actions:
 Write scope:
 Receipt path:
+Expected real thread id:
+Absolute deadline:
 Stop condition:
 Merge owner:
 Final export allowed: no
 Completion proof:
+Host scope baseline ref (main/control supplied):
 Return format:
 action_space:
 observation_contract:
@@ -186,8 +200,8 @@ error_recovery_contract:
 context_budget:
 iteration_budget:
 eval_gate:
-adoption_decision:
-rejection_reason:
+worker_recommendation:
+worker_rejection_reason:
 loop_state:
 replay_trigger:
 freeze_trigger:
@@ -213,8 +227,8 @@ qa_gate_status:
 open_questions:
 workflow_issues_found:
 recurrence_guard:
-adoption_decision:
-rejection_reason:
+worker_recommendation:
+worker_rejection_reason:
 helper_mode:
 helper_invocations:
 helper_input_refs:
@@ -226,12 +240,13 @@ helper_failure_reason:
 worker_synthesis:
 prompt_only_output: invalid for production workers
 recommended_next_action:
+host_scope_proof: written only by main/control reconciliation; worker must not self-issue it
 ```
 
 ## Reconciliation Log
 
-| lane_id | adoption_decision | rejection_reason | files_merged | gate_id | notes |
-|---|---|---|---|---|---|
+| lane_id | main_adoption_decision | main_rejection_reason | files_merged | gate_id | archived_at | notes |
+|---|---|---|---|---|---|---|
 
 ## Cleanup Log
 

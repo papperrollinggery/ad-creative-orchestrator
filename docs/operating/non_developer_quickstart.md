@@ -14,6 +14,8 @@
 
 ## 2. 启动项目
 
+项目按 P0-P8 依次推进：事实/保护基线 → 客户可读文本 → hash 确认 → 按需创意/参考/专项 → 不可变 PPT → 语言/视觉/授权/可编辑性 → fresh Client Pack → 独立审阅/发送准备（不发送）→ 反馈/下一版本。
+
 最简单方式：
 
 ```text
@@ -55,9 +57,9 @@ AD-creative/handoff/操作台.html
 AD-creative/handoff/项目看板.md
 AD-creative/handoff/待你确认.md
 AD-creative/handoff/客户追问话术.md
-AD-creative/ppt/client_review_draft.pptx
-AD-creative/ppt/ppt_editability_check.md
-AD-creative/gates/GATE-AUTO-CLIENT-PACK-001_report.md
+AD-creative/client_review/client_review_outline.md
+AD-creative/client_review/client_outline.csv
+AD-creative/proposal_architecture/proposal_structure.md
 AD-creative/orchestrator/requirements.csv
 AD-creative/orchestrator/gaps.csv
 AD-creative/orchestrator/current_truth.md
@@ -88,7 +90,7 @@ creative-proposal 起草 internal creative proposal：challenge、insight、crea
 creative-quality-gate 只检查 proposal 草稿的结构、追溯、证据和专业完整度。
 证据稀疏、来源未闭合或关键假设未确认时，可以是 PARTIAL_PASS / BLOCKED。
 它不批准审美、不代表客户喜欢、不保证商业效果，也不能替代客户或创意负责人确认。
-视频/分镜/video prompt 交给 dircreative。
+视频/分镜/video prompt 通过 `adco.specialist-exchange` 交给 `dircreative.film-preproduction`；ADCO 保留采用、版本、PPT 和客户准备权。
 image / KV / 背景图交给 imagegen 或 Creative Production。
 固定 PPT / DOCX / XLSX 模板交给 Template Creator。
 ```
@@ -113,8 +115,17 @@ AD-creative/handoff/操作台.html
 AD-creative/handoff/项目看板.md
 AD-creative/handoff/待你确认.md
 AD-creative/handoff/客户追问话术.md
-AD-creative/ppt/ppt_editability_check.md
+AD-creative/client_review/client_outline.csv
 ```
+
+第一轮只到客户可读文本框架。人工或客户逐页确认后，再运行：
+
+```text
+adco confirm-client-outline <项目目录> --confirmed-by "<人工确认者>" --confirmed-at <iso_time> --evidence-ref "<user_confirmation:id|client_confirmation:id>"
+adco client-outline-gate <项目目录>
+```
+
+确认 receipt 绑定 exact `client_outline.csv` hash；文字一改就失效，必须重新确认。Gate PASS 前不生成 PPT。
 
 生成图入库：
 
@@ -126,7 +137,7 @@ adco import-imagegen <项目目录> --slot-id <槽位> --selected
 
 ```text
 从 CODEX_HOME/generated_images 取最近一张生成图，复制到 AD-creative/visual_assets/selected/，登记 asset_manifest.csv，写 imagegen_import_log.md，刷新操作台。
-默认 internal_only；客户可见前必须另跑 Gate 并人工确认。
+默认 internal_only；客户可见前必须另跑 Gate，并取得绑定 exact asset hash/use scope/确认者/时间/evidence 的独立授权 receipt。
 ```
 
 Goal 模式执行：
@@ -136,7 +147,7 @@ adco goal-plan <项目目录> --title <目标标题> --objective <目标内容>
 adco thread-plan <项目目录> --title <目标标题> --objective <目标内容> --roles brand_client,copy_creative,qa_review
 ```
 
-`thread-plan` 只给 Codex 主控生成内部线程分工包，不会自动发送客户稿。后续 Gate 如果没有有效反驳性议会记录，最高只会给 `PARTIAL_PASS`。
+`thread-plan` 只给 Codex 主控生成内部线程分工包，不会自动发送客户稿。Threads 默认关闭，只在有界隔离、真实并行或独立审阅确有必要时启用。需要独立反驳性证据的内容 Gate，如果没有绑定 exact stage target/hash 的新鲜 reviewer 记录，最高只会给 `PARTIAL_PASS`；`global` 或主线程自审不算。
 
 Thread 执行规则：
 
@@ -146,7 +157,8 @@ execution_worker 负责明确范围内的实现、文档修改、素材和产物
 read_only 只用于 explorer / reviewer / research / cold-review。
 execution_worker 必须先写清 exact write_scope。
 每个 execution_worker 返回 files_changed、validation、dirty-state impact、cleanup actions。
-主控消费 receipt 并合并后，归档对应 worker thread。
+主控 dispatch 后保存 host scope baseline；reconcile 时用实际文件 diff 对照 receipt 与 exact write_scope，写出 hash-bound host scope proof。worker 自报不算 host proof。
+主控消费 receipt 并合并后，归档对应 worker thread。固定轮询次数只是检查预算；区分 active_with_progress / silent / finalizing_receipt，最多一次 bounded extension 和一次带独立 dispatch proof/receipt path 的 rescue。
 ```
 
 会议画像分析：
@@ -219,8 +231,14 @@ adco search-quality-gate <项目目录>
 adco reference-pack-gate <项目目录>
 adco import-imagegen <项目目录> --slot-id <槽位> --selected
 adco visual-quality-gate <项目目录>
+adco confirm-client-outline <项目目录> --confirmed-by "<人工确认者>" --confirmed-at <iso_time> --evidence-ref "<user_confirmation:id|client_confirmation:id>"
+adco client-outline-gate <项目目录>
 adco export-pptx <项目目录>
+adco client-language-gate <项目目录>
+adco asset-current-manifest <项目目录>
+adco visual-layout-gate <项目目录>
 adco client-pack-gate <项目目录>
+adco client-send-readiness-gate <项目目录>
 adco handoff-readiness-gate <项目目录>
 adco audit-dashboard <项目目录> --render
 adco audit-dashboard <项目目录> --render --json
@@ -239,12 +257,14 @@ SEARCH_QUALITY_GATE=PASS 或 PARTIAL_PASS
 REFERENCE_PACK_GATE=PASS 或 PARTIAL_PASS
 IMAGEGEN_IMPORT_LOG exists
 VISUAL_QUALITY_GATE=PASS
+CLIENT_OUTLINE_CONFIRMATION=hash-bound 且 CLIENT_OUTLINE_GATE=PASS
 PPTX_EDITABLE=PASS
 CLIENT_PACK_GATE=PASS
+CLIENT_SEND_READINESS_GATE=PASS（仅在本轮确实准备发送，且独立 review/发送授权绑定同一 fresh digest 时要求）
 HANDOFF_READINESS_GATE=PASS
 DASHBOARD_AUDIT=PASS
 DASHBOARD_OPEN=SKIPPED
 VALIDATION=PASS
 ```
 
-`VALIDATION=PASS` 只说明必需文件、CSV/JSON 可解析、产物和 requirement/source/gate 的追溯关系成立；不说明创意方向、审美质量、客户话术或最终客户稿已经被批准。客户可见前还要看 `creative-quality-gate`、`search-quality-gate`、`reference-pack-gate`、`visual-quality-gate`、`client-pack-gate`、`handoff-readiness-gate`，并做人工确认。
+`VALIDATION=PASS` 只说明必需文件、CSV/JSON 可解析、产物和 requirement/source/gate 的追溯关系成立；不说明创意方向、审美质量、客户话术或最终客户稿已经被批准。`client-pack-gate` 只到独立人工审阅入口；任何 exact-current 输入变化都会使旧 package digest 过期。只有绑定同一 fresh digest 的人工 review、发送授权和 `client-send-readiness-gate` 全部成立时，才可称为可发送，而且命令本身不会发送。`handoff-readiness-gate` 只代表可内部交接，不能替代这些 Gate。

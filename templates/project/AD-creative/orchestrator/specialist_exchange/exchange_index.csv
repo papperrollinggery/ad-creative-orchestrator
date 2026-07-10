@@ -1,0 +1,1 @@
+exchange_id,handoff_id,attempt,work_id,provider_id,profile_id,contract_version,descriptor_sha256,handoff_sha256,baseline_path,baseline_sha256,compatibility_status,execution_mode,lane_id,thread_id,handoff_path,receipt_path,receipt_sha256,outcome,adoption_path,adoption_sha256,adoption_decision,thread_reconciliation_ref,created_at,updated_at

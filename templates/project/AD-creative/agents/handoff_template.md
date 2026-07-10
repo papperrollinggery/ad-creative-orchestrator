@@ -23,6 +23,10 @@ environment:
 workspace_path:
 write_scope:
 receipt_path:
+scope_baseline_path:
+scope_baseline_sha256:
+scope_proof_path:
+scope_proof_sha256:
 stop_condition:
 merge_owner:
 final_export_allowed: no
@@ -39,8 +43,8 @@ observation_contract:
 error_recovery_contract:
 context_budget:
 eval_gate:
-adoption_decision:
-rejection_reason:
+worker_recommendation:
+worker_recommendation_reason:
 loop_state:
 replay_trigger:
 freeze_trigger:
@@ -120,9 +124,11 @@ manifest or index rows affected
 agent_runs row status
 gate_log row or target_gate_id
 reconciliation result
+real receipt thread_id equals dispatched thread_id
+host-computed scope proof matches dispatch baseline, actual changed paths, receipt declaration, and exact write_scope
 QA or gate status
 user/client/Pro-review comments addressed or deferred
-adoption_decision and rejection_reason when not adopted
+worker_recommendation and recommendation reason; main/control records adoption separately
 recurrence guard
 helper evidence and worker_synthesis when helper_mode is stateless_secondary_helper
 evidence refs
@@ -139,8 +145,8 @@ evidence
 qa status
 open questions
 workflow issues found
-adoption_decision
-rejection_reason
+worker_recommendation
+worker_recommendation_reason
 recurrence_guard
 helper_mode
 helper_invocations
@@ -152,4 +158,5 @@ helper_adopted_by_worker
 helper_failure_reason
 worker_synthesis
 recommended next action
+host_scope_proof is supplied only by main/control reconciliation, never self-issued by the worker
 ```
