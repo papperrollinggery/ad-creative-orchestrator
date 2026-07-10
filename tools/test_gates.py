@@ -699,7 +699,7 @@ def test_client_pack_blocks_without_editable_pptx() -> None:
 
 
 def test_client_pack_passes_editable_internal_pptx() -> None:
-    if not optional_module("pptx"):
+    if not optional_module("pptx") or not optional_module("PIL") or not optional_module("reportlab"):
         return
     with tempfile.TemporaryDirectory(prefix="adco-gate-client-pass-") as raw_project:
         project = Path(raw_project)
