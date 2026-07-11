@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -39,8 +40,11 @@ from specialist_schema_validation import (
 from validate_project import (
     THREADOPS_RECEIPT_REQUIRED_PROOF,
     current_truth_value,
+    legacy_baseline_message_allowed,
     receipt_proof_values,
+    string_validation_errors,
     validate,
+    validate_issues,
     validate_client_delivery_readiness,
 )
 
@@ -49,7 +53,21 @@ REPO_ROOT = repo_or_module_root()
 TEMPLATE_ROOT = template_root()
 SKILL_DRAFT_DIR = skill_draft_dir()
 PACKAGE_NAME = "ad-creative-orchestrator"
-FALLBACK_VERSION = "0.2.0"
+FALLBACK_VERSION = "0.3.0"
+CONTROL_PLANE_SCHEMA_VERSION = "2.0"
+CONTROL_PLANE_SCHEMA_REL = Path("AD-creative/orchestrator/control_plane_schema.json")
+CONTROL_PLANE_MIGRATION_MANIFEST_REL = Path(
+    "AD-creative/orchestrator/migrations/control_plane_v2_manifest.json"
+)
+FINAL_DELIVERY_CONFIRMATION_PROTOCOL = (
+    "adco.final-delivery-reconciliation-confirmation"
+)
+FINAL_DELIVERY_CONFIRMATION_VERSION = "1.0"
+FINAL_DELIVERY_HOST_ATTESTATION_PROTOCOL = "adco.host-readback-attestation"
+FINAL_DELIVERY_HOST_ATTESTATION_VERSION = "1.0"
+FINAL_DELIVERY_HOST_ATTESTATION_ROOT = Path(
+    "AD-creative/orchestrator/host_attestations"
+)
 SPECIALIST_EXCHANGE_PROTOCOL = "adco.specialist-exchange"
 SPECIALIST_EXCHANGE_VERSION = "1.0"
 DIRCREATIVE_PROFILE_ID = "dircreative.film-preproduction"
@@ -74,8 +92,17 @@ CURRENT_VERSION_TRUTH_KEYS = (
     "version_map_status",
     "last_archive_before_edit",
 )
+CURRENT_VIEW_VERSION_STATUSES = {
+    "draft",
+    "internal_review",
+    "ready",
+    "active",
+    "current",
+}
 SPECIALIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 DEFAULT_SKILL_INSTALL_DIR = Path.home() / ".codex/skills/ad-creative-orchestrator"
+DEFAULT_SKILLSHUB_INSTALL_DIR = Path.home() / ".skillshub/ad-creative-orchestrator"
+SKILL_INSTALL_MANIFEST_NAME = ".adco-skill-install-manifest.json"
 DASHBOARD_REL = Path("AD-creative/handoff/操作台.html")
 COUNCIL_REPORT_REL = Path("AD-creative/gates/THREE-COUNCIL-READINESS_report.md")
 GOAL_PLAN_TEMPLATE_REL = Path("AD-creative/orchestrator/goal_iteration_plan_template.md")
@@ -198,6 +225,20 @@ FINAL_DELIVERY_LOCK_FIELDS = [
     "protected",
     "registered_at",
     "notes",
+    "inventory_state",
+    "reconciliation_state",
+    "reconciliation_kind",
+    "reconciles_lock_id",
+    "supersedes_lock_id",
+    "confirmed_by",
+    "confirmed_at",
+    "evidence_ref",
+    "evidence_sha256",
+    "host_attestation_ref",
+    "host_attestation_sha256",
+    "version_id",
+    "supersedes_version_id",
+    "status_reason",
 ]
 ARTIFACT_INDEX_FIELDS = [
     "artifact_id",
@@ -220,7 +261,49 @@ ARTIFACT_INDEX_FIELDS = [
     "size_bytes",
     "derived_from_artifact_id",
     "derived_from_sha256",
+    "lifecycle_state",
+    "original_path",
+    "cleanup_ref",
+    "removed_at",
+    "removal_reason",
+    "superseded_by",
+    "status_reason",
 ]
+ARTIFACT_LIFECYCLE_VALUES = {
+    "active",
+    "pending",
+    "superseded",
+    "withdrawn",
+    "archived",
+    "deprecated",
+    "rejected",
+    "removed",
+    "legacy_unresolved_tombstone",
+    "legacy_unknown",
+}
+ARTIFACT_INACTIVE_LIFECYCLE_VALUES = {
+    "superseded",
+    "withdrawn",
+    "archived",
+    "deprecated",
+    "rejected",
+    "removed",
+    "legacy_unresolved_tombstone",
+}
+LEGACY_BASELINE_SOURCE_RELS = (
+    "AD-creative/orchestrator/source_events.csv",
+    "AD-creative/orchestrator/requirements.csv",
+    "AD-creative/orchestrator/work_items.csv",
+    "AD-creative/orchestrator/artifact_index.csv",
+    "AD-creative/orchestrator/gate_log.csv",
+    "AD-creative/orchestrator/version_map.csv",
+    "AD-creative/references/reference_cards.csv",
+    "AD-creative/visual_assets/asset_manifest.csv",
+    "AD-creative/orchestrator/profile_knowledge/profile_subjects.csv",
+    "AD-creative/orchestrator/profile_knowledge/meeting_voice_map.csv",
+    "AD-creative/orchestrator/profile_knowledge/profile_insights.csv",
+    "AD-creative/orchestrator/profile_knowledge/profile_conflicts.csv",
+)
 GATE_LOG_FIELDS = [
     "gate_id",
     "gate_run_id",
@@ -597,21 +680,184 @@ def now_iso() -> str:
 
 
 
-def install_global_skill(target: Path = DEFAULT_SKILL_INSTALL_DIR) -> dict[str, str | bool]:
-    source_skill = SKILL_DRAFT_DIR / "SKILL.md"
-    if not source_skill.exists():
-        raise FileNotFoundError(f"skill draft not found: {source_skill}")
-    target = target.expanduser().resolve()
+def skill_tree_files(root: Path) -> dict[str, Path]:
+    """Return the regular, non-hidden files managed by the packaged Skill tree."""
+    if not root.is_dir():
+        raise FileNotFoundError(f"skill draft directory not found: {root}")
+    resolved_root = root.resolve()
+    files: dict[str, Path] = {}
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root)
+        if any(part.startswith(".") or part == "__pycache__" for part in rel.parts):
+            continue
+        if path.is_symlink():
+            raise RuntimeError(f"skill source tree must not contain symlinks: {path}")
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(resolved_root)
+        except ValueError as exc:
+            raise RuntimeError(f"skill source file escapes source tree: {path}") from exc
+        files[rel.as_posix()] = path
+    if "SKILL.md" not in files:
+        raise FileNotFoundError(f"skill draft not found: {root / 'SKILL.md'}")
+    return files
+
+
+def skill_tree_hash(files: dict[str, Path]) -> str:
+    return skill_hash_map_digest(
+        {rel_path: file_sha256(path) for rel_path, path in files.items()}
+    )
+
+
+def skill_hash_map_digest(hashes: dict[str, str]) -> str:
+    digest = hashlib.sha256()
+    for rel_path, file_hash in sorted(hashes.items()):
+        digest.update(rel_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file_hash.encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def safe_skill_target_path(target: Path, rel_path: str) -> Path:
+    relative = Path(rel_path)
+    if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+        raise RuntimeError(f"unsafe managed Skill path: {rel_path}")
+    current = target
+    for part in relative.parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise RuntimeError(f"Skill target contains a symlinked directory: {current}")
+        if current.exists() and not current.is_dir():
+            raise RuntimeError(f"Skill target parent is not a directory: {current}")
+    destination = target / relative
+    if destination.is_symlink():
+        raise RuntimeError(f"Skill target file is a symlink: {destination}")
+    if destination.exists() and not destination.is_file():
+        raise RuntimeError(f"Skill target path is not a regular file: {destination}")
+    return destination
+
+
+def read_skill_install_manifest(target: Path) -> dict[str, object] | None:
+    path = target / SKILL_INSTALL_MANIFEST_NAME
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f"Skill install manifest is not a regular file: {path}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Skill install manifest is malformed: {path}") from exc
+    if not isinstance(payload, dict) or payload.get("skill") != "ad-creative-orchestrator":
+        raise RuntimeError(f"Skill install manifest has the wrong owner: {path}")
+    managed = payload.get("managed_files")
+    if not isinstance(managed, list) or not all(isinstance(item, str) for item in managed):
+        raise RuntimeError(f"Skill install manifest has invalid managed_files: {path}")
+    managed_hashes = payload.get("managed_file_sha256")
+    if (
+        payload.get("schema_version") != 2
+        or not isinstance(managed_hashes, dict)
+        or set(managed_hashes) != set(managed)
+        or not all(
+            isinstance(rel_path, str)
+            and isinstance(file_hash, str)
+            and re.fullmatch(r"[0-9a-f]{64}", file_hash)
+            for rel_path, file_hash in managed_hashes.items()
+        )
+        or skill_hash_map_digest(
+            {str(key): str(value) for key, value in managed_hashes.items()}
+        )
+        != payload.get("source_tree_sha256")
+    ):
+        raise RuntimeError(f"Skill install manifest is legacy or tampered: {path}")
+    for rel_path in managed:
+        safe_skill_target_path(target, rel_path)
+    return payload
+
+
+def install_global_skill(target: Path = DEFAULT_SKILL_INSTALL_DIR) -> dict[str, object]:
+    source_files = skill_tree_files(SKILL_DRAFT_DIR)
+    requested_target = target.expanduser()
+    if requested_target.is_symlink():
+        resolved_link = requested_target.resolve()
+        allowed_compatibility_link = (
+            requested_target.absolute() == DEFAULT_SKILL_INSTALL_DIR.absolute()
+            and resolved_link == DEFAULT_SKILLSHUB_INSTALL_DIR.resolve()
+        )
+        if not allowed_compatibility_link:
+            raise RuntimeError(
+                f"Skill target root symlink is not an approved compatibility link: {requested_target}"
+            )
+    target = requested_target.resolve()
     target.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_skill, target / "SKILL.md")
+    if not target.is_dir():
+        raise RuntimeError(f"Skill target must be a real directory: {target}")
+
+    manifest_warning = ""
+    try:
+        previous_manifest = read_skill_install_manifest(target)
+    except RuntimeError as exc:
+        previous_manifest = None
+        manifest_warning = str(exc)
+    previous_files = set(previous_manifest.get("managed_files", [])) if previous_manifest else set()
+    current_files = set(source_files)
+    removed_stale_files: list[str] = []
+    preserved_stale_files: list[str] = []
+    for rel_path in sorted(previous_files - current_files):
+        try:
+            stale = safe_skill_target_path(target, rel_path)
+        except RuntimeError:
+            preserved_stale_files.append(rel_path)
+            continue
+        # A manifest stored inside the writable target cannot prove historical
+        # ownership, even when its hashes are internally consistent. Never
+        # delete a stale path automatically; report and preserve it for an
+        # explicit human cleanup decision.
+        if stale.exists():
+            preserved_stale_files.append(rel_path)
+
+    for rel_path, source in sorted(source_files.items()):
+        destination = safe_skill_target_path(target, rel_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+    target_files = {
+        rel_path: safe_skill_target_path(target, rel_path)
+        for rel_path in sorted(source_files)
+    }
+    source_tree_hash = skill_tree_hash(source_files)
+    target_tree_hash = skill_tree_hash(target_files)
+    source_file_hashes = {
+        rel_path: file_sha256(path) for rel_path, path in sorted(source_files.items())
+    }
+    manifest = {
+        "schema_version": 2,
+        "skill": "ad-creative-orchestrator",
+        "managed_files": sorted(source_files),
+        "managed_file_sha256": source_file_hashes,
+        "source_tree_sha256": source_tree_hash,
+    }
+    write_json_object(target / SKILL_INSTALL_MANIFEST_NAME, manifest)
+
+    source_skill = source_files["SKILL.md"]
+    target_skill = target_files["SKILL.md"]
     source_hash = file_sha256(source_skill)
-    target_hash = file_sha256(target / "SKILL.md")
+    target_hash = file_sha256(target_skill)
     return {
         "source": str(source_skill),
-        "target": str(target / "SKILL.md"),
+        "target": str(target_skill),
         "source_hash": source_hash,
         "target_hash": target_hash,
-        "match": source_hash == target_hash,
+        "source_tree_hash": source_tree_hash,
+        "target_tree_hash": target_tree_hash,
+        "managed_files": sorted(source_files),
+        "manifest": str(target / SKILL_INSTALL_MANIFEST_NAME),
+        "manifest_warning": manifest_warning,
+        "removed_stale_files": removed_stale_files,
+        "preserved_stale_files": preserved_stale_files,
+        "match": source_hash == target_hash and source_tree_hash == target_tree_hash,
     }
 
 
@@ -894,25 +1140,64 @@ def render_support_bundle(project: Path) -> Path:
     return report
 
 
-def check_global_skill(target: Path = DEFAULT_SKILL_INSTALL_DIR) -> dict[str, str | bool]:
+def check_global_skill(target: Path = DEFAULT_SKILL_INSTALL_DIR) -> dict[str, object]:
     source_skill = SKILL_DRAFT_DIR / "SKILL.md"
-    target_skill = target.expanduser().resolve() / "SKILL.md"
-    if not source_skill.exists() or not target_skill.exists():
-        return {
-            "source": str(source_skill),
-            "target": str(target_skill),
-            "source_hash": "",
-            "target_hash": "",
-            "match": False,
-        }
-    source_hash = file_sha256(source_skill)
-    target_hash = file_sha256(target_skill)
-    return {
+    target_root = target.expanduser().resolve()
+    target_skill = target_root / "SKILL.md"
+    empty = {
         "source": str(source_skill),
         "target": str(target_skill),
+        "source_hash": "",
+        "target_hash": "",
+        "source_tree_hash": "",
+        "target_tree_hash": "",
+        "managed_files": [],
+        "manifest_match": False,
+        "match": False,
+    }
+    try:
+        source_files = skill_tree_files(SKILL_DRAFT_DIR)
+        target_files = {
+            rel_path: safe_skill_target_path(target_root, rel_path)
+            for rel_path in sorted(source_files)
+        }
+    except (FileNotFoundError, RuntimeError):
+        return empty
+    if any(not path.is_file() for path in target_files.values()):
+        return empty
+    source_hash = file_sha256(source_files["SKILL.md"])
+    target_hash = file_sha256(target_files["SKILL.md"])
+    source_tree_hash = skill_tree_hash(source_files)
+    target_tree_hash = skill_tree_hash(target_files)
+    try:
+        manifest = read_skill_install_manifest(target_root)
+    except RuntimeError:
+        manifest = None
+    manifest_match = bool(
+        manifest
+        and manifest.get("schema_version") == 2
+        and manifest.get("managed_files") == sorted(source_files)
+        and manifest.get("managed_file_sha256")
+        == {
+            rel_path: file_sha256(path)
+            for rel_path, path in sorted(source_files.items())
+        }
+        and manifest.get("source_tree_sha256") == source_tree_hash
+    )
+    return {
+        "source": str(source_files["SKILL.md"]),
+        "target": str(target_files["SKILL.md"]),
         "source_hash": source_hash,
         "target_hash": target_hash,
-        "match": source_hash == target_hash,
+        "source_tree_hash": source_tree_hash,
+        "target_tree_hash": target_tree_hash,
+        "managed_files": sorted(source_files),
+        "manifest_match": manifest_match,
+        "match": (
+            source_hash == target_hash
+            and source_tree_hash == target_tree_hash
+            and manifest_match
+        ),
     }
 
 
@@ -1615,24 +1900,520 @@ def sync_asset_current_manifest(project: Path) -> Path:
     return project / "AD-creative/visual_assets/asset_current_manifest.csv"
 
 
+def final_delivery_project_path(
+    project: Path, raw_path: str, *, require_file: bool = False
+) -> tuple[str, Path]:
+    raw = (raw_path or "").strip().strip("`")
+    candidate = Path(raw)
+    if not raw or candidate.is_absolute() or ".." in candidate.parts:
+        raise ValueError(f"FinalDelivery path must be project-relative: {raw_path}")
+    rel = unicodedata.normalize("NFC", candidate.as_posix())
+    relative = Path(rel)
+    if not relative.parts or relative.parts[0] != "05_最终交付_FinalDelivery":
+        raise ValueError(f"FinalDelivery path must stay inside 05_最终交付_FinalDelivery: {raw_path}")
+    if project_relative_path_has_symlink_component(project, rel):
+        raise ValueError(f"FinalDelivery path contains a symlink component: {raw_path}")
+    lexical = project / relative
+    resolved = lexical.resolve()
+    final_root = (project / "05_最终交付_FinalDelivery").resolve()
+    try:
+        resolved.relative_to(final_root)
+        resolved.relative_to(project.resolve())
+    except ValueError as exc:
+        raise ValueError(f"FinalDelivery path escapes the protected root: {raw_path}") from exc
+    if require_file and (not lexical.is_file() or lexical.is_symlink()):
+        raise ValueError(f"FinalDelivery path is not a regular file: {raw_path}")
+    return rel, lexical
+
+
+def final_delivery_human_identity_valid(value: str) -> bool:
+    identity = value.strip()
+    if not non_placeholder(identity, min_chars=2):
+        return False
+    normalized = re.sub(r"[^a-z0-9]+", "_", identity.lower()).strip("_")
+    if "main_controller" in normalized or normalized == "maincontroller":
+        return False
+    tokens = {token for token in normalized.split("_") if token}
+    forbidden_tokens = {
+        "adco",
+        "assistant",
+        "automation",
+        "agent",
+        "bot",
+        "chatgpt",
+        "claude",
+        "codex",
+        "gemini",
+        "model",
+        "system",
+        "worker",
+        "ai",
+    }
+    if tokens & forbidden_tokens:
+        return False
+    return not any(token in identity for token in ("自动化", "机器人", "系统代理", "执行代理"))
+
+
+def final_delivery_lock_id(rel_path: str) -> str:
+    """Return a stable path identity without collapsing Unicode filenames."""
+    canonical = unicodedata.normalize("NFC", rel_path.strip())
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest().upper()
+    return f"LOCK-{digest}"
+
+
+def final_delivery_evidence_binding(
+    project: Path, evidence_ref: str
+) -> tuple[str, Path, str]:
+    raw = (evidence_ref or "").strip().strip("`")
+    candidate = Path(raw)
+    if not raw or candidate.is_absolute() or ".." in candidate.parts:
+        raise ValueError("FinalDelivery evidence_ref must be a project-relative file")
+    rel = unicodedata.normalize("NFC", candidate.as_posix())
+    if project_relative_path_has_symlink_component(project, rel):
+        raise ValueError("FinalDelivery evidence_ref must not traverse symlinks")
+    path = project / rel
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(project.resolve())
+    except ValueError as exc:
+        raise ValueError("FinalDelivery evidence_ref escapes the project") from exc
+    if not path.is_file() or path.is_symlink() or path.stat().st_nlink != 1:
+        raise ValueError(
+            "FinalDelivery evidence_ref must be an existing non-symlink, non-hardlinked file"
+        )
+    return rel, path, file_sha256(path)
+
+
+def final_delivery_evidence_binding_valid(
+    project: Path, row: dict[str, str]
+) -> bool:
+    try:
+        _, _, actual_sha = final_delivery_evidence_binding(
+            project, row.get("evidence_ref", "")
+        )
+    except ValueError:
+        return False
+    expected_sha = row.get("evidence_sha256", "").strip()
+    return bool(re.fullmatch(r"[0-9a-f]{64}", expected_sha)) and actual_sha == expected_sha
+
+
+def final_delivery_artifact_for_path(
+    project: Path, rel_path: str, *, require_active: bool
+) -> dict[str, str] | None:
+    _, artifacts = read_csv_rows(
+        project / "AD-creative/orchestrator/artifact_index.csv"
+    )
+    matches: list[dict[str, str]] = []
+    for row in artifacts:
+        try:
+            artifact_rel, _ = final_delivery_project_path(
+                project, row.get("path") or row.get("original_path") or ""
+            )
+        except ValueError:
+            continue
+        if artifact_rel != rel_path:
+            continue
+        if require_active and normalized_artifact_lifecycle(row) != "active":
+            continue
+        matches.append(row)
+    return matches[0] if len(matches) == 1 else None
+
+
+def final_delivery_old_version_id(
+    project: Path, old_row: dict[str, str]
+) -> str:
+    try:
+        old_rel, _ = final_delivery_project_path(project, old_row.get("path", ""))
+    except ValueError:
+        return ""
+    artifact = final_delivery_artifact_for_path(
+        project, old_rel, require_active=False
+    )
+    if not artifact:
+        return ""
+    artifact_id = artifact.get("artifact_id", "").strip()
+    if not artifact_id:
+        return ""
+    _, versions = read_csv_rows(
+        project / "AD-creative/orchestrator/version_map.csv"
+    )
+    explicit = old_row.get("version_id", "").strip()
+    candidates = [
+        row
+        for row in versions
+        if row.get("artifact_id", "").strip() == artifact_id
+        and (not explicit or row.get("version_id", "").strip() == explicit)
+    ]
+    if len(candidates) != 1:
+        return ""
+    return candidates[0].get("version_id", "").strip()
+
+
+def final_delivery_confirmation_source_valid(
+    project: Path,
+    *,
+    source_event_id: str,
+    evidence_rel: str,
+    confirmed_by: str,
+    new_artifact_id: str,
+) -> bool:
+    _, source_events = read_csv_rows(
+        project / "AD-creative/orchestrator/source_events.csv"
+    )
+    matches = [
+        row
+        for row in source_events
+        if row.get("source_event_id", "").strip() == source_event_id.strip()
+    ]
+    if len(matches) != 1:
+        return False
+    source = matches[0]
+    if source.get("source_type", "").strip().lower() != "file":
+        return False
+    if source.get("source_owner", "").strip().casefold() != confirmed_by.strip().casefold():
+        return False
+    if source.get("declared_semantics", "").strip().lower() not in {
+        "approval",
+        "confirmation",
+        "final_delivery_reconciliation",
+    }:
+        return False
+    if source.get("trust_level", "").strip().lower() not in {
+        "confirmed",
+        "user_confirmed",
+        "client_confirmed",
+    }:
+        return False
+    source_paths = {
+        canonical_project_relative_path(project, value)
+        for value in split_registered_paths(source.get("file_paths", ""))
+    }
+    if source_paths != {evidence_rel}:
+        return False
+    if new_artifact_id:
+        affected = set(split_asset_refs(source.get("affects_artifacts", "")))
+        if new_artifact_id not in affected:
+            return False
+    return True
+
+
+def final_delivery_host_attestation_binding(
+    project: Path,
+    *,
+    attestation_ref: str,
+    confirmation_receipt_ref: str,
+    confirmation_receipt_sha256: str,
+) -> tuple[str, str]:
+    raw = (attestation_ref or "").strip().strip("`")
+    candidate = Path(raw)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise ValueError("FinalDelivery host attestation must be project-relative")
+    rel = unicodedata.normalize("NFC", candidate.as_posix())
+    root_prefix = FINAL_DELIVERY_HOST_ATTESTATION_ROOT.as_posix() + "/"
+    if not rel.startswith(root_prefix):
+        raise ValueError(
+            "FinalDelivery host attestation must stay in the host-only attestation root"
+        )
+    if project_relative_path_has_symlink_component(project, rel):
+        raise ValueError("FinalDelivery host attestation must not traverse symlinks")
+    path = project / rel
+    try:
+        path.resolve().relative_to(project.resolve())
+    except ValueError as exc:
+        raise ValueError("FinalDelivery host attestation escapes the project") from exc
+    if not path.is_file() or path.is_symlink() or path.stat().st_nlink != 1:
+        raise ValueError(
+            "FinalDelivery host attestation must be an existing non-symlink, non-hardlinked file"
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("FinalDelivery host attestation must be structured JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("FinalDelivery host attestation must be a JSON object")
+    required_exact = {
+        "protocol_id": FINAL_DELIVERY_HOST_ATTESTATION_PROTOCOL,
+        "schema_version": FINAL_DELIVERY_HOST_ATTESTATION_VERSION,
+        "attestation_scope": "final_delivery_reconciliation",
+        "attestation_role": "host_main_thread",
+        "verified_by": "main_controller",
+        "readback_status": "verified",
+        "readback_tool": "codex_app.read_thread",
+        "confirmation_receipt_ref": confirmation_receipt_ref,
+        "confirmation_receipt_sha256": confirmation_receipt_sha256,
+    }
+    if any(
+        str(payload.get(key, "")).strip() != expected
+        for key, expected in required_exact.items()
+    ):
+        raise ValueError("FinalDelivery host attestation binding mismatch")
+    if str(payload.get("authority", "")).strip() not in {
+        "user",
+        "client",
+        "project_owner",
+    }:
+        raise ValueError("FinalDelivery host attestation authority is invalid")
+    if not non_placeholder(str(payload.get("attestation_id", "")).strip(), min_chars=8):
+        raise ValueError("FinalDelivery host attestation_id is invalid")
+    try:
+        parse_thread_timestamp(str(payload.get("verified_at", "")), "verified_at")
+        validate_real_thread_id(
+            str(payload.get("thread_id", "")).strip(),
+            "host_attestation.thread_id",
+        )
+    except ValueError as exc:
+        raise ValueError("FinalDelivery host attestation identity/time is invalid") from exc
+    if not non_placeholder(
+        str(payload.get("user_message_id", "")).strip(), min_chars=8
+    ) or not re.fullmatch(
+        r"[0-9a-f]{64}", str(payload.get("user_message_sha256", "")).strip()
+    ):
+        raise ValueError("FinalDelivery host attestation user-message binding is invalid")
+    return rel, file_sha256(path)
+
+
+def final_delivery_confirmation_receipt_binding(
+    project: Path,
+    *,
+    evidence_ref: str,
+    old_row: dict[str, str],
+    new_row: dict[str, str],
+    kind: str,
+    confirmed_by: str,
+    confirmed_at: str,
+    version_id: str,
+) -> tuple[str, str, str, str, str]:
+    evidence_rel, evidence_path, evidence_sha = final_delivery_evidence_binding(
+        project, evidence_ref
+    )
+    try:
+        payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            "FinalDelivery evidence_ref must contain a structured confirmation receipt"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ValueError("FinalDelivery confirmation receipt must be a JSON object")
+    old_rel, _ = final_delivery_project_path(project, old_row.get("path", ""))
+    new_rel, new_path = final_delivery_project_path(
+        project, new_row.get("path", ""), require_file=True
+    )
+    new_artifact = final_delivery_artifact_for_path(
+        project, new_rel, require_active=True
+    )
+    new_artifact_id = (
+        new_artifact.get("artifact_id", "").strip() if new_artifact else ""
+    )
+    old_version_id = (
+        final_delivery_old_version_id(project, old_row)
+        if kind == "supersession"
+        else ""
+    )
+    if kind == "supersession" and not old_version_id:
+        raise ValueError(
+            "FinalDelivery supersession requires an unambiguous old artifact/version binding"
+        )
+    expected = {
+        "protocol_id": FINAL_DELIVERY_CONFIRMATION_PROTOCOL,
+        "schema_version": FINAL_DELIVERY_CONFIRMATION_VERSION,
+        "confirmation_scope": "final_delivery_reconciliation",
+        "decision": "approve_reconciliation",
+        "confirmed_by": confirmed_by.strip(),
+        "confirmed_at": confirmed_at.strip(),
+        "reconciliation_kind": kind,
+        "old_lock_id": old_row.get("lock_id", "").strip(),
+        "old_path": old_rel,
+        "old_sha256": old_row.get("sha256", "").strip(),
+        "new_path": new_rel,
+        "new_sha256": file_sha256(new_path),
+        "new_artifact_id": new_artifact_id,
+        "version_id": version_id.strip(),
+        "supersedes_version_id": old_version_id,
+    }
+    mismatched = [
+        key
+        for key, expected_value in expected.items()
+        if str(payload.get(key, "")).strip() != expected_value
+    ]
+    if mismatched:
+        raise ValueError(
+            "FinalDelivery confirmation receipt binding mismatch: "
+            + ", ".join(mismatched)
+        )
+    confirmation_id = str(payload.get("confirmation_id", "")).strip()
+    source_event_id = str(payload.get("source_event_id", "")).strip()
+    if not non_placeholder(confirmation_id, min_chars=8) or not source_event_id:
+        raise ValueError(
+            "FinalDelivery confirmation receipt requires confirmation_id and source_event_id"
+        )
+    if not final_delivery_confirmation_source_valid(
+        project,
+        source_event_id=source_event_id,
+        evidence_rel=evidence_rel,
+        confirmed_by=confirmed_by,
+        new_artifact_id=new_artifact_id,
+    ):
+        raise ValueError(
+            "FinalDelivery confirmation receipt is not bound to one confirmed user/client source event"
+        )
+    host_attestation_ref = str(payload.get("host_attestation_ref", "")).strip()
+    host_rel, host_sha = final_delivery_host_attestation_binding(
+        project,
+        attestation_ref=host_attestation_ref,
+        confirmation_receipt_ref=evidence_rel,
+        confirmation_receipt_sha256=evidence_sha,
+    )
+    return evidence_rel, evidence_sha, host_rel, host_sha, old_version_id
+
+
+def final_delivery_version_binding_valid(
+    project: Path, rel_path: str, version_id: str
+) -> bool:
+    version_id = version_id.strip()
+    if not version_id:
+        return False
+    _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    artifact_matches: list[dict[str, str]] = []
+    for row in artifacts:
+        try:
+            artifact_rel, _ = final_delivery_project_path(
+                project, row.get("path") or row.get("original_path") or ""
+            )
+        except ValueError:
+            continue
+        if (
+            artifact_rel == rel_path
+            and normalized_artifact_lifecycle(row) == "active"
+        ):
+            artifact_matches.append(row)
+    if len(artifact_matches) != 1:
+        return False
+    artifact_id = artifact_matches[0].get("artifact_id", "").strip()
+    if not artifact_id:
+        return False
+    _, versions = read_csv_rows(project / "AD-creative/orchestrator/version_map.csv")
+    version_matches = [
+        row for row in versions if row.get("version_id", "").strip() == version_id
+    ]
+    if len(version_matches) != 1:
+        return False
+    version = version_matches[0]
+    truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    truth_text = truth_path.read_text(encoding="utf-8") if truth_path.is_file() else ""
+    truth_version_matches = current_truth_value(truth_text, "current_version_id") == version_id
+    version_artifact_id = version.get("artifact_id", "").strip()
+    if version.get("status", "").strip().lower() != "current":
+        return False
+    if not truth_version_matches:
+        return False
+    if version_artifact_id != artifact_id:
+        return False
+    artifact_type = artifact_matches[0].get("artifact_type", "").strip().lower()
+    truth_key_by_type = {
+        "pptx": "current_pptx_artifact_id",
+        "pdf": "current_pdf_artifact_id",
+        "preview": "current_preview_artifact_id",
+        "deck_preview": "current_preview_artifact_id",
+        "png_preview": "current_preview_artifact_id",
+        "jpg_preview": "current_preview_artifact_id",
+        "text_extract": "current_text_extract_artifact_id",
+        "ppt_text_extract": "current_text_extract_artifact_id",
+        "ppt_editability_check": "current_ppt_editability_artifact_id",
+    }
+    truth_key = truth_key_by_type.get(artifact_type, "")
+    if not truth_key or current_truth_value(truth_text, truth_key) != artifact_id:
+        return False
+    return True
+
+
+def final_delivery_supersession_chain_valid(
+    project: Path, old_row: dict[str, str], new_version_id: str
+) -> bool:
+    old_version_id = final_delivery_old_version_id(project, old_row)
+    if not old_version_id:
+        return False
+    _, versions = read_csv_rows(project / "AD-creative/orchestrator/version_map.csv")
+    matches = [
+        row
+        for row in versions
+        if row.get("version_id", "").strip() == new_version_id.strip()
+    ]
+    return bool(
+        len(matches) == 1
+        and matches[0].get("supersedes_version_id", "").strip()
+        == old_version_id
+    )
+
+
 def final_delivery_lock_snapshot(
     project: Path,
     *,
     protected_value: str = "true",
 ) -> tuple[list[dict[str, str]], Path]:
-    """Register new FinalDelivery files without ever refreshing an existing baseline."""
+    """Inventory first; never refresh an existing baseline or mutate user files."""
     lock_path = project / "AD-creative/orchestrator/final_delivery_lock.csv"
     ensure_csv_file(lock_path, FINAL_DELIVERY_LOCK_FIELDS)
     fields, rows = read_csv_rows(lock_path)
-    by_path = {row.get("path", ""): dict(row) for row in rows if row.get("path", "")}
     issues: list[str] = []
+    by_path: dict[str, dict[str, str]] = {}
+    output_rows: list[dict[str, str]] = []
+    duplicate_raw_paths: set[str] = set()
+    lock_ids: set[str] = set()
+    duplicate_lock_ids: set[str] = set()
+    for row in rows:
+        copied = dict(row)
+        output_rows.append(copied)
+        lock_id = row.get("lock_id", "").strip()
+        if not lock_id:
+            issues.append(
+                "FinalDelivery lock row missing lock_id: "
+                + (row.get("path", "").strip() or "<blank path>")
+            )
+        elif lock_id in lock_ids:
+            duplicate_lock_ids.add(lock_id)
+        else:
+            lock_ids.add(lock_id)
+        raw_path = row.get("path", "").strip()
+        if not raw_path:
+            continue
+        if raw_path in by_path:
+            duplicate_raw_paths.add(raw_path)
+            continue
+        by_path[raw_path] = copied
+    for raw_path in sorted(duplicate_raw_paths):
+        issues.append(f"duplicate FinalDelivery lock path: {raw_path}")
+    for lock_id in sorted(duplicate_lock_ids):
+        issues.append(f"duplicate FinalDelivery lock_id: {lock_id}")
+
+    canonical_to_raw: dict[str, str] = {}
+    pending_paths: list[str] = []
 
     for rel_path, row in by_path.items():
+        try:
+            canonical_rel, path = final_delivery_project_path(project, rel_path)
+        except ValueError as exc:
+            issues.append(f"unsafe lock path: {rel_path}: {exc}")
+            continue
+        if canonical_rel in canonical_to_raw:
+            issues.append(
+                "duplicate canonical FinalDelivery lock path: "
+                f"{canonical_to_raw[canonical_rel]} and {rel_path}"
+            )
+            continue
+        canonical_to_raw[canonical_rel] = rel_path
+        if (
+            row.get("inventory_state", "").strip() == "pending_reconciliation"
+            and not normalized_bool(row.get("protected"))
+            and path.is_file()
+            and not is_final_delivery_metadata("", rel_path)
+        ):
+            pending_paths.append(rel_path)
         if not normalized_bool(row.get("protected")):
             continue
-        path = project / rel_path
+        row.setdefault("inventory_state", "protected_baseline")
         if not path.exists() or not path.is_file():
-            issues.append(f"protected file missing: {rel_path}")
+            if not final_delivery_reconciliation_valid(project, by_path, row):
+                issues.append(f"protected file missing: {rel_path}")
             continue
         current_sha = file_sha256(path)
         current_size = str(path.stat().st_size)
@@ -1643,34 +2424,267 @@ def final_delivery_lock_snapshot(
         elif expected_size and current_size != expected_size:
             issues.append(f"protected file size changed: {rel_path}")
         elif not expected_sha or not expected_size:
-            # Migrate an incomplete legacy row once; a complete baseline is immutable.
-            row["sha256"] = current_sha
-            row["size_bytes"] = current_size
-            row["mtime"] = row.get("mtime") or file_stat_mtime(path)
+            issues.append(f"protected baseline incomplete: {rel_path}")
 
     final_root = project / "05_最终交付_FinalDelivery"
-    for path in sorted(final_root.rglob("*")) if final_root.exists() else []:
+    if final_root.exists() and project_relative_path_has_symlink_component(
+        project, "05_最终交付_FinalDelivery"
+    ):
+        issues.append("unsafe FinalDelivery root: symlink components are forbidden")
+        inventory_paths: list[Path] = []
+    else:
+        inventory_paths = sorted(final_root.rglob("*")) if final_root.exists() else []
+    for path in inventory_paths:
         if not path.is_file() or path.name in {"README.md", "目录索引.md", ".DS_Store"}:
             continue
-        rel_path = safe_rel(project, path)
-        if rel_path in by_path:
+        lexical_rel = path.relative_to(project).as_posix()
+        try:
+            rel_path, safe_path = final_delivery_project_path(
+                project, lexical_rel, require_file=True
+            )
+        except ValueError as exc:
+            issues.append(f"unsafe FinalDelivery inventory path: {lexical_rel}: {exc}")
             continue
-        by_path[rel_path] = {
-            "lock_id": f"LOCK-{safe_artifact_suffix(rel_path)[-12:]}",
+        if rel_path in canonical_to_raw:
+            continue
+        metadata_only = is_final_delivery_metadata("", rel_path)
+        new_row = {
+            "lock_id": final_delivery_lock_id(rel_path),
             "path": rel_path,
-            "sha256": file_sha256(path),
-            "size_bytes": str(path.stat().st_size),
-            "mtime": file_stat_mtime(path),
-            "protected": protected_value,
+            "sha256": file_sha256(safe_path),
+            "size_bytes": str(safe_path.stat().st_size),
+            "mtime": file_stat_mtime(safe_path),
+            "protected": "no",
             "registered_at": now_iso(),
-            "notes": "user_final_delivery_file_registered_only_do_not_move_or_overwrite",
+            "notes": (
+                "generated_metadata_inventory_not_user_final"
+                if metadata_only
+                else "pending_final_delivery_inventory_do_not_move_or_overwrite"
+            ),
+            "inventory_state": "metadata_excluded" if metadata_only else "pending_reconciliation",
+            "reconciliation_state": "not_applicable" if metadata_only else "pending",
+            "reconciliation_kind": "",
+            "reconciles_lock_id": "",
+            "supersedes_lock_id": "",
+            "confirmed_by": "",
+            "confirmed_at": "",
+            "evidence_ref": "",
+            "evidence_sha256": "",
+            "host_attestation_ref": "",
+            "host_attestation_sha256": "",
+            "version_id": "",
+            "supersedes_version_id": "",
+            "status_reason": "generated metadata is not a user final" if metadata_only else "new physical file inventoried safely",
         }
+        by_path[rel_path] = new_row
+        output_rows.append(new_row)
+        if not metadata_only:
+            pending_paths.append(rel_path)
+        canonical_to_raw[rel_path] = rel_path
+
+    # Safe inventory is durable even if an older protected path is missing or changed.
+    write_csv_rows(lock_path, fields or FINAL_DELIVERY_LOCK_FIELDS, output_rows)
 
     if issues:
         raise RuntimeError("FinalDelivery lock integrity violation: " + "; ".join(issues))
-    locked = list(by_path.values())
+    for rel_path in pending_paths:
+        row = by_path[rel_path]
+        row["protected"] = protected_value
+        row["inventory_state"] = "protected_baseline"
+        row["reconciliation_state"] = "not_required"
+        row["status_reason"] = "initial immutable baseline registered"
+    locked = output_rows
     write_csv_rows(lock_path, fields or FINAL_DELIVERY_LOCK_FIELDS, locked)
     return locked, lock_path
+
+
+def final_delivery_reconciliation_valid(
+    project: Path,
+    rows_by_path: dict[str, dict[str, str]],
+    old_row: dict[str, str],
+) -> bool:
+    old_lock_id = old_row.get("lock_id", "").strip()
+    if not old_lock_id:
+        return False
+    candidates = [
+        row
+        for row in rows_by_path.values()
+        if row.get("reconciles_lock_id", "").strip() == old_lock_id
+    ]
+    if len(candidates) != 1:
+        return False
+    new_row = candidates[0]
+    if not (
+        normalized_bool(new_row.get("protected"))
+        and new_row.get("reconciliation_state", "").strip().lower() == "reconciled"
+        and final_delivery_human_identity_valid(new_row.get("confirmed_by", ""))
+        and new_row.get("confirmed_at", "").strip()
+    ):
+        return False
+    try:
+        parse_thread_timestamp(new_row.get("confirmed_at", ""), "confirmed_at")
+    except ValueError:
+        return False
+    try:
+        new_rel, new_path = final_delivery_project_path(
+            project, new_row.get("path", ""), require_file=True
+        )
+        final_delivery_project_path(project, old_row.get("path", ""))
+    except ValueError:
+        return False
+    actual_sha = file_sha256(new_path)
+    if actual_sha != new_row.get("sha256", "").strip():
+        return False
+    kind = new_row.get("reconciliation_kind", "").strip().lower()
+    try:
+        evidence_rel, evidence_sha, host_rel, host_sha, old_version_id = (
+            final_delivery_confirmation_receipt_binding(
+                project,
+                evidence_ref=new_row.get("evidence_ref", ""),
+                old_row=old_row,
+                new_row=new_row,
+                kind=kind,
+                confirmed_by=new_row.get("confirmed_by", ""),
+                confirmed_at=new_row.get("confirmed_at", ""),
+                version_id=new_row.get("version_id", ""),
+            )
+        )
+    except ValueError:
+        return False
+    if (
+        new_row.get("evidence_ref", "").strip() != evidence_rel
+        or new_row.get("evidence_sha256", "").strip() != evidence_sha
+        or new_row.get("host_attestation_ref", "").strip() != host_rel
+        or new_row.get("host_attestation_sha256", "").strip() != host_sha
+        or new_row.get("supersedes_version_id", "").strip() != old_version_id
+    ):
+        return False
+    if kind == "rename":
+        return actual_sha == old_row.get("sha256", "").strip()
+    if kind == "supersession":
+        return (
+            actual_sha != old_row.get("sha256", "").strip()
+            and bool(new_row.get("version_id", "").strip())
+            and new_row.get("supersedes_lock_id", "").strip() == old_lock_id
+            and final_delivery_version_binding_valid(
+                project, new_rel, new_row.get("version_id", "")
+            )
+            and final_delivery_supersession_chain_valid(
+                project, old_row, new_row.get("version_id", "")
+            )
+        )
+    return False
+
+
+def reconcile_final_delivery(
+    project: Path,
+    *,
+    old_path: str,
+    new_path: str,
+    kind: str,
+    confirmed_by: str,
+    confirmed_at: str,
+    evidence_ref: str,
+    version_id: str = "",
+) -> tuple[dict[str, str], Path]:
+    """Record an evidence-bound rename or supersession without moving either file."""
+    if kind not in {"rename", "supersession"}:
+        raise ValueError("FinalDelivery reconciliation kind must be rename or supersession")
+    if not final_delivery_human_identity_valid(confirmed_by):
+        raise ValueError(
+            "FinalDelivery reconciliation confirmed_by must identify a human, not ADCO/automation/agent"
+        )
+    if not confirmed_at.strip() or not evidence_ref.strip():
+        raise ValueError(
+            "FinalDelivery reconciliation requires confirmed_by, confirmed_at, and evidence_ref"
+        )
+    parse_thread_timestamp(confirmed_at, "confirmed_at")
+    try:
+        final_delivery_lock_snapshot(project)
+    except RuntimeError:
+        # Expected for a missing old baseline; the inventory-first write already persisted.
+        pass
+    lock_path = project / "AD-creative/orchestrator/final_delivery_lock.csv"
+    fields, rows = read_csv_rows(lock_path)
+    old_rel, old_file = final_delivery_project_path(project, old_path)
+    new_rel, new_file = final_delivery_project_path(
+        project, new_path, require_file=True
+    )
+    old_matches = [
+        row
+        for row in rows
+        if canonical_project_relative_path(project, row.get("path")) == old_rel
+    ]
+    new_matches = [
+        row
+        for row in rows
+        if canonical_project_relative_path(project, row.get("path")) == new_rel
+    ]
+    if len(old_matches) != 1 or len(new_matches) != 1:
+        raise ValueError("FinalDelivery reconciliation paths must both be inventoried")
+    old_row = old_matches[0]
+    new_row = new_matches[0]
+    if old_file.exists():
+        raise ValueError("old FinalDelivery baseline still exists; reconciliation is only for a missing original path")
+    old_sha = old_row.get("sha256", "").strip()
+    new_sha = file_sha256(new_file)
+    if kind == "rename" and old_sha != new_sha:
+        raise ValueError("rename reconciliation requires the same sha256")
+    if kind == "supersession":
+        if old_sha == new_sha:
+            raise ValueError("same-hash replacement should be reconciled as rename")
+        if not version_id.strip():
+            raise ValueError("different-hash supersession requires a new version_id")
+        if not final_delivery_version_binding_valid(project, new_rel, version_id):
+            raise ValueError(
+                "different-hash supersession version_id must bind the new artifact in version_map/current truth"
+            )
+        if not final_delivery_supersession_chain_valid(
+            project, old_row, version_id
+        ):
+            raise ValueError(
+                "different-hash supersession version chain does not supersede the old baseline version"
+            )
+    evidence_rel, evidence_sha, host_rel, host_sha, old_version_id = (
+        final_delivery_confirmation_receipt_binding(
+            project,
+            evidence_ref=evidence_ref,
+            old_row=old_row,
+            new_row=new_row,
+            kind=kind,
+            confirmed_by=confirmed_by,
+            confirmed_at=confirmed_at,
+            version_id=version_id,
+        )
+    )
+    new_row.update(
+        {
+            "protected": "yes",
+            "inventory_state": "protected_baseline",
+            "reconciliation_state": "reconciled",
+            "reconciliation_kind": kind,
+            "reconciles_lock_id": old_row.get("lock_id", ""),
+            "supersedes_lock_id": old_row.get("lock_id", "") if kind == "supersession" else "",
+            "confirmed_by": confirmed_by.strip(),
+            "confirmed_at": confirmed_at.strip(),
+            "evidence_ref": evidence_rel,
+            "evidence_sha256": evidence_sha,
+            "host_attestation_ref": host_rel,
+            "host_attestation_sha256": host_sha,
+            "version_id": version_id.strip(),
+            "supersedes_version_id": old_version_id,
+            "status_reason": f"explicit {kind} reconciliation; no file move or overwrite performed",
+        }
+    )
+    by_path = {
+        row.get("path", "").strip(): row
+        for row in rows
+        if row.get("path", "").strip()
+    }
+    if not final_delivery_reconciliation_valid(project, by_path, old_row):
+        raise RuntimeError("FinalDelivery reconciliation did not produce a valid evidence-bound state")
+    write_csv_rows(lock_path, fields or FINAL_DELIVERY_LOCK_FIELDS, rows)
+    return new_row, lock_path
 
 
 def register_final_delivery_locks(project: Path) -> Path:
@@ -1678,133 +2692,479 @@ def register_final_delivery_locks(project: Path) -> Path:
     return lock_path
 
 
+HUMAN_WORKSPACE_SPECS = (
+    ("00_项目资料_ProjectMaterials", "项目资料 Project Materials", "登记客户资料、会议记录、导演组资料和客户反馈。"),
+    ("01_参考资料_References", "参考资料 References", "登记官方参考、竞品案例、风格参考和视频参考。"),
+    ("02_重要素材_KeyAssets", "重要素材 Key Assets", "登记品牌、产品、人物和有授权依据的关键素材。"),
+    ("03_阶段成果_WorkInProgress", "阶段成果 Work In Progress", "登记内部方向草案、文案草案、视觉探索和方案结构。"),
+    ("04_客户审阅_ClientReview", "客户审阅 Client Review", "登记准备给客户审阅的版本；内部执行资料不得混入。"),
+    ("05_最终交付_FinalDelivery", "最终交付 Final Delivery", "登记最终确认交付物；这里只显示交付物，不显示 Gate/检查单/预览/文本抽取元数据。"),
+)
+HUMAN_INDEX_EXCLUDED_NAMES = {"README.md", "目录索引.md", ".DS_Store"}
+CURRENT_ARTIFACT_TRUTH_KEYS = (
+    "current_pptx_artifact_id",
+    "current_pdf_artifact_id",
+    "current_preview_artifact_id",
+    "current_text_extract_artifact_id",
+    "current_ppt_editability_artifact_id",
+)
+FINAL_DELIVERY_METADATA_ARTIFACT_TYPES = {
+    "gate_report",
+    "gate_checklist",
+    "checklist",
+    "preview",
+    "deck_preview",
+    "text_extract",
+    "ppt_text_extract",
+    "ppt_editability_check",
+    "editability_report",
+    "delivery_manifest",
+    "final_delivery_index",
+    "final_delivery_lock",
+}
+FINAL_DELIVERY_METADATA_MARKERS = {
+    "gate",
+    "checklist",
+    "preview",
+    "editability",
+    "manifest",
+    "lock",
+}
+FINAL_DELIVERY_ALWAYS_DELIVERABLE_SUFFIXES = {
+    ".pdf",
+    ".pptx",
+    ".docx",
+    ".xlsx",
+    ".key",
+    ".mov",
+    ".mp4",
+    ".zip",
+}
+
+
+def normalized_artifact_lifecycle(
+    row: dict[str, str], *, superseded_ids: set[str] | None = None
+) -> str:
+    explicit = (row.get("lifecycle_state") or "").strip().lower().replace("-", "_")
+    if explicit in ARTIFACT_LIFECYCLE_VALUES:
+        return explicit
+    artifact_id = (row.get("artifact_id") or "").strip()
+    if artifact_id and artifact_id in (superseded_ids or set()):
+        return "superseded"
+    status = (row.get("status") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if "removed" in status and any(token in status for token in ("clean", "cleanup")):
+        return "legacy_unresolved_tombstone"
+    status_map = {
+        "superseded": "superseded",
+        "withdrawn": "withdrawn",
+        "archived": "archived",
+        "deprecated": "deprecated",
+        "rejected": "rejected",
+        "removed": "removed",
+        "deleted": "removed",
+        "pending": "pending",
+        "draft": "pending",
+        "blocked": "pending",
+        "not_run": "pending",
+    }
+    if status in status_map:
+        return status_map[status]
+    if status in {"", "active", "current", "done", "complete", "completed", "approved", "registered", "pass", "passed"}:
+        return "active"
+    return "legacy_unknown"
+
+
+def canonical_project_relative_path(project: Path, raw_path: str | None) -> str:
+    raw = (raw_path or "").strip().strip("`")
+    if not raw or re.match(r"^[a-z][a-z0-9+.-]*://", raw, re.IGNORECASE):
+        return ""
+    candidate = Path(raw)
+    try:
+        resolved = candidate.resolve() if candidate.is_absolute() else (project / candidate).resolve()
+        rel = resolved.relative_to(project.resolve())
+    except (OSError, ValueError):
+        return ""
+    return unicodedata.normalize("NFC", rel.as_posix())
+
+
+def split_registered_paths(value: str | None) -> list[str]:
+    return [item.strip().strip("`") for item in re.split(r"[;\n]+", value or "") if item.strip().strip("`")]
+
+
+def human_index_link(project: Path, index_path: Path, raw_target: str) -> str:
+    target = (raw_target or "").strip()
+    if re.match(r"^https://", target, re.IGNORECASE):
+        return f"[打开链接]({target})"
+    if project_relative_path_has_symlink_component(project, target):
+        return f"`{md_cell(target)}` (UNSAFE SYMLINK; NOT LINKED)"
+    rel = canonical_project_relative_path(project, target)
+    if not rel:
+        return md_cell(target)
+    absolute = project / rel
+    if not absolute.is_file():
+        return f"`{md_cell(rel)}` (MISSING)"
+    destination = os.path.relpath(absolute, index_path.parent).replace(os.sep, "/")
+    destination = urllib.parse.quote(destination, safe="/._-~")
+    label = md_cell(rel)
+    return f"[{label}](<{destination}>)"
+
+
+def is_final_delivery_metadata(artifact_type: str, raw_path: str) -> bool:
+    normalized_type = re.sub(r"[^a-z0-9]+", "_", artifact_type.lower()).strip("_")
+    if normalized_type in FINAL_DELIVERY_METADATA_ARTIFACT_TYPES:
+        return True
+    path = Path(raw_path)
+    if path.suffix.lower() in FINAL_DELIVERY_ALWAYS_DELIVERABLE_SUFFIXES:
+        return False
+    stem = re.sub(r"[^a-z0-9]+", "_", path.stem.lower()).strip("_")
+    tokens = {token for token in stem.split("_") if token}
+    strong_phrases = {
+        "text_extract",
+        "gate_report",
+        "gate_checklist",
+        "delivery_gate",
+        "final_delivery_index",
+        "delivery_index",
+        "lock_snapshot",
+        "delivery_manifest",
+    }
+    return bool(tokens & FINAL_DELIVERY_METADATA_MARKERS) or any(
+        phrase in stem for phrase in strong_phrases
+    )
+
+
+def physical_human_files(project: Path, folder: str) -> list[str]:
+    root = project / folder
+    if not root.exists():
+        return []
+    files: list[str] = []
+    for path in root.rglob("*"):
+        lexical_rel = path.relative_to(project).as_posix()
+        if (
+            path.name in HUMAN_INDEX_EXCLUDED_NAMES
+            or any(part.startswith(".") for part in path.relative_to(root).parts)
+            or path.is_symlink()
+            or project_relative_path_has_symlink_component(project, lexical_rel)
+            or not path.is_file()
+        ):
+            continue
+        try:
+            path.resolve().relative_to(project.resolve())
+            path.resolve().relative_to(root.resolve())
+        except ValueError:
+            continue
+        files.append(unicodedata.normalize("NFC", lexical_rel))
+    return sorted(files, key=lambda value: (value.casefold(), value))
+
+
+def physical_human_unsafe_files(project: Path, folder: str) -> list[str]:
+    root = project / folder
+    if not root.exists():
+        return []
+    unsafe: list[str] = []
+    for path in root.rglob("*"):
+        lexical_rel = path.relative_to(project).as_posix()
+        if (
+            path.name in HUMAN_INDEX_EXCLUDED_NAMES
+            or any(part.startswith(".") for part in path.relative_to(root).parts)
+        ):
+            continue
+        if path.is_symlink() or project_relative_path_has_symlink_component(
+            project, lexical_rel
+        ):
+            unsafe.append(unicodedata.normalize("NFC", lexical_rel))
+    return sorted(set(unsafe), key=lambda value: (value.casefold(), value))
+
+
+def artifact_workspace_kinds(row: dict[str, str]) -> set[str]:
+    path = (row.get("path") or row.get("original_path") or "").strip()
+    stage = (row.get("stage") or "").strip().lower()
+    visibility = (row.get("visibility") or "").strip().lower()
+    artifact_type = (row.get("artifact_type") or "").strip().lower()
+    kinds: set[str] = set()
+    if (
+        visibility not in CLIENT_VISIBLE_VALUES
+        and stage not in {"client_review", "ppt_gate", "final_delivery"}
+        and "/gates/" not in path
+        and "/orchestrator/" not in path
+    ):
+        kinds.add("wip")
+    if (
+        visibility in CLIENT_VISIBLE_VALUES
+        or "client_visible" in visibility
+        or stage in {"client_review", "ppt_gate"}
+        or "/client_review/" in path
+        or "/ppt/previews/" in path
+    ):
+        kinds.add("client")
+    if (
+        stage == "final_delivery"
+        or path.startswith("05_最终交付_FinalDelivery/")
+        or "/delivery/" in path
+    ) and not is_final_delivery_metadata(artifact_type, path):
+        kinds.add("final")
+    return kinds
+
+
 def render_human_workspace_indexes(project: Path) -> list[Path]:
-    """Mirror the machine control plane into the six top-level user folders."""
+    """Render current-first, path-deduped indexes without copying or aliasing files."""
+    project = project.resolve()
     _, source_events = read_csv_rows(project / "AD-creative/orchestrator/source_events.csv")
     _, references = read_csv_rows(project / "AD-creative/references/reference_cards.csv")
     _, assets = read_csv_rows(project / "AD-creative/visual_assets/asset_manifest.csv")
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    _, version_rows = read_csv_rows(project / "AD-creative/orchestrator/version_map.csv")
+    truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    truth_text = truth_path.read_text(encoding="utf-8") if truth_path.is_file() else ""
+    exact_ids = {
+        key: current_truth_value(truth_text, key)
+        for key in CURRENT_ARTIFACT_TRUTH_KEYS
+        if current_truth_value(truth_text, key)
+    }
+    exact_rank = {artifact_id: rank for rank, artifact_id in enumerate(exact_ids.values())}
+    artifacts_by_id = {
+        row.get("artifact_id", "").strip(): row
+        for row in artifacts
+        if row.get("artifact_id", "").strip()
+    }
+    superseded_ids = {
+        ref
+        for row in artifacts
+        for ref in split_asset_refs(row.get("supersedes_artifact_id", ""))
+    }
+    attention: list[str] = []
+    current_version_id = current_truth_value(truth_text, "current_version_id")
+    if current_version_id:
+        current_versions = [row for row in version_rows if row.get("version_id", "").strip() == current_version_id]
+        if len(current_versions) != 1:
+            attention.append(f"current_version_id `{current_version_id}` 必须且只能匹配一条 version_map 记录；当前匹配 {len(current_versions)} 条。")
+        elif (
+            current_versions[0].get("status", "").strip().lower()
+            not in CURRENT_VIEW_VERSION_STATUSES
+        ):
+            attention.append(
+                f"current_version_id `{current_version_id}` 对应 version_map 状态不属于 current-view 状态。"
+            )
+    for truth_key, artifact_id in exact_ids.items():
+        row = artifacts_by_id.get(artifact_id)
+        if not row:
+            attention.append(f"{truth_key} 指向未登记 artifact `{artifact_id}`。")
+            continue
+        lifecycle = normalized_artifact_lifecycle(row, superseded_ids=superseded_ids)
+        if lifecycle != "active":
+            attention.append(
+                f"{truth_key} 指向 non-active artifact `{artifact_id}`（{lifecycle}）。"
+            )
+        raw_exact_path = row.get("path") or row.get("original_path") or ""
+        if project_relative_path_has_symlink_component(project, raw_exact_path):
+            attention.append(
+                f"{truth_key} 的 exact-current target 包含 symlink，已拒绝链接：`{raw_exact_path}`。"
+            )
+        rel = canonical_project_relative_path(project, raw_exact_path)
+        if not rel or not (project / rel).is_file():
+            attention.append(f"{truth_key} 的 exact-current target 缺失：`{row.get('path') or row.get('original_path') or '<blank>'}`。")
 
-    source_rows = [
-        (
-            row.get("source_event_id", ""),
-            first_nonempty(row.get("raw_summary"), row.get("source_type"), default="资料"),
-            row.get("file_paths", ""),
-        )
-        for row in source_events
-    ]
-    reference_rows = [
-        (
-            row.get("reference_id", ""),
-            first_nonempty(row.get("title"), row.get("platform"), default="参考"),
-            first_nonempty(row.get("url"), row.get("role"), default=row.get("reference_type", "")),
-        )
-        for row in references
-    ]
-    asset_rows = [
-        (
-            row.get("asset_id", ""),
-            first_nonempty(row.get("slot_id"), row.get("asset_type"), default="素材"),
-            first_nonempty(row.get("path"), row.get("status"), default=row.get("visibility", "")),
-        )
-        for row in assets
-    ]
+    entries_by_folder: dict[str, dict[str, dict[str, object]]] = {
+        folder: {} for folder, _, _ in HUMAN_WORKSPACE_SPECS
+    }
 
-    def artifact_rows_for(kind: str) -> list[tuple[str, str, str]]:
-        selected: list[tuple[str, str, str]] = []
-        for row in artifacts:
-            path = row.get("path", "")
-            stage = row.get("stage", "")
-            visibility = row.get("visibility", "")
-            artifact_type = row.get("artifact_type", "")
-            if kind == "wip":
-                matched = (
-                    visibility not in CLIENT_VISIBLE_VALUES
-                    and stage not in {"client_review", "ppt_gate", "final_delivery"}
-                    and "/gates/" not in path
-                    and "/orchestrator/" not in path
-                )
-            elif kind == "client":
-                matched = (
-                    visibility in CLIENT_VISIBLE_VALUES
-                    or "client_visible" in visibility
-                    or stage in {"client_review", "ppt_gate"}
-                    or "/client_review/" in path
-                    or "/ppt/previews/" in path
-                )
-            else:
-                matched = stage == "final_delivery" or "/delivery/" in path
-            if matched:
-                selected.append(
-                    (
-                        row.get("artifact_id", ""),
-                        first_nonempty(artifact_type, stage, default="产物"),
-                        path,
-                    )
-                )
-        return selected
+    def add_entry(
+        folder: str,
+        *,
+        entry_id: str,
+        label: str,
+        target: str,
+        lifecycle: str = "active",
+        exact: bool = False,
+        registered: bool = True,
+    ) -> None:
+        unsafe_symlink = project_relative_path_has_symlink_component(project, target)
+        rel = "" if unsafe_symlink else canonical_project_relative_path(project, target)
+        key = f"path:{rel}" if rel else f"id:{entry_id}:{target}"
+        existing = entries_by_folder[folder].get(key)
+        candidate = {
+            "ids": {entry_id} if entry_id else set(),
+            "label": label or "-",
+            "target": target,
+            "rel": rel,
+            "lifecycle": lifecycle,
+            "exact": exact,
+            "rank": exact_rank.get(entry_id, 9999),
+            "registered": registered,
+            "unsafe_symlink": unsafe_symlink,
+        }
+        if existing is None:
+            entries_by_folder[folder][key] = candidate
+            return
+        existing_registered = bool(existing["registered"])
+        candidate_registered = bool(candidate["registered"])
+        if existing_registered and not candidate_registered:
+            merged_ids = set(existing["ids"])
+        elif candidate_registered and not existing_registered:
+            merged_ids = {
+                value for value in set(existing["ids"]) if value != "LOCAL/UNREGISTERED"
+            } | set(candidate["ids"])
+        else:
+            merged_ids = set(existing["ids"]) | set(candidate["ids"])
+        existing["ids"] = merged_ids
+        existing["exact"] = bool(existing["exact"] or exact)
+        existing["registered"] = bool(existing["registered"] or registered)
+        existing["unsafe_symlink"] = bool(
+            existing.get("unsafe_symlink") or unsafe_symlink
+        )
+        existing["rank"] = min(int(existing["rank"]), int(candidate["rank"]))
+        if lifecycle not in ARTIFACT_INACTIVE_LIFECYCLE_VALUES:
+            existing["lifecycle"] = lifecycle
+        if (label.casefold(), label) < (str(existing["label"]).casefold(), str(existing["label"])):
+            existing["label"] = label
 
-    specs = [
-        (
-            project / "00_项目资料_ProjectMaterials/目录索引.md",
-            "项目资料 Project Materials",
-            "登记客户资料、会议记录、导演组资料和客户反馈。原文件可以留在原位置；这里必须能看到入口和追溯。",
-            source_rows,
-            "暂无登记资料。把资料放入本目录，或用 adco run/add-materials 登记外部资料。",
-        ),
-        (
-            project / "01_参考资料_References/目录索引.md",
-            "参考资料 References",
-            "登记官方参考、竞品案例、风格参考和视频参考。客户可见前必须确认来源和使用方式。",
-            reference_rows,
-            "暂无参考资料。",
-        ),
-        (
-            project / "02_重要素材_KeyAssets/目录索引.md",
-            "重要素材 Key Assets",
-            "登记品牌素材、产品素材、人物素材和授权可用素材。AI/生成图默认不等于客户可用素材。",
-            asset_rows,
-            "暂无关键素材。",
-        ),
-        (
-            project / "03_阶段成果_WorkInProgress/目录索引.md",
-            "阶段成果 Work In Progress",
-            "登记内部方向草案、文案草案、视觉探索和方案结构。默认内部可见。",
-            artifact_rows_for("wip"),
-            "暂无阶段成果。",
-        ),
-        (
-            project / "04_客户审阅_ClientReview/目录索引.md",
-            "客户审阅 Client Review",
-            "登记准备给客户看的版本。进入这里前必须通过对应 Gate；不要放内部提示词、线程或执行说明。",
-            artifact_rows_for("client"),
-            "暂无客户审阅稿。",
-        ),
-        (
-            project / "05_最终交付_FinalDelivery/目录索引.md",
-            "最终交付 Final Delivery",
-            "登记最终确认交付物。最终状态必须与 version_map、artifact_index、PPT/PDF/preview/text extract 一致。",
-            artifact_rows_for("final"),
-            "暂无最终交付物。",
-        ),
-    ]
+    for row in source_events:
+        paths = split_registered_paths(row.get("file_paths")) or [row.get("status", "")]
+        for target in paths:
+            add_entry(
+                "00_项目资料_ProjectMaterials",
+                entry_id=row.get("source_event_id", ""),
+                label=first_nonempty(row.get("raw_summary"), row.get("source_type"), default="资料"),
+                target=target,
+            )
+    for row in references:
+        add_entry(
+            "01_参考资料_References",
+            entry_id=row.get("reference_id", ""),
+            label=first_nonempty(row.get("title"), row.get("platform"), default="参考"),
+            target=first_nonempty(row.get("url"), row.get("role"), default=row.get("reference_type", "")),
+            lifecycle=normalized_artifact_lifecycle(row),
+        )
+    for row in assets:
+        add_entry(
+            "02_重要素材_KeyAssets",
+            entry_id=row.get("asset_id", ""),
+            label=first_nonempty(row.get("slot_id"), row.get("asset_type"), default="素材"),
+            target=first_nonempty(row.get("path"), row.get("status"), default=row.get("visibility", "")),
+            lifecycle=normalized_artifact_lifecycle(row),
+        )
+    folder_for_kind = {
+        "wip": "03_阶段成果_WorkInProgress",
+        "client": "04_客户审阅_ClientReview",
+        "final": "05_最终交付_FinalDelivery",
+    }
+    for row in artifacts:
+        artifact_id = row.get("artifact_id", "").strip()
+        lifecycle = normalized_artifact_lifecycle(row, superseded_ids=superseded_ids)
+        target = row.get("path") or row.get("original_path") or row.get("cleanup_ref") or ""
+        for kind in artifact_workspace_kinds(row):
+            add_entry(
+                folder_for_kind[kind],
+                entry_id=artifact_id,
+                label=first_nonempty(row.get("artifact_type"), row.get("stage"), default="产物"),
+                target=target,
+                lifecycle=lifecycle,
+                exact=artifact_id in exact_rank,
+            )
+
+    for folder, _, _ in HUMAN_WORKSPACE_SPECS:
+        for rel in physical_human_files(project, folder):
+            if folder == "05_最终交付_FinalDelivery" and is_final_delivery_metadata("", rel):
+                continue
+            add_entry(
+                folder,
+                entry_id="LOCAL/UNREGISTERED",
+                label=Path(rel).name,
+                target=rel,
+                lifecycle="active",
+                registered=False,
+            )
+        for rel in physical_human_unsafe_files(project, folder):
+            add_entry(
+                folder,
+                entry_id="LOCAL/UNSAFE_SYMLINK",
+                label=Path(rel).name,
+                target=rel,
+                lifecycle="pending",
+                registered=False,
+            )
+
+    def table(entries: list[dict[str, object]], index_path: Path, empty: str) -> str:
+        if not entries:
+            return f"| - | - | {md_cell(empty)} | - |"
+        lines: list[str] = []
+        for entry in entries:
+            ids = sorted(set(entry["ids"]), key=lambda value: (value.casefold(), value))
+            registered = bool(entry["registered"])
+            exact = bool(entry["exact"])
+            rel = str(entry["rel"])
+            missing = bool(rel and not (project / rel).is_file())
+            status = "EXACT CURRENT" if exact else "REGISTERED" if registered else "LOCAL/UNREGISTERED"
+            if bool(entry.get("unsafe_symlink")):
+                status = "LOCAL/UNSAFE_SYMLINK"
+            if missing:
+                status += "/MISSING"
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        md_cell(status),
+                        md_cell(";".join(ids) or "LOCAL/UNREGISTERED"),
+                        md_cell(str(entry["label"])),
+                        human_index_link(project, index_path, str(entry["target"])),
+                    ]
+                )
+                + " |"
+            )
+        return "\n".join(lines)
 
     written: list[Path] = []
-    for path, title, purpose, rows, empty in specs:
+    for folder, title, purpose in HUMAN_WORKSPACE_SPECS:
+        index_path = project / folder / "目录索引.md"
+        entries = list(entries_by_folder[folder].values())
+        current_entries = [
+            entry
+            for entry in entries
+            if bool(entry["exact"])
+            or str(entry["lifecycle"]) not in ARTIFACT_INACTIVE_LIFECYCLE_VALUES
+        ]
+        history_entries = [
+            entry
+            for entry in entries
+            if not bool(entry["exact"])
+            and str(entry["lifecycle"]) in ARTIFACT_INACTIVE_LIFECYCLE_VALUES
+        ]
+        sort_key = lambda entry: (
+            0 if bool(entry["exact"]) else 1 if bool(entry["registered"]) else 2,
+            int(entry["rank"]),
+            str(entry["rel"] or entry["target"]).casefold(),
+            str(entry["rel"] or entry["target"]),
+        )
+        current_entries.sort(key=sort_key)
+        history_entries.sort(key=sort_key)
+        attention_text = ""
+        if folder in {"03_阶段成果_WorkInProgress", "04_客户审阅_ClientReview", "05_最终交付_FinalDelivery"} and attention:
+            attention_text = "\n## Exact-current 注意事项（P0）\n\n" + "\n".join(f"- {item}" for item in attention) + "\n"
+        history_text = ""
+        if history_entries:
+            history_text = (
+                "\n## 历史（inactive，保留追溯）\n\n"
+                "| 状态 | ID | 内容 | 原路径或清理证据 |\n"
+                "|---|---|---|---|\n"
+                + table(history_entries, index_path, "暂无历史记录。")
+                + "\n"
+            )
         write_text(
-            path,
+            index_path,
             f"""# {title}
 
 用途：{purpose}
 
-真实控制面仍在 `AD-creative/`。本文件是给人看的目录索引，防止项目根目录看起来是空的，也防止重要产物藏在深层控制面里。
+当前视图以 `Current Version Truth` 与 `version_map.csv` 为先；同一路径只出现一次。索引只写链接和状态，不复制、移动、创建软链或别名。
+{attention_text}
+## 当前
 
-| ID | 内容 | 路径或状态 |
-|---|---|---|
-{markdown_rows(rows, empty).rstrip()}
-""",
+| 状态 | ID | 内容 | 路径或状态 |
+|---|---|---|---|
+{table(current_entries, index_path, "暂无当前记录。")}
+{history_text}""",
         )
-        written.append(path)
+        written.append(index_path)
     return written
 
 
@@ -2668,6 +4028,13 @@ def update_artifact(
             "size_bytes": size_bytes,
             "derived_from_artifact_id": derived_from_artifact_id,
             "derived_from_sha256": derived_from_sha256,
+            "lifecycle_state": normalized_artifact_lifecycle({"status": status}),
+            "original_path": rel_path,
+            "cleanup_ref": "",
+            "removed_at": "",
+            "removal_reason": "",
+            "superseded_by": "",
+            "status_reason": status,
         },
     )
 
@@ -6737,7 +8104,10 @@ Still requires explicit confirmation:
 def status_payload(project: Path) -> dict[str, object]:
     project = project.resolve()
     counts = read_counts(project)
-    errors, _ = validate(project)
+    validation_issues, validation_stats = validate_issues(project)
+    errors = [
+        issue.message for issue in validation_issues if issue.scope != "legacy"
+    ]
     dashboard = project / DASHBOARD_REL
     report = project / COUNCIL_REPORT_REL
     _, work_items = read_csv_rows(project / "AD-creative/orchestrator/work_items.csv")
@@ -6806,6 +8176,8 @@ def status_payload(project: Path) -> dict[str, object]:
         "goal": goal or {},
         "lane_states": goal_lane_states(project),
         "validation": "PASS" if not errors else "CHECK",
+        "validation_issues": [issue.as_dict() for issue in validation_issues],
+        "legacy_debt": validation_stats.get("legacy_debt", 0),
         "counts": counts,
         "active_work_count": len(active_work),
         "open_gap_count": len(open_gaps),
@@ -7760,9 +9132,437 @@ def ensure_csv_file(path: Path, fields: list[str]) -> None:
     ensure_csv_fields(path, fields)
 
 
+def canonical_row_sha256(row: dict[str, str]) -> str:
+    payload = json.dumps(
+        {str(key): row.get(key, "") or "" for key in sorted(key for key in row if key is not None)},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def legacy_cleanup_reference_path(row: dict[str, str]) -> bool:
+    lifecycle = normalized_artifact_lifecycle(row)
+    if lifecycle not in ARTIFACT_INACTIVE_LIFECYCLE_VALUES:
+        return False
+    path = (row.get("path") or "").strip().lower().replace("-", "_")
+    artifact_type = (row.get("artifact_type") or "").strip().lower()
+    cleanup_like = any(
+        token in path
+        for token in ("cleanup", "dedupe", "/gates/", "gate_report", "removal_report")
+    )
+    artifact_is_report = any(
+        token in artifact_type
+        for token in ("cleanup", "dedupe", "gate_report", "removal_report")
+    )
+    return cleanup_like and not artifact_is_report
+
+
+def migrate_artifact_lifecycle_rows(
+    rows: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], list[dict[str, object]]]:
+    reverse_supersession: dict[str, list[str]] = {}
+    for row in rows:
+        new_id = (row.get("artifact_id") or "").strip()
+        for old_id in split_asset_refs(row.get("supersedes_artifact_id", "")):
+            reverse_supersession.setdefault(old_id, []).append(new_id)
+    migrated: list[dict[str, str]] = []
+    legacy_evidence: list[dict[str, object]] = []
+    superseded_ids = set(reverse_supersession)
+    for index, raw_row in enumerate(rows, start=2):
+        row = dict(raw_row)
+        original_lifecycle = (row.get("lifecycle_state") or "").strip()
+        lifecycle = normalized_artifact_lifecycle(row, superseded_ids=superseded_ids)
+        cleanup_ref_is_path = legacy_cleanup_reference_path(row)
+        changed = not original_lifecycle or original_lifecycle != lifecycle
+        if cleanup_ref_is_path:
+            lifecycle = "legacy_unresolved_tombstone"
+            if not (row.get("cleanup_ref") or "").strip():
+                row["cleanup_ref"] = (row.get("path") or "").strip()
+                changed = True
+            # A cleanup report is evidence, never a fabricated original artifact path.
+            if (row.get("original_path") or "").strip() == (row.get("path") or "").strip():
+                row["original_path"] = ""
+                changed = True
+        elif not (row.get("original_path") or "").strip() and (row.get("path") or "").strip():
+            row["original_path"] = (row.get("path") or "").strip()
+            changed = True
+        row["lifecycle_state"] = lifecycle
+        if not (row.get("status_reason") or "").strip() and (row.get("status") or "").strip():
+            row["status_reason"] = (row.get("status") or "").strip()
+            changed = True
+        if lifecycle in {"removed", "withdrawn", "rejected", "legacy_unresolved_tombstone"}:
+            if not (row.get("removal_reason") or "").strip():
+                row["removal_reason"] = first_nonempty(
+                    row.get("status_reason"), row.get("status"), default="legacy lifecycle classification"
+                )
+                changed = True
+        artifact_id = (row.get("artifact_id") or "").strip()
+        superseded_by = ";".join(
+            sorted(set(filter(None, reverse_supersession.get(artifact_id, []))))
+        )
+        if superseded_by and (row.get("superseded_by") or "").strip() != superseded_by:
+            row["superseded_by"] = superseded_by
+            changed = True
+        if changed:
+            legacy_evidence.append(
+                {
+                    "row_number": index,
+                    "evidence_sha256": canonical_row_sha256(raw_row),
+                    "raw": raw_row,
+                    "classification": lifecycle,
+                }
+            )
+        migrated.append(row)
+    return migrated, legacy_evidence
+
+
+def markdown_named_sections(text: str, heading: str) -> list[str]:
+    return re.findall(
+        rf"(?ims)^##[ \t]+{re.escape(heading)}[ \t]*\n(.*?)(?=^##[ \t]+|\Z)",
+        text,
+    )
+
+
+def section_key_values(section: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in section.splitlines():
+        match = re.match(r"^[ \t]*[-*]?[ \t]*([A-Za-z][A-Za-z0-9_ -]{1,80})[ \t]*:[ \t]*(.*?)[ \t]*$", line)
+        if match:
+            values[match.group(1).strip().lower().replace(" ", "_")] = match.group(2).strip().strip("`")
+    return values
+
+
+def artifact_id_for_legacy_value(
+    project: Path, value: str, artifacts: list[dict[str, str]]
+) -> tuple[str, list[str]]:
+    if not value:
+        return "", []
+    direct = [
+        row.get("artifact_id", "").strip()
+        for row in artifacts
+        if row.get("artifact_id", "").strip() == value
+    ]
+    if len(direct) == 1:
+        return direct[0], direct
+    rel = canonical_project_relative_path(project, value)
+    matches = [
+        row.get("artifact_id", "").strip()
+        for row in artifacts
+        if row.get("artifact_id", "").strip()
+        and rel
+        and canonical_project_relative_path(
+            project, row.get("path") or row.get("original_path")
+        )
+        == rel
+    ]
+    if len(matches) == 1:
+        return matches[0], matches
+    return "", sorted(set(direct + matches))
+
+
+def legacy_current_package_backfill(
+    project: Path,
+    truth_text: str,
+    artifacts: list[dict[str, str]],
+    versions: list[dict[str, str]],
+) -> tuple[dict[str, str], list[dict[str, object]], list[str]]:
+    sections = markdown_named_sections(truth_text, "Current Package")
+    if not sections:
+        return {}, [], []
+    raw_sections = sections[:]
+    if len(sections) != 1:
+        return {}, [
+            {
+                "severity": "P0",
+                "scope": "current",
+                "code": "ambiguous_legacy_current_package_sections",
+                "message": f"legacy Current Package has {len(sections)} sections; migration refused to choose",
+            }
+        ], raw_sections
+    values = section_key_values(sections[0])
+    aliases = {
+        "current_pptx_artifact_id": ("current_pptx_artifact_id", "pptx_artifact_id", "pptx", "pptx_path"),
+        "current_pdf_artifact_id": ("current_pdf_artifact_id", "pdf_artifact_id", "pdf", "pdf_path"),
+        "current_preview_artifact_id": ("current_preview_artifact_id", "preview_artifact_id", "preview", "preview_path"),
+        "current_text_extract_artifact_id": ("current_text_extract_artifact_id", "text_extract_artifact_id", "text_extract", "text_extract_path"),
+        "current_ppt_editability_artifact_id": ("current_ppt_editability_artifact_id", "ppt_editability_artifact_id", "editability", "editability_path"),
+    }
+    result: dict[str, str] = {}
+    blockers: list[dict[str, object]] = []
+    for target_key, source_keys in aliases.items():
+        raw_value = next((values[key] for key in source_keys if values.get(key)), "")
+        if not raw_value:
+            continue
+        artifact_id, candidates = artifact_id_for_legacy_value(project, raw_value, artifacts)
+        if not artifact_id:
+            blockers.append(
+                {
+                    "severity": "P0",
+                    "scope": "current",
+                    "code": "ambiguous_legacy_current_package_artifact",
+                    "message": f"{target_key} legacy value {raw_value!r} did not resolve to exactly one artifact",
+                    "candidates": candidates,
+                }
+            )
+        else:
+            result[target_key] = artifact_id
+    raw_version_id = first_nonempty(
+        values.get("current_version_id"), values.get("version_id"), default=""
+    )
+    version_candidates = [
+        row
+        for row in versions
+        if raw_version_id and row.get("version_id", "").strip() == raw_version_id
+    ]
+    if not version_candidates and result.get("current_pptx_artifact_id"):
+        version_candidates = [
+            row
+            for row in versions
+            if row.get("artifact_id", "").strip() == result["current_pptx_artifact_id"]
+            and row.get("status", "").strip().lower()
+            in CURRENT_VIEW_VERSION_STATUSES
+        ]
+    if len(version_candidates) != 1:
+        blockers.append(
+            {
+                "severity": "P0",
+                "scope": "current",
+                "code": "ambiguous_legacy_current_package_version",
+                "message": f"legacy Current Package did not resolve to exactly one current version; candidates={len(version_candidates)}",
+                "candidates": [row.get("version_id", "") for row in version_candidates],
+            }
+        )
+    else:
+        version = version_candidates[0]
+        result["current_version_id"] = version.get("version_id", "").strip()
+        result["version_map_status"] = version.get("status", "").strip()
+        result.setdefault("current_pptx_artifact_id", version.get("artifact_id", "").strip())
+    result["last_archive_before_edit"] = values.get("last_archive_before_edit", "")
+    return result, blockers, raw_sections
+
+
+def replace_current_version_truth(
+    text: str, values: dict[str, str]
+) -> str:
+    body = "```text\n" + "".join(
+        f"{key}: {values.get(key, '').strip()}\n" for key in CURRENT_VERSION_TRUTH_KEYS
+    ) + "```\n"
+    pattern = re.compile(
+        r"(?ims)^##[ \t]+Current Version Truth[ \t]*\n.*?(?=^##[ \t]+|\Z)"
+    )
+    section = "## Current Version Truth\n\n" + body
+    matches = list(pattern.finditer(text))
+    if len(matches) == 1:
+        return pattern.sub(section, text, count=1)
+    if not matches:
+        return text.rstrip() + "\n\n" + section
+    return text
+
+
+def project_yml_with_schema_version(text: str) -> str:
+    if re.search(r"(?m)^  schema_version:[ \t]*", text):
+        return re.sub(
+            r"(?m)^  schema_version:[ \t]*.*$",
+            f'  schema_version: "{CONTROL_PLANE_SCHEMA_VERSION}"',
+            text,
+            count=1,
+        )
+    project_match = re.search(r"(?m)^project:[ \t]*$", text)
+    if project_match:
+        insert_at = project_match.end()
+        return text[:insert_at] + f'\n  schema_version: "{CONTROL_PLANE_SCHEMA_VERSION}"' + text[insert_at:]
+    return f'project:\n  schema_version: "{CONTROL_PLANE_SCHEMA_VERSION}"\n' + text
+
+
+def current_version_truth_binding_valid(
+    truth_text: str,
+    artifacts: list[dict[str, str]],
+    versions: list[dict[str, str]],
+) -> bool:
+    sections = markdown_named_sections(truth_text, "Current Version Truth")
+    if len(sections) != 1:
+        return False
+    values = section_key_values(sections[0])
+    version_id = values.get("current_version_id", "").strip()
+    artifact_id = values.get("current_pptx_artifact_id", "").strip()
+    if not version_id or not artifact_id:
+        return False
+    version_matches = [
+        row for row in versions if row.get("version_id", "").strip() == version_id
+    ]
+    artifact_matches = [
+        row for row in artifacts if row.get("artifact_id", "").strip() == artifact_id
+    ]
+    if len(version_matches) != 1 or len(artifact_matches) != 1:
+        return False
+    if version_matches[0].get("artifact_id", "").strip() != artifact_id:
+        return False
+    version_status = version_matches[0].get("status", "").strip().lower()
+    if version_status not in CURRENT_VIEW_VERSION_STATUSES:
+        return False
+    truth_status = current_truth_value(truth_text, "version_map_status").strip().lower()
+    if truth_status and truth_status != version_status:
+        return False
+    return normalized_artifact_lifecycle(artifact_matches[0]) == "active"
+
+
+def canonical_payload_sha256(payload: object) -> str:
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def normalized_migration_blockers(
+    blockers: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    normalized = [
+        json.loads(json.dumps(blocker, ensure_ascii=False, sort_keys=True))
+        for blocker in blockers
+    ]
+    return sorted(
+        normalized,
+        key=lambda blocker: (
+            str(blocker.get("severity") or ""),
+            str(blocker.get("scope") or ""),
+            str(blocker.get("code") or ""),
+            str(blocker.get("message") or ""),
+            canonical_payload_sha256(blocker),
+        ),
+    )
+
+
+def updated_migration_manifest(
+    existing: dict[str, object] | None,
+    *,
+    source_hashes: dict[str, str],
+    changes: list[str],
+    active_blockers: list[dict[str, object]],
+    raw_legacy_evidence: dict[str, object],
+    observed_hashes: dict[str, str],
+) -> dict[str, object]:
+    """Preserve raw evidence while recording only state-changing migration attempts."""
+    manifest = dict(existing or {})
+    legacy_blockers = manifest.pop("blockers", [])
+    if not isinstance(legacy_blockers, list):
+        legacy_blockers = []
+    normalized_active = normalized_migration_blockers(active_blockers)
+    attempt_id = canonical_payload_sha256(
+        {
+            "schema_version": CONTROL_PLANE_SCHEMA_VERSION,
+            "observed_hashes": observed_hashes,
+            "active_blockers": normalized_active,
+        }
+    )
+
+    raw_history = manifest.get("blocker_history", [])
+    history_by_fingerprint: dict[str, dict[str, object]] = {}
+    if isinstance(raw_history, list):
+        for entry in raw_history:
+            if not isinstance(entry, dict):
+                continue
+            blocker = entry.get("blocker")
+            if not isinstance(blocker, dict):
+                continue
+            fingerprint = str(entry.get("fingerprint") or canonical_payload_sha256(blocker))
+            history_by_fingerprint[fingerprint] = dict(entry)
+
+    historical_candidates = [
+        blocker for blocker in legacy_blockers if isinstance(blocker, dict)
+    ] + normalized_active
+    for blocker in historical_candidates:
+        normalized = normalized_migration_blockers([blocker])[0]
+        fingerprint = canonical_payload_sha256(normalized)
+        history_by_fingerprint.setdefault(
+            fingerprint,
+            {
+                "fingerprint": fingerprint,
+                "blocker": normalized,
+                "first_seen_attempt_id": attempt_id,
+                "last_seen_attempt_id": attempt_id,
+                "resolved_attempt_id": "",
+            },
+        )
+
+    active_fingerprints = {
+        canonical_payload_sha256(blocker) for blocker in normalized_active
+    }
+    for fingerprint, entry in history_by_fingerprint.items():
+        if fingerprint in active_fingerprints:
+            entry["last_seen_attempt_id"] = attempt_id
+            entry["resolved_attempt_id"] = ""
+        elif not entry.get("resolved_attempt_id"):
+            entry["resolved_attempt_id"] = attempt_id
+
+    attempts = manifest.get("attempts", [])
+    if not isinstance(attempts, list):
+        attempts = []
+    if not any(
+        isinstance(attempt, dict) and attempt.get("attempt_id") == attempt_id
+        for attempt in attempts
+    ):
+        attempts = [
+            *attempts,
+            {
+                "attempt_id": attempt_id,
+                "recorded_at": now_iso(),
+                "observed_hashes": observed_hashes,
+                "changes": list(changes),
+                "active_blockers": normalized_active,
+            },
+        ]
+
+    existing_raw = manifest.get("raw_legacy_evidence", {})
+    merged_raw: dict[str, object] = (
+        dict(existing_raw) if isinstance(existing_raw, dict) else {}
+    )
+    for key, value in raw_legacy_evidence.items():
+        existing_value = merged_raw.get(key)
+        if isinstance(value, dict):
+            merged_mapping = (
+                dict(existing_value) if isinstance(existing_value, dict) else {}
+            )
+            for item_key, item_value in value.items():
+                merged_mapping.setdefault(item_key, item_value)
+            merged_raw[key] = merged_mapping
+        elif isinstance(value, list):
+            merged_list = (
+                list(existing_value) if isinstance(existing_value, list) else []
+            )
+            seen = {canonical_payload_sha256(item) for item in merged_list}
+            for item in value:
+                fingerprint = canonical_payload_sha256(item)
+                if fingerprint not in seen:
+                    merged_list.append(item)
+                    seen.add(fingerprint)
+            merged_raw[key] = merged_list
+        elif key not in merged_raw:
+            merged_raw[key] = value
+
+    manifest["manifest_id"] = "adco-control-plane-v2"
+    manifest["schema_version"] = CONTROL_PLANE_SCHEMA_VERSION
+    manifest.setdefault("created_at", now_iso())
+    manifest.setdefault("source_hashes", source_hashes)
+    manifest.setdefault("changes", list(changes))
+    manifest["raw_legacy_evidence"] = merged_raw
+    manifest["active_blockers"] = normalized_active
+    manifest["blocker_history"] = [
+        history_by_fingerprint[key] for key in sorted(history_by_fingerprint)
+    ]
+    manifest["attempts"] = attempts
+    manifest["latest_attempt_id"] = attempt_id
+    return manifest
+
+
 def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, object]:
     if not dry_run and not (project / "AD-creative").exists():
         ensure_project(project)
+    project = project.resolve()
     targets = [
         ("AD-creative/client_review/client_outline.csv", CLIENT_OUTLINE_FIELDS),
         ("AD-creative/visual_assets/asset_current_manifest.csv", ASSET_CURRENT_FIELDS),
@@ -7786,6 +9586,77 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
         "AD-creative/orchestrator/agency/self_improvement_log.md": "# Self Improvement Log\n\nstatus: active\nvisibility: internal_only\n\nUse this only for verified project failures that resulted in reusable ADCO rule or tool changes.\n",
     }
     changes: list[str] = []
+    warnings: list[str] = []
+    blockers: list[dict[str, object]] = []
+    pre_csv: dict[str, tuple[list[str], list[dict[str, str]]]] = {
+        rel_path: read_csv_rows(project / rel_path) for rel_path, _ in targets
+    }
+    source_hashes = {
+        rel_path: file_sha256(project / rel_path)
+        for rel_path, _ in targets
+        if (project / rel_path).is_file()
+    }
+    baseline_source_hashes = {
+        rel_path: file_sha256(project / rel_path)
+        for rel_path in LEGACY_BASELINE_SOURCE_RELS
+        if (project / rel_path).is_file()
+    }
+    source_hashes.update(baseline_source_hashes)
+    schema_path = project / CONTROL_PLANE_SCHEMA_REL
+    schema_payload: dict[str, object] = {}
+    if schema_path.is_file():
+        try:
+            schema_payload = json.loads(schema_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            schema_payload = {}
+    project_yml = project / "AD-creative/orchestrator/project.yml"
+    project_yml_text = project_yml.read_text(encoding="utf-8") if project_yml.is_file() else ""
+    pre_migration_schema_v2 = bool(
+        schema_payload.get("schema_version") == CONTROL_PLANE_SCHEMA_VERSION
+        and re.search(
+            rf'(?m)^  schema_version:[ \t]*["\']?{re.escape(CONTROL_PLANE_SCHEMA_VERSION)}["\']?[ \t]*$',
+            project_yml_text,
+        )
+    )
+    legacy_messages = (
+        sorted(
+            {
+                message
+                for message in string_validation_errors(project)
+                if legacy_baseline_message_allowed(message)
+            }
+        )
+        if not pre_migration_schema_v2
+        else []
+    )
+    legacy_string_error_snapshot: dict[str, object] = {}
+    legacy_string_error_baseline: list[dict[str, str]] = []
+    if legacy_messages:
+        legacy_string_error_snapshot = {
+            "captured_from_schema_state": "pre_v2",
+            "source_hashes": baseline_source_hashes,
+            "messages": legacy_messages,
+        }
+        evidence_sha256 = canonical_payload_sha256(
+            legacy_string_error_snapshot
+        )
+        source_hashes_sha256 = canonical_payload_sha256(
+            baseline_source_hashes
+        )
+        legacy_string_error_baseline = [
+            {
+                "fingerprint": canonical_payload_sha256(
+                    {
+                        "message": message,
+                        "evidence_sha256": evidence_sha256,
+                        "source_hashes_sha256": source_hashes_sha256,
+                    }
+                ),
+                "message": message,
+                "evidence_sha256": evidence_sha256,
+            }
+            for message in legacy_messages
+        ]
     for rel_path, fields in targets:
         path = project / rel_path
         if not path.exists() or not path.read_text(encoding="utf-8").strip():
@@ -7800,26 +9671,151 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
     for rel_path in static_files:
         if not (project / rel_path).exists():
             changes.append(f"create_file:{rel_path}")
+
+    artifact_rel = "AD-creative/orchestrator/artifact_index.csv"
+    raw_artifact_fields, raw_artifact_rows = pre_csv[artifact_rel]
+    preview_artifacts, artifact_evidence = migrate_artifact_lifecycle_rows(raw_artifact_rows)
+    if preview_artifacts != raw_artifact_rows:
+        changes.append(f"migrate_artifact_lifecycle:{artifact_rel}:{len(artifact_evidence)}")
+
+    registry_rel = "AD-creative/orchestrator/thread_registry.csv"
+    raw_registry_fields, raw_registry_rows = pre_csv[registry_rel]
+    legacy_thread_schema = bool(raw_registry_rows) and (
+        not pre_migration_schema_v2
+        or any(field not in raw_registry_fields for field in THREADOPS_REGISTRY_FIELDS[:-4])
+    )
+    unclassified_thread_indices = {
+        index
+        for index, row in enumerate(raw_registry_rows)
+        if (row.get("schema_state") or "").strip()
+        not in {"current", "legacy_quarantined"}
+    }
+    thread_rows_to_quarantine = (
+        set(range(len(raw_registry_rows)))
+        if legacy_thread_schema
+        else unclassified_thread_indices
+    )
+    thread_rows_need_state = bool(thread_rows_to_quarantine)
+    thread_evidence_by_sha = {
+        canonical_row_sha256(raw_registry_rows[index]): {
+            "row_number": index + 2,
+            "evidence_sha256": canonical_row_sha256(raw_registry_rows[index]),
+            "raw": raw_registry_rows[index],
+        }
+        for index in sorted(thread_rows_to_quarantine)
+    }
+    if thread_rows_need_state:
+        changes.append(
+            f"quarantine_threadops_rows:{registry_rel}:{len(thread_rows_to_quarantine)}"
+        )
+
     truth_path = project / "AD-creative/orchestrator/current_truth.md"
     truth_text = truth_path.read_text(encoding="utf-8") if truth_path.is_file() else ""
-    truth_sections = re.findall(
-        r"(?ims)^##[ \t]+Current Version Truth[ \t]*\n(.*?)(?=^##[ \t]+|\Z)",
-        truth_text,
+    truth_sections = markdown_named_sections(truth_text, "Current Version Truth")
+    _, version_rows = pre_csv.get(
+        "AD-creative/orchestrator/version_map.csv",
+        read_csv_rows(project / "AD-creative/orchestrator/version_map.csv"),
     )
-    warnings: list[str] = []
-    if "## Current Version Truth" not in truth_text:
+    raw_package_sections = markdown_named_sections(truth_text, "Current Package")
+    if current_version_truth_binding_valid(
+        truth_text, raw_artifact_rows, version_rows
+    ):
+        backfill: dict[str, str] = {}
+        package_blockers: list[dict[str, object]] = []
+    else:
+        backfill, package_blockers, raw_package_sections = legacy_current_package_backfill(
+            project, truth_text, raw_artifact_rows, version_rows
+        )
+    blockers.extend(package_blockers)
+    desired_truth = truth_text
+    if len(truth_sections) > 1:
+        blockers.append(
+            {
+                "severity": "P0",
+                "scope": "current",
+                "code": "duplicate_current_version_truth",
+                "message": "current_truth has duplicate Current Version Truth sections; migration refused to choose",
+            }
+        )
+    elif backfill and not package_blockers:
+        existing_values = (
+            section_key_values(truth_sections[0]) if len(truth_sections) == 1 else {}
+        )
+        merged_values = {
+            key: first_nonempty(existing_values.get(key), backfill.get(key), default="")
+            for key in CURRENT_VERSION_TRUTH_KEYS
+        }
+        desired_truth = replace_current_version_truth(truth_text, merged_values)
+        if desired_truth != truth_text:
+            changes.append("backfill_current_version_truth_from_legacy_current_package")
+    elif len(truth_sections) == 0 and not package_blockers:
+        desired_truth = replace_current_version_truth(truth_text, {})
         changes.append("add_section:AD-creative/orchestrator/current_truth.md:Current Version Truth")
     elif len(truth_sections) == 1:
-        _, missing_truth_keys = normalize_current_version_truth_section(truth_text)
+        desired_truth, missing_truth_keys = normalize_current_version_truth_section(truth_text)
         if missing_truth_keys:
             changes.append(
                 "add_current_truth_keys:AD-creative/orchestrator/current_truth.md:"
                 + ",".join(missing_truth_keys)
             )
-    elif len(truth_sections) > 1:
-        warnings.append(
-            "current_truth has duplicate Current Version Truth sections; migration did not choose one"
+
+    if schema_path.is_file() and not schema_payload:
+        blockers.append(
+            {
+                "severity": "P0",
+                "scope": "current",
+                "code": "malformed_control_plane_schema",
+                "message": f"cannot parse {CONTROL_PLANE_SCHEMA_REL}",
+            }
         )
+    desired_schema = {
+        "schema_id": "adco.control-plane",
+        "schema_version": CONTROL_PLANE_SCHEMA_VERSION,
+        "migration_manifest": CONTROL_PLANE_MIGRATION_MANIFEST_REL.as_posix(),
+        "lifecycle_values": sorted(ARTIFACT_LIFECYCLE_VALUES),
+    }
+    schema_current = schema_payload.get("schema_version") == CONTROL_PLANE_SCHEMA_VERSION
+    if not schema_current:
+        changes.append(f"set_control_plane_schema:{CONTROL_PLANE_SCHEMA_VERSION}")
+    elif schema_payload != desired_schema:
+        changes.append("normalize_control_plane_schema")
+    desired_project_yml = project_yml_with_schema_version(project_yml_text)
+    if desired_project_yml != project_yml_text:
+        changes.append(f"set_project_schema_version:{CONTROL_PLANE_SCHEMA_VERSION}")
+
+    manifest_path = project / CONTROL_PLANE_MIGRATION_MANIFEST_REL
+    existing_manifest: dict[str, object] | None = None
+    manifest_malformed = False
+    if manifest_path.is_file():
+        try:
+            loaded_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(loaded_manifest, dict):
+                raise ValueError("migration manifest must be a JSON object")
+            existing_manifest = loaded_manifest
+        except (json.JSONDecodeError, ValueError):
+            manifest_malformed = True
+            blockers.append(
+                {
+                    "severity": "P0",
+                    "scope": "current",
+                    "code": "malformed_migration_manifest",
+                    "message": f"cannot safely update {CONTROL_PLANE_MIGRATION_MANIFEST_REL}",
+                }
+            )
+    blockers = normalized_migration_blockers(blockers)
+    needs_manifest = bool(
+        manifest_path.exists()
+        or not schema_current
+        or artifact_evidence
+        or legacy_thread_schema
+        or thread_rows_to_quarantine
+        or raw_package_sections
+        or legacy_string_error_baseline
+        or blockers
+    )
+    if needs_manifest and not manifest_path.exists():
+        changes.append(f"create_migration_manifest:{CONTROL_PLANE_MIGRATION_MANIFEST_REL}")
+
     if not dry_run:
         for rel_path, fields in targets:
             ensure_csv_file(project / rel_path, fields)
@@ -7828,31 +9824,101 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
             path = project / rel_path
             if not path.exists():
                 write_text(path, content)
-        if truth_path.is_file() and "## Current Version Truth" not in truth_text:
-            update_markdown_sections(
-                truth_path,
+
+        artifact_fields, artifact_rows = read_csv_rows(project / artifact_rel)
+        migrated_artifacts, _ = migrate_artifact_lifecycle_rows(artifact_rows)
+        if migrated_artifacts != artifact_rows:
+            write_csv_rows(project / artifact_rel, artifact_fields, migrated_artifacts)
+
+        registry_fields, registry_rows = read_csv_rows(project / registry_rel)
+        if registry_rows:
+            normalized_registry: list[dict[str, str]] = []
+            for index, row in enumerate(registry_rows):
+                normalized = dict(row)
+                if index in thread_rows_to_quarantine:
+                    raw_row = raw_registry_rows[index] if index < len(raw_registry_rows) else row
+                    evidence_sha = canonical_row_sha256(raw_row)
+                    normalized["schema_state"] = "legacy_quarantined"
+                    normalized["legacy_evidence_sha256"] = evidence_sha
+                    normalized["legacy_quarantine_reason"] = (
+                        "pre_v2_threadops_row_missing_proof_columns"
+                        if legacy_thread_schema
+                        else "v2_unclassified_threadops_row_without_writer_proof"
+                    )
+                    normalized["legacy_raw_ref"] = (
+                        f"{CONTROL_PLANE_MIGRATION_MANIFEST_REL.as_posix()}"
+                        f"#/raw_legacy_evidence/thread_rows_by_sha/{evidence_sha}"
+                    )
+                normalized_registry.append(normalized)
+            if normalized_registry != registry_rows:
+                write_csv_rows(project / registry_rel, registry_fields, normalized_registry)
+
+        if truth_path.is_file() and desired_truth != truth_text and not blockers:
+            write_text(truth_path, desired_truth)
+        elif not truth_path.is_file() and not blockers:
+            write_text(truth_path, desired_truth or replace_current_version_truth("# Current Truth\n", {}))
+
+        if desired_project_yml != project_yml_text:
+            write_text(project_yml, desired_project_yml)
+        if schema_payload != desired_schema:
+            write_json_object(schema_path, desired_schema)
+
+        if needs_manifest and not manifest_malformed:
+            evidence = {
+                "artifact_rows": artifact_evidence,
+                "thread_rows": [
+                    entry
+                    for _, entry in sorted(thread_evidence_by_sha.items())
+                ]
+                if thread_rows_to_quarantine
+                else [],
+                "thread_rows_by_sha": thread_evidence_by_sha,
+                "agent_run_rows": pre_csv[
+                    "AD-creative/orchestrator/agent_runs.csv"
+                ][1]
+                if thread_rows_to_quarantine
+                else [],
+                "current_package_sections": raw_package_sections,
+                "string_error_baseline": legacy_string_error_baseline,
+                "string_error_snapshot": legacy_string_error_snapshot,
+            }
+            observed_rel_paths = sorted(
                 {
-                    "Current Version Truth": """```text
-current_version_id:
-current_pptx_artifact_id:
-current_pdf_artifact_id:
-current_preview_artifact_id:
-current_text_extract_artifact_id:
-current_ppt_editability_artifact_id:
-version_map_status:
-last_archive_before_edit:
-```""",
-                },
+                    artifact_rel,
+                    "AD-creative/orchestrator/current_truth.md",
+                    "AD-creative/orchestrator/version_map.csv",
+                    "AD-creative/orchestrator/project.yml",
+                    CONTROL_PLANE_SCHEMA_REL.as_posix(),
+                }
             )
-        elif truth_path.is_file() and len(truth_sections) == 1:
-            normalized_truth, _ = normalize_current_version_truth_section(truth_text)
-            if normalized_truth != truth_text:
-                write_text(truth_path, normalized_truth)
+            observed_hashes = {
+                rel_path: (
+                    file_sha256(project / rel_path)
+                    if (project / rel_path).is_file()
+                    else "<missing>"
+                )
+                for rel_path in observed_rel_paths
+            }
+            updated_manifest = updated_migration_manifest(
+                existing_manifest,
+                source_hashes=source_hashes,
+                changes=changes,
+                active_blockers=blockers,
+                raw_legacy_evidence=evidence,
+                observed_hashes=observed_hashes,
+            )
+            if updated_manifest != existing_manifest:
+                write_json_object(manifest_path, updated_manifest)
+                if existing_manifest is not None:
+                    changes.append("update_migration_manifest_active_state")
     return {
         "project": str(project),
         "dry_run": dry_run,
         "changes": changes,
         "warnings": warnings,
+        "blockers": blockers,
+        "schema_version": CONTROL_PLANE_SCHEMA_VERSION,
+        "migration_manifest": str(manifest_path) if manifest_path.exists() or needs_manifest else "",
     }
 
 
@@ -9971,6 +12037,18 @@ def validate_thread_receipt_scope_and_semantics(
     for raw_path in declared_raw:
         path = contained_project_path(project, raw_path, "receipt files_changed")
         declared.add(canonical_project_relative(project, path))
+    host_attestation_prefix = FINAL_DELIVERY_HOST_ATTESTATION_ROOT.as_posix() + "/"
+    forbidden_host_changes = sorted(
+        rel_path
+        for rel_path in actual_changed | declared
+        if rel_path == FINAL_DELIVERY_HOST_ATTESTATION_ROOT.as_posix()
+        or rel_path.startswith(host_attestation_prefix)
+    )
+    if forbidden_host_changes:
+        raise ValueError(
+            "worker changed host-only attestation path: "
+            + ",".join(forbidden_host_changes)
+        )
     mode = row.get("mode", "").strip()
     if mode in THREADOPS_EXECUTION_MODES:
         write_scope_values = [
@@ -11573,6 +13651,10 @@ THREADOPS_REGISTRY_FIELDS = [
     "receipt_thread_id",
     "adoption_decision",
     "rejection_reason",
+    "schema_state",
+    "legacy_evidence_sha256",
+    "legacy_quarantine_reason",
+    "legacy_raw_ref",
 ]
 THREADOPS_PROGRESS_STATES = {"active_with_progress", "finalizing_receipt"}
 THREADOPS_OBSERVATION_STATES = {
@@ -14651,7 +16733,11 @@ def command_next(args: argparse.Namespace) -> int:
 
 def command_validate(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
-    errors, stats = validate(project)
+    issues, stats = validate_issues(project, strict_legacy=args.strict_legacy)
+    blocking_issues = [
+        issue for issue in issues if args.strict_legacy or issue.scope != "legacy"
+    ]
+    errors = [issue.message for issue in blocking_issues]
     status = "PASS" if not errors else "CHECK"
     if args.json:
         print(
@@ -14663,7 +16749,9 @@ def command_validate(args: argparse.Namespace) -> int:
                     "validation_not_creative_quality": True,
                     "validation_not_client_language": True,
                     "validation_not_visual_approval": True,
+                    "strict_legacy": args.strict_legacy,
                     "stats": stats,
+                    "issues": [issue.as_dict() for issue in issues],
                     "errors": errors,
                 },
                 ensure_ascii=False,
@@ -14679,6 +16767,12 @@ def command_validate(args: argparse.Namespace) -> int:
         print("VALIDATION_NOT_CREATIVE_QUALITY=1")
         print("VALIDATION_NOT_CLIENT_LANGUAGE=1")
         print("VALIDATION_NOT_VISUAL_APPROVAL=1")
+        if issues:
+            print("ISSUES:")
+            for issue in issues:
+                print(
+                    f"- [{issue.severity}][{issue.scope}][{issue.code}] {issue.message}"
+                )
     if errors:
         if not args.json:
             print("ERRORS:")
@@ -15174,12 +17268,27 @@ def command_migrate_control_plane(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     else:
-        print(f"MIGRATE_CONTROL_PLANE={'DRY_RUN' if args.dry_run else 'PASS'}")
+        migration_status = (
+            "BLOCKED"
+            if result["blockers"]
+            else "DRY_RUN"
+            if args.dry_run
+            else "PASS"
+        )
+        print(f"MIGRATE_CONTROL_PLANE={migration_status}")
         print(f"PROJECT={result['project']}")
+        print(f"SCHEMA_VERSION={result['schema_version']}")
+        print(f"MIGRATION_MANIFEST={result['migration_manifest'] or 'not_required'}")
         print(f"CHANGES={len(result['changes'])}")
         for change in result["changes"]:
             print(f"- {change}")
-    return 0
+        if result["blockers"]:
+            print("BLOCKERS:")
+            for blocker in result["blockers"]:
+                print(
+                    f"- [{blocker.get('severity')}][{blocker.get('scope')}][{blocker.get('code')}] {blocker.get('message')}"
+                )
+    return 1 if result["blockers"] else 0
 
 
 def command_preflight_skill(args: argparse.Namespace) -> int:
@@ -15567,10 +17676,44 @@ def command_cleanup_plan(args: argparse.Namespace) -> int:
 
 def command_final_delivery_lock(args: argparse.Namespace) -> int:
     project = Path(args.project).expanduser().resolve()
-    locked, lock_path = final_delivery_lock(project)
+    try:
+        locked, lock_path = final_delivery_lock(project)
+    except RuntimeError as exc:
+        print("FINAL_DELIVERY_LOCK=BLOCKED")
+        print(
+            f"LOCK={project / 'AD-creative/orchestrator/final_delivery_lock.csv'}"
+        )
+        print("SAFE_PENDING_INVENTORY_PERSISTED=1")
+        print(f"ERROR={exc}")
+        return 1
     print("FINAL_DELIVERY_LOCK=PASS")
     print(f"LOCK={lock_path}")
     print(f"PROTECTED_FILES={len(locked)}")
+    return 0
+
+
+def command_final_delivery_reconcile(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().resolve()
+    try:
+        row, lock_path = reconcile_final_delivery(
+            project,
+            old_path=args.old_path,
+            new_path=args.new_path,
+            kind=args.kind,
+            confirmed_by=args.confirmed_by,
+            confirmed_at=args.confirmed_at,
+            evidence_ref=args.evidence_ref,
+            version_id=args.version_id,
+        )
+    except (RuntimeError, ValueError) as exc:
+        print("FINAL_DELIVERY_RECONCILE=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    print("FINAL_DELIVERY_RECONCILE=PASS")
+    print(f"LOCK={lock_path}")
+    print(f"KIND={row.get('reconciliation_kind')}")
+    print(f"NEW_PATH={row.get('path')}")
+    print("FILE_MOVE_OR_OVERWRITE=0")
     return 0
 
 
@@ -15617,13 +17760,23 @@ def command_client_send_readiness_gate(args: argparse.Namespace) -> int:
 
 
 def command_install_skill(args: argparse.Namespace) -> int:
-    target = Path(args.target).expanduser().resolve() if args.target else DEFAULT_SKILL_INSTALL_DIR
+    # Preserve the lexical root so install_global_skill can reject an
+    # unapproved symlink before resolving it.
+    target = Path(args.target).expanduser() if args.target else DEFAULT_SKILL_INSTALL_DIR
     result = install_global_skill(target)
     print(f"SKILL_INSTALL={'PASS' if result['match'] else 'CHECK'}")
     print(f"SOURCE={result['source']}")
     print(f"TARGET={result['target']}")
     print(f"SOURCE_SHA256={result['source_hash']}")
     print(f"TARGET_SHA256={result['target_hash']}")
+    print(f"SOURCE_TREE_SHA256={result['source_tree_hash']}")
+    print(f"TARGET_TREE_SHA256={result['target_tree_hash']}")
+    print(f"MANAGED_FILES={len(result['managed_files'])}")
+    print(f"INSTALL_MANIFEST={result['manifest']}")
+    print(f"REMOVED_STALE_FILES={len(result['removed_stale_files'])}")
+    print(f"PRESERVED_STALE_FILES={len(result['preserved_stale_files'])}")
+    if result["manifest_warning"]:
+        print(f"MANIFEST_WARNING={result['manifest_warning']}")
     return 0 if result["match"] else 1
 
 
@@ -15801,6 +17954,11 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser = subparsers.add_parser("validate", help="Validate a project directory.")
     validate_parser.add_argument("project", help="Project directory.")
     validate_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    validate_parser.add_argument(
+        "--strict-legacy",
+        action="store_true",
+        help="Treat grouped legacy-only debt as blocking.",
+    )
     validate_parser.set_defaults(func=command_validate)
 
     check_parser = subparsers.add_parser("check", help="Run the full verification suite.")
@@ -16080,6 +18238,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     final_lock_parser.add_argument("project", help="Project directory.")
     final_lock_parser.set_defaults(func=command_final_delivery_lock)
+
+    final_reconcile_parser = subparsers.add_parser(
+        "final-delivery-reconcile",
+        help="Evidence-bind a missing FinalDelivery baseline to an explicit rename or supersession without moving files.",
+    )
+    final_reconcile_parser.add_argument("project", help="Project directory.")
+    final_reconcile_parser.add_argument("--old-path", required=True)
+    final_reconcile_parser.add_argument("--new-path", required=True)
+    final_reconcile_parser.add_argument(
+        "--kind", choices=["rename", "supersession"], required=True
+    )
+    final_reconcile_parser.add_argument("--confirmed-by", required=True)
+    final_reconcile_parser.add_argument("--confirmed-at", required=True)
+    final_reconcile_parser.add_argument("--evidence-ref", required=True)
+    final_reconcile_parser.add_argument("--version-id", default="")
+    final_reconcile_parser.set_defaults(func=command_final_delivery_reconcile)
 
     dispatch_record_parser = subparsers.add_parser(
         "dispatch-record",

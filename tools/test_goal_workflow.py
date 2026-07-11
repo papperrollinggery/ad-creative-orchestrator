@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import tempfile
@@ -12,6 +13,8 @@ from pathlib import Path
 from ad_creative_operator import (
     ARTIFACT_INDEX_FIELDS,
     CLIENT_OUTLINE_FIELDS,
+    THREADOPS_REGISTRY_FIELDS,
+    THREADOPS_AGENT_RUN_FIELDS,
     add_reference,
     add_visual_asset,
     analyze_profiles,
@@ -21,13 +24,17 @@ from ad_creative_operator import (
     cleanup_plan,
     client_outline_confirmed_content_sha256,
     confirm_client_outline,
+    command_install_skill,
     creative_doctor_report,
     ensure_project,
     ensure_profile_work,
     export_editable_pptx,
     file_sha256,
+    final_delivery_human_identity_valid,
     final_delivery_lock,
+    final_delivery_reconciliation_valid,
     import_creative_production_run,
+    install_global_skill,
     inspect_pptx,
     migrate_control_plane,
     now_iso,
@@ -40,10 +47,12 @@ from ad_creative_operator import (
     render_thread_execution_plan,
     record_thread_dispatch,
     record_thread_observation,
+    receipt_thread_ids,
     reconcile_thread_receipt,
     declared_thread_changed_paths,
     refresh_asset_current_manifest,
     read_csv_rows,
+    reconcile_final_delivery,
     review_client_language,
     review_client_outline,
     review_film_quality,
@@ -52,6 +61,7 @@ from ad_creative_operator import (
     run_goal,
     specialist_manifest_digest,
     specialist_scope_manifest,
+    skill_hash_map_digest,
     validate_thread_receipt_scope_and_semantics,
     workspace_hygiene_report,
     write_pptx_check,
@@ -60,7 +70,11 @@ from ad_creative_operator import (
 )
 from init_project import AGENTS_MERGE_SUGGESTION_REL, agents_policy_status
 from run_checks import cleanup_python_caches
-from validate_project import validate
+from validate_project import (
+    final_delivery_human_identity_valid as validator_final_delivery_human_identity_valid,
+    validate,
+    validate_issues,
+)
 
 
 OPTIONAL_SKIPS: list[str] = []
@@ -93,6 +107,96 @@ def add_clean_reference(project: Path) -> None:
         do_not_copy="Do not copy visible identity.",
         live_check=False,
     )
+
+
+def write_final_delivery_confirmation_receipt(
+    project: Path,
+    *,
+    source_event_id: str,
+    old_row: dict[str, str],
+    new_path: str,
+    kind: str,
+    confirmed_by: str,
+    confirmed_at: str,
+    version_id: str = "",
+    supersedes_version_id: str = "",
+    new_artifact_id: str = "",
+) -> str:
+    rel = (
+        "00_项目资料_ProjectMaterials/01_客户资料_ClientMaterials/"
+        f"{source_event_id}_final_delivery_confirmation.json"
+    )
+    host_attestation_rel = (
+        "AD-creative/orchestrator/host_attestations/"
+        f"{source_event_id}_host_readback.json"
+    )
+    path = project / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    new_file = project / new_path
+    write_json_object(
+        path,
+        {
+            "protocol_id": "adco.final-delivery-reconciliation-confirmation",
+            "schema_version": "1.0",
+            "confirmation_id": f"CONFIRM-{source_event_id}",
+            "confirmation_scope": "final_delivery_reconciliation",
+            "decision": "approve_reconciliation",
+            "confirmed_by": confirmed_by,
+            "confirmed_at": confirmed_at,
+            "reconciliation_kind": kind,
+            "old_lock_id": old_row.get("lock_id", ""),
+            "old_path": old_row.get("path", ""),
+            "old_sha256": old_row.get("sha256", ""),
+            "new_path": new_path,
+            "new_sha256": file_sha256(new_file),
+            "new_artifact_id": new_artifact_id,
+            "version_id": version_id,
+            "supersedes_version_id": supersedes_version_id,
+            "source_event_id": source_event_id,
+            "host_attestation_ref": host_attestation_rel,
+        },
+    )
+    user_message = f"fixture host-read user approval for {source_event_id}"
+    write_json_object(
+        project / host_attestation_rel,
+        {
+            "protocol_id": "adco.host-readback-attestation",
+            "schema_version": "1.0",
+            "attestation_id": f"ATTEST-{source_event_id}",
+            "attestation_scope": "final_delivery_reconciliation",
+            "attestation_role": "host_main_thread",
+            "verified_by": "main_controller",
+            "verified_at": confirmed_at,
+            "authority": "project_owner",
+            "readback_status": "verified",
+            "readback_tool": "codex_app.read_thread",
+            "thread_id": "019f1234-5678-7000-8000-000000000099",
+            "user_message_id": f"user-message-{source_event_id}",
+            "user_message_sha256": hashlib.sha256(
+                user_message.encode("utf-8")
+            ).hexdigest(),
+            "confirmation_receipt_ref": rel,
+            "confirmation_receipt_sha256": file_sha256(path),
+        },
+    )
+    append_csv_row(
+        project / "AD-creative/orchestrator/source_events.csv",
+        {
+            "source_event_id": source_event_id,
+            "received_at": confirmed_at,
+            "source_owner": confirmed_by,
+            "source_type": "file",
+            "declared_semantics": "final_delivery_reconciliation",
+            "file_paths": rel,
+            "raw_summary": "Explicit host-readback FinalDelivery reconciliation confirmation.",
+            "trust_level": "user_confirmed",
+            "affects_requirements": "",
+            "affects_artifacts": new_artifact_id,
+            "supersedes_event_ids": "",
+            "notes": "structured_confirmation_receipt",
+        },
+    )
+    return rel
 
 
 def add_independent_adversarial_review(project: Path, stage: str, target: Path) -> None:
@@ -351,6 +455,178 @@ def test_human_workspace_indexes_mirror_control_plane() -> None:
 
         render_handoff(project, "更新人类可读索引", source_ids)
         assert "incoming_client_brief.md" in source_index_path.read_text(encoding="utf-8")
+
+
+def test_human_workspace_v2_is_current_first_deduped_clickable_and_scans_all_folders() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-human-v2-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        folders = [
+            "00_项目资料_ProjectMaterials",
+            "01_参考资料_References",
+            "02_重要素材_KeyAssets",
+            "03_阶段成果_WorkInProgress",
+            "04_客户审阅_ClientReview",
+            "05_最终交付_FinalDelivery",
+        ]
+        for index, folder in enumerate(folders):
+            manual = project / folder / f"手工 文件 ({index}).txt"
+            manual.write_text(f"manual-{index}", encoding="utf-8")
+
+        client_deck = project / "04_客户审阅_ClientReview/客户 审阅稿 (v2).pptx"
+        client_deck.write_bytes(b"pptx-fixture")
+        final_pdf = project / "05_最终交付_FinalDelivery/最终 交付 (v2).pdf"
+        final_pdf.write_bytes(b"%PDF-fixture")
+        metadata_preview = project / "05_最终交付_FinalDelivery/current_preview.png"
+        metadata_preview.write_bytes(b"preview-metadata")
+        symlink_target = project / "outside-human-workspace.txt"
+        symlink_target.write_text("must not be followed", encoding="utf-8")
+        unsafe_link = project / folders[3] / "unsafe-linked-file.txt"
+        unsafe_link.symlink_to(symlink_target)
+
+        truth_path = project / "AD-creative/orchestrator/current_truth.md"
+        truth_text = truth_path.read_text(encoding="utf-8")
+        replacements = {
+            "current_version_id:": "current_version_id: VER-CURRENT",
+            "current_pptx_artifact_id:": "current_pptx_artifact_id: ART-CURRENT-PPTX",
+            "current_pdf_artifact_id:": "current_pdf_artifact_id: ART-CURRENT-PDF",
+            "current_preview_artifact_id:": "current_preview_artifact_id: ART-MISSING-PREVIEW",
+            "version_map_status:": "version_map_status: current",
+        }
+        for old, new in replacements.items():
+            truth_text = truth_text.replace(old, new, 1)
+        truth_path.write_text(truth_text, encoding="utf-8")
+        append_csv_row(
+            project / "AD-creative/orchestrator/version_map.csv",
+            {
+                "version_id": "VER-CURRENT",
+                "artifact_id": "ART-CURRENT-PPTX",
+                "version": "v2",
+                "status": "current",
+                "created_at": "2026-07-10T00:00:00+08:00",
+                "source_event_ids": "",
+                "supersedes_version_id": "",
+                "notes": "",
+            },
+        )
+
+        def add_artifact(
+            artifact_id: str,
+            artifact_type: str,
+            path: str,
+            stage: str,
+            lifecycle: str,
+            *,
+            visibility: str,
+        ) -> None:
+            append_csv_row(
+                project / "AD-creative/orchestrator/artifact_index.csv",
+                {
+                    "artifact_id": artifact_id,
+                    "artifact_type": artifact_type,
+                    "path": path,
+                    "stage": stage,
+                    "version": "v2",
+                    "status": "done" if lifecycle == "active" else lifecycle,
+                    "visibility": visibility,
+                    "source_event_ids": "",
+                    "linked_requirements": "",
+                    "linked_work_items": "",
+                    "linked_references": "",
+                    "linked_assets": "",
+                    "gate_status": "PASS",
+                    "supersedes_artifact_id": "",
+                    "created_at": "2026-07-10T00:00:00+08:00",
+                    "updated_at": "2026-07-10T00:00:00+08:00",
+                    "lifecycle_state": lifecycle,
+                    "original_path": path,
+                },
+            )
+
+        add_artifact(
+            "ART-CURRENT-PPTX",
+            "pptx",
+            "04_客户审阅_ClientReview/客户 审阅稿 (v2).pptx",
+            "ppt_gate",
+            "active",
+            visibility="client_visible",
+        )
+        add_artifact(
+            "ART-DUPLICATE-OLD",
+            "pptx",
+            "04_客户审阅_ClientReview/客户 审阅稿 (v2).pptx",
+            "ppt_gate",
+            "superseded",
+            visibility="client_visible",
+        )
+        add_artifact(
+            "ART-CURRENT-PDF",
+            "pdf",
+            "05_最终交付_FinalDelivery/最终 交付 (v2).pdf",
+            "final_delivery",
+            "active",
+            visibility="client_visible",
+        )
+        add_artifact(
+            "ART-RETIRED",
+            "client_review_deck",
+            "AD-creative/ppt/exports/client_review_v1.pptx",
+            "ppt_gate",
+            "withdrawn",
+            visibility="client_visible",
+        )
+
+        render_human_workspace_indexes(project)
+        for index, folder in enumerate(folders):
+            text = (project / folder / "目录索引.md").read_text(encoding="utf-8")
+            assert f"手工 文件 ({index}).txt" in text
+            assert "LOCAL/UNREGISTERED" in text
+            assert "](<" in text
+
+        client_index = (project / folders[4] / "目录索引.md").read_text(encoding="utf-8")
+        assert client_index.count("%E5%AE%A2%E6%88%B7%20%E5%AE%A1%E9%98%85%E7%A8%BF%20%28v2%29.pptx") == 1
+        assert "ART-CURRENT-PPTX" in client_index
+        assert "ART-DUPLICATE-OLD" in client_index
+        registered_collision_line = next(
+            line for line in client_index.splitlines() if "ART-CURRENT-PPTX" in line
+        )
+        assert "LOCAL/UNREGISTERED" not in registered_collision_line
+        assert "ART-RETIRED" in client_index
+        assert "历史（inactive，保留追溯）" in client_index
+        assert "ART-MISSING-PREVIEW" in client_index
+        assert "Exact-current 注意事项（P0）" in client_index
+
+        wip_index = (project / folders[3] / "目录索引.md").read_text(encoding="utf-8")
+        assert "LOCAL/UNSAFE_SYMLINK" in wip_index
+        unsafe_line = next(
+            line for line in wip_index.splitlines() if "unsafe-linked-file.txt" in line
+        )
+        assert "UNSAFE SYMLINK; NOT LINKED" in unsafe_line
+        assert "](\u003c" not in unsafe_line
+
+        final_index = (project / folders[5] / "目录索引.md").read_text(encoding="utf-8")
+        assert "ART-CURRENT-PDF" in final_index
+        assert "current_preview.png" not in final_index
+
+        artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+        artifact_fields, artifact_rows = read_csv_rows(artifact_path)
+        pending_current = next(
+            row for row in artifact_rows if row.get("artifact_id") == "ART-CURRENT-PDF"
+        )
+        pending_current["status"] = "pending"
+        pending_current["lifecycle_state"] = "pending"
+        write_csv_rows(artifact_path, artifact_fields, artifact_rows)
+        render_human_workspace_indexes(project)
+        pending_index = (project / folders[5] / "目录索引.md").read_text(
+            encoding="utf-8"
+        )
+        assert "non-active artifact `ART-CURRENT-PDF`（pending）" in pending_index
+        pending_issues, _ = validate_issues(project)
+        assert any(
+            issue.code == "exact_current_artifact_not_active"
+            and "ART-CURRENT-PDF" in issue.message
+            for issue in pending_issues
+        )
 
 
 def test_agents_policy_status_clears_after_manual_merge() -> None:
@@ -797,6 +1073,122 @@ def test_thread_progress_invalidates_stale_convergence_reminder() -> None:
         assert result["state"] == "thread_not_converged", result
 
 
+def test_invalid_and_dead_threads_fail_closed_with_one_bounded_rescue() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-dead-rescue-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        payload = render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-DEAD-RESCUE",
+            title="Invalid and dead Thread regression",
+            objective="Reject placeholder identity, converge a dead Thread, and cap rescue at one.",
+            roles=["copy_creative"],
+        )
+        work_id = str(payload["work_id"])
+        _, registry = read_csv_rows(
+            project / "AD-creative/orchestrator/thread_registry.csv"
+        )
+        lane_id = next(row["lane_id"] for row in registry if row["work_id"] == work_id)
+
+        try:
+            record_thread_dispatch(
+                project,
+                lane_id=lane_id,
+                work_id=work_id,
+                real_thread_id=f"planned:{lane_id}",
+                title_action="dispatcher_set",
+                title_verified_at="2026-07-05T00:00:00Z",
+                dispatch_evidence="placeholder must be rejected",
+                dispatch_status="dispatched",
+                absolute_deadline_at="2026-07-05T00:05:00Z",
+            )
+        except ValueError as exc:
+            assert "real_thread_id" in str(exc) or "UUID" in str(exc), exc
+        else:
+            raise AssertionError("planned placeholder must never become a real Thread id")
+        _, unchanged = read_csv_rows(
+            project / "AD-creative/orchestrator/thread_registry.csv"
+        )
+        invalid_row = next(row for row in unchanged if row["lane_id"] == lane_id)
+        assert invalid_row.get("real_thread_id", "") == ""
+        assert invalid_row.get("rescue_count", "") in {"", "0"}
+
+        primary_id = "019f1234-5678-7000-8000-000000000011"
+        rescue_id = "019f1234-5678-7000-8000-000000000012"
+        record_thread_dispatch(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            real_thread_id=primary_id,
+            title_action="dispatcher_set",
+            title_verified_at="2026-07-05T00:00:00Z",
+            dispatch_evidence="read_thread verified primary id and title",
+            dispatch_status="dispatched",
+            absolute_deadline_at="2026-07-05T00:05:00Z",
+        )
+        record_thread_observation(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            state="silent",
+            observed_at="2026-07-05T00:05:01Z",
+            evidence="no activity and no receipt after absolute deadline",
+            convergence_reminder_sent=True,
+        )
+        dead = record_thread_observation(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            state="thread_not_converged",
+            observed_at="2026-07-05T00:05:02Z",
+            evidence="convergence reminder produced no receipt",
+        )
+        assert dead["state"] == "thread_not_converged"
+        rescued = record_thread_observation(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            state="rescue_dispatched",
+            observed_at="2026-07-05T00:05:03Z",
+            evidence="read_thread verified rescue id and title",
+            absolute_deadline_at="2026-07-05T00:10:00Z",
+            rescue_thread_id=rescue_id,
+        )
+        assert rescued["rescue_count"] == "1"
+        _, rescued_rows = read_csv_rows(
+            project / "AD-creative/orchestrator/thread_registry.csv"
+        )
+        rescued_row = next(row for row in rescued_rows if row["lane_id"] == lane_id)
+        assert rescued_row["real_thread_id"] == primary_id
+        assert rescued_row["rescue_thread_id"] == rescue_id
+        assert rescued_row["receipt_path"].endswith("_rescue.md")
+        assert receipt_thread_ids(
+            (project / rescued_row["receipt_path"]).read_text(encoding="utf-8")
+        ) == [rescue_id]
+
+        try:
+            record_thread_observation(
+                project,
+                lane_id=lane_id,
+                work_id=work_id,
+                state="rescue_dispatched",
+                observed_at="2026-07-05T00:05:04Z",
+                evidence="a second rescue must never fan out",
+                absolute_deadline_at="2026-07-05T00:15:00Z",
+                rescue_thread_id="019f1234-5678-7000-8000-000000000013",
+            )
+        except ValueError as exc:
+            assert "rescue_limit_exceeded" in str(exc), exc
+        else:
+            raise AssertionError("a dead Thread must allow at most one rescue")
+        _, final_rows = read_csv_rows(
+            project / "AD-creative/orchestrator/thread_registry.csv"
+        )
+        final_row = next(row for row in final_rows if row["lane_id"] == lane_id)
+        assert final_row["rescue_count"] == "1"
+        assert final_row["rescue_thread_id"] == rescue_id
+
+
 def test_execution_worker_receipt_cannot_be_prompt_only() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-receipt-") as raw_project:
         project = Path(raw_project)
@@ -939,6 +1331,73 @@ evidence_refs: made-up
         row = next(item for item in registry if item["lane_id"] == lane_id)
         assert row["adoption_decision"] == "REJECT"
         assert row["reconciliation_status"] == "rejected_evidence"
+
+
+def test_thread_worker_cannot_write_host_attestation_even_if_scope_declares_it() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-host-attestation-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        payload = render_thread_execution_plan(
+            project,
+            goal_id="GOAL-HOST-ATTESTATION-SCOPE",
+            title="Host attestation boundary",
+            objective="A worker must never create host readback attestations.",
+            roles=["copy_creative"],
+        )
+        work_id = str(payload["work_id"])
+        registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
+        fields, rows = read_csv_rows(registry_path)
+        target = next(row for row in rows if row.get("work_id") == work_id)
+        lane_id = target["lane_id"]
+        target["write_scope"] = "AD-creative/orchestrator/host_attestations"
+        write_csv_rows(registry_path, fields, rows)
+        real_thread_id = "019f7777-8888-7999-8aaa-bbbbbbbbbbbb"
+        record_thread_dispatch(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            real_thread_id=real_thread_id,
+            title_action="dispatcher_set",
+            title_verified_at="2026-07-05T00:00:00Z",
+            dispatch_evidence="read_thread verified host-boundary fixture",
+            dispatch_status="dispatched",
+            absolute_deadline_at="2026-07-05T00:05:00Z",
+        )
+        _, rows = read_csv_rows(registry_path)
+        target = next(row for row in rows if row.get("lane_id") == lane_id)
+        host_path = (
+            project
+            / "AD-creative/orchestrator/host_attestations/worker-forged.json"
+        )
+        write_json_object(host_path, {"forged": True})
+        receipt = project / target["receipt_path"]
+        receipt.write_text(
+            f"""# Worker Receipt
+
+thread_id: {real_thread_id}
+files_changed: AD-creative/orchestrator/host_attestations/worker-forged.json
+validation_result: PASS
+dirty_state_impact: only the declared path changed
+worker_recommendation: ADOPT
+loop_state: completed
+cleanup_actions: archived worker after receipt
+evidence_refs: host scope fixture
+""",
+            encoding="utf-8",
+        )
+        result = reconcile_thread_receipt(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            receipt_path_value=target["receipt_path"],
+            adoption_decision="ADOPT",
+            rejection_reason="",
+            reconciled_at="2026-07-05T00:02:00Z",
+            cleanup_action="archived_after_host_scope_rejection",
+            archived_at="2026-07-05T00:02:10Z",
+        )
+        assert result["status"] == "rejected_evidence", result
+        assert "host-only attestation path" in result["error"], result
 
 
 def test_threadops_validation_rejects_missing_helper_evidence() -> None:
@@ -1635,6 +2094,714 @@ def test_final_delivery_lock_protects_user_placed_files() -> None:
             raise AssertionError("FinalDelivery lock must not hide a missing protected file")
 
 
+def test_final_delivery_lock_ids_are_unicode_safe_unique_and_required() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-final-lock-id-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        final_root = project / "05_最终交付_FinalDelivery"
+        paths = [
+            final_root / "客户终稿.pdf",
+            final_root / "客户定稿.pdf",
+        ]
+        for index, path in enumerate(paths):
+            path.write_bytes(f"unicode-final-{index}".encode("utf-8"))
+
+        locked, lock_path = final_delivery_lock(project)
+        delivery_rows = [
+            row for row in locked if Path(row.get("path", "")).name in {path.name for path in paths}
+        ]
+        lock_ids = [row.get("lock_id", "") for row in delivery_rows]
+        assert len(lock_ids) == 2
+        assert len(set(lock_ids)) == 2
+        for row in delivery_rows:
+            expected = "LOCK-" + hashlib.sha256(
+                row["path"].encode("utf-8")
+            ).hexdigest().upper()
+            assert row["lock_id"] == expected
+
+        fields, rows = read_csv_rows(lock_path)
+        rows[0]["lock_id"] = ""
+        write_csv_rows(lock_path, fields, rows)
+        errors, _ = validate(project)
+        assert any("FinalDelivery lock row missing lock_id" in error for error in errors)
+        try:
+            final_delivery_lock(project)
+        except RuntimeError as exc:
+            assert "missing lock_id" in str(exc)
+        else:
+            raise AssertionError("blank FinalDelivery lock_id must fail closed")
+
+        rows[0]["lock_id"] = rows[1]["lock_id"]
+        write_csv_rows(lock_path, fields, rows)
+        errors, _ = validate(project)
+        assert any("FinalDelivery duplicate lock_id" in error for error in errors)
+        try:
+            final_delivery_lock(project)
+        except RuntimeError as exc:
+            assert "duplicate FinalDelivery lock_id" in str(exc)
+        else:
+            raise AssertionError("duplicate FinalDelivery lock_id must fail closed")
+
+
+def test_final_delivery_human_identity_rejects_automation_names_consistently() -> None:
+    assert final_delivery_human_identity_valid("fixture-human")
+    assert validator_final_delivery_human_identity_valid("fixture-human")
+    automated = [
+        "main_controller",
+        "Main Controller",
+        "assistant",
+        "ChatGPT",
+        "Claude",
+        "Gemini",
+    ]
+    for identity in automated:
+        assert not final_delivery_human_identity_valid(identity), identity
+        assert not validator_final_delivery_human_identity_valid(identity), identity
+
+
+def test_final_delivery_inventory_persists_pending_before_missing_baseline_blocker() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-final-inventory-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        final_root = project / "05_最终交付_FinalDelivery"
+        old_file = final_root / "client_final_v1.pdf"
+        old_file.write_bytes(b"same-deliverable")
+        final_delivery_lock(project)
+        _, original_rows = read_csv_rows(
+            project / "AD-creative/orchestrator/final_delivery_lock.csv"
+        )
+        original = next(row for row in original_rows if row.get("path", "").endswith("client_final_v1.pdf"))
+        immutable_baseline = {
+            key: original.get(key, "")
+            for key in ["path", "sha256", "size_bytes", "mtime", "registered_at"]
+        }
+
+        old_file.unlink()
+        renamed = final_root / "客户 最终版 (renamed).pdf"
+        renamed.write_bytes(b"same-deliverable")
+        metadata = final_root / "delivery_gate_checklist.md"
+        metadata.write_text("generated metadata", encoding="utf-8")
+        try:
+            final_delivery_lock(project)
+        except RuntimeError as exc:
+            assert "protected file missing" in str(exc)
+        else:
+            raise AssertionError("missing immutable baseline must remain fail-closed")
+
+        _, pending_rows = read_csv_rows(
+            project / "AD-creative/orchestrator/final_delivery_lock.csv"
+        )
+        old_after_inventory = next(
+            row for row in pending_rows if row.get("lock_id") == original.get("lock_id")
+        )
+        assert {
+            key: old_after_inventory.get(key, "")
+            for key in immutable_baseline
+        } == immutable_baseline
+        pending = next(row for row in pending_rows if row.get("path", "").endswith("客户 最终版 (renamed).pdf"))
+        assert pending.get("inventory_state") == "pending_reconciliation"
+        assert pending.get("protected") == "no"
+        metadata_row = next(row for row in pending_rows if row.get("path", "").endswith("delivery_gate_checklist.md"))
+        assert metadata_row.get("inventory_state") == "metadata_excluded"
+        assert metadata_row.get("protected") == "no"
+        evidence_ref = write_final_delivery_confirmation_receipt(
+            project,
+            source_event_id="SRC-FINAL-RENAME",
+            old_row=original,
+            new_path=pending["path"],
+            kind="rename",
+            confirmed_by="fixture-human",
+            confirmed_at="2026-07-10T12:00:00+08:00",
+        )
+
+        reconciled, _ = reconcile_final_delivery(
+            project,
+            old_path=original["path"],
+            new_path=pending["path"],
+            kind="rename",
+            confirmed_by="fixture-human",
+            confirmed_at="2026-07-10T12:00:00+08:00",
+            evidence_ref=evidence_ref,
+        )
+        assert reconciled.get("reconciliation_kind") == "rename"
+        assert reconciled.get("sha256") == immutable_baseline["sha256"]
+        locked, _ = final_delivery_lock(project)
+        old_after_reconcile = next(
+            row for row in locked if row.get("lock_id") == original.get("lock_id")
+        )
+        assert {
+            key: old_after_reconcile.get(key, "")
+            for key in immutable_baseline
+        } == immutable_baseline
+
+
+def test_final_delivery_different_hash_supersession_requires_explicit_bound_evidence() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-final-supersession-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        final_root = project / "05_最终交付_FinalDelivery"
+        old_file = final_root / "client_final_v1.pptx"
+        old_file.write_bytes(b"immutable-version-one")
+        append_csv_row(
+            project / "AD-creative/orchestrator/artifact_index.csv",
+            {
+                "artifact_id": "ART-FINAL-001",
+                "artifact_type": "pptx",
+                "path": "05_最终交付_FinalDelivery/client_final_v1.pptx",
+                "stage": "final_delivery",
+                "version": "v1",
+                "status": "done",
+                "visibility": "client_visible",
+                "created_at": "2026-07-10T11:00:00+08:00",
+                "updated_at": "2026-07-10T11:00:00+08:00",
+                "sha256": file_sha256(old_file),
+                "size_bytes": str(old_file.stat().st_size),
+                "lifecycle_state": "active",
+            },
+        )
+        append_csv_row(
+            project / "AD-creative/orchestrator/version_map.csv",
+            {
+                "version_id": "VER-FINAL-001",
+                "artifact_id": "ART-FINAL-001",
+                "version": "v1",
+                "status": "current",
+                "created_at": "2026-07-10T11:00:00+08:00",
+                "source_event_ids": "",
+                "supersedes_version_id": "",
+                "notes": "original final baseline",
+            },
+        )
+        truth_path = project / "AD-creative/orchestrator/current_truth.md"
+        truth = truth_path.read_text(encoding="utf-8")
+        truth_path.write_text(
+            truth.replace(
+                "current_version_id:", "current_version_id: VER-FINAL-001", 1
+            ).replace(
+                "current_pptx_artifact_id:",
+                "current_pptx_artifact_id: ART-FINAL-001",
+                1,
+            ).replace("version_map_status:", "version_map_status: current", 1),
+            encoding="utf-8",
+        )
+        final_delivery_lock(project)
+        lock_path = project / "AD-creative/orchestrator/final_delivery_lock.csv"
+        _, initial_rows = read_csv_rows(lock_path)
+        old_initial = next(
+            row for row in initial_rows if row.get("path", "").endswith("client_final_v1.pptx")
+        )
+        old_baseline = dict(old_initial)
+
+        old_file.unlink()
+        new_file = final_root / "client_final_v2.pptx"
+        new_file.write_bytes(b"materially-different-version-two")
+        try:
+            final_delivery_lock(project)
+        except RuntimeError as exc:
+            assert "protected file missing" in str(exc)
+        else:
+            raise AssertionError("missing old baseline must block while persisting new inventory")
+
+        try:
+            reconcile_final_delivery(
+                project,
+                old_path=old_initial["path"],
+                new_path="05_最终交付_FinalDelivery/client_final_v2.pptx",
+                kind="supersession",
+                confirmed_by="fixture-human",
+                confirmed_at="",
+                evidence_ref="fixture:supersession-confirmation",
+                version_id="VER-FINAL-002",
+            )
+        except ValueError as exc:
+            assert "confirmed_at" in str(exc)
+        else:
+            raise AssertionError("supersession without explicit confirmed_at must fail")
+
+        append_csv_row(
+            project / "AD-creative/orchestrator/artifact_index.csv",
+            {
+                "artifact_id": "ART-FINAL-002",
+                "artifact_type": "pptx",
+                "path": "05_最终交付_FinalDelivery/client_final_v2.pptx",
+                "stage": "final_delivery",
+                "version": "v2",
+                "status": "done",
+                "visibility": "client_visible",
+                "created_at": "2026-07-10T12:00:00+08:00",
+                "updated_at": "2026-07-10T12:00:00+08:00",
+                "sha256": file_sha256(new_file),
+                "size_bytes": str(new_file.stat().st_size),
+                "lifecycle_state": "active",
+            },
+        )
+        append_csv_row(
+            project / "AD-creative/orchestrator/version_map.csv",
+            {
+                "version_id": "VER-FINAL-002",
+                "artifact_id": "ART-FINAL-002",
+                "version": "v2",
+                "status": "archived",
+                "created_at": "2026-07-10T12:00:00+08:00",
+                "source_event_ids": "",
+                "supersedes_version_id": "VER-FINAL-001",
+                "notes": "explicit supersession fixture",
+            },
+        )
+        evidence_path = (
+            project
+            / "AD-creative/orchestrator/final_delivery_evidence/supersession_confirmation.md"
+        )
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            "human-confirmed materially different successor",
+            encoding="utf-8",
+        )
+        try:
+            reconcile_final_delivery(
+                project,
+                old_path=old_initial["path"],
+                new_path="05_最终交付_FinalDelivery/client_final_v2.pptx",
+                kind="supersession",
+                confirmed_by="fixture-human",
+                confirmed_at="2026-07-10T12:04:00+08:00",
+                evidence_ref=str(evidence_path.relative_to(project)),
+                version_id="VER-FINAL-002",
+            )
+        except ValueError as exc:
+            assert "version_id must bind" in str(exc)
+        else:
+            raise AssertionError("archived/non-current version must not reconcile")
+
+        version_path = project / "AD-creative/orchestrator/version_map.csv"
+        version_fields, version_rows = read_csv_rows(version_path)
+        next(
+            row for row in version_rows if row.get("version_id") == "VER-FINAL-001"
+        )["status"] = "superseded"
+        next(
+            row for row in version_rows if row.get("version_id") == "VER-FINAL-002"
+        )["status"] = "current"
+        write_csv_rows(version_path, version_fields, version_rows)
+        artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+        artifact_fields, artifact_rows = read_csv_rows(artifact_path)
+        old_artifact = next(
+            row for row in artifact_rows if row.get("artifact_id") == "ART-FINAL-001"
+        )
+        old_artifact["status"] = "superseded"
+        old_artifact["lifecycle_state"] = "superseded"
+        write_csv_rows(artifact_path, artifact_fields, artifact_rows)
+        truth = truth_path.read_text(encoding="utf-8")
+        truth = truth.replace(
+            "current_version_id: VER-FINAL-001",
+            "current_version_id: VER-FINAL-002",
+            1,
+        ).replace(
+            "current_pptx_artifact_id: ART-FINAL-001",
+            "current_pptx_artifact_id: ART-FINAL-002",
+            1,
+        )
+        truth_path.write_text(truth, encoding="utf-8")
+
+        try:
+            reconcile_final_delivery(
+                project,
+                old_path=old_initial["path"],
+                new_path="05_最终交付_FinalDelivery/client_final_v2.pptx",
+                kind="supersession",
+                confirmed_by="adco-automation",
+                confirmed_at="2026-07-10T12:05:00+08:00",
+                evidence_ref=str(evidence_path.relative_to(project)),
+                version_id="VER-FINAL-002",
+            )
+        except ValueError as exc:
+            assert "must identify a human" in str(exc)
+        else:
+            raise AssertionError("automation must not self-confirm FinalDelivery")
+
+        try:
+            reconcile_final_delivery(
+                project,
+                old_path=old_initial["path"],
+                new_path="05_最终交付_FinalDelivery/client_final_v2.pptx",
+                kind="supersession",
+                confirmed_by="fixture-human",
+                confirmed_at="2026-07-10T12:05:00+08:00",
+                evidence_ref="AD-creative/orchestrator/missing_confirmation.md",
+                version_id="VER-FINAL-002",
+            )
+        except ValueError as exc:
+            assert "existing" in str(exc)
+        else:
+            raise AssertionError("unbound evidence_ref must not reconcile")
+
+        try:
+            reconcile_final_delivery(
+                project,
+                old_path=old_initial["path"],
+                new_path="05_最终交付_FinalDelivery/client_final_v2.pptx",
+                kind="supersession",
+                confirmed_by="fixture-human",
+                confirmed_at="2026-07-10T12:05:00+08:00",
+                evidence_ref=str(evidence_path.relative_to(project)),
+                version_id="VER-FINAL-002",
+            )
+        except ValueError as exc:
+            assert "structured confirmation receipt" in str(exc)
+        else:
+            raise AssertionError("arbitrary project text must not authorize supersession")
+
+        other_file = project / "AD-creative/ppt/exports/current_companion.pdf"
+        other_file.parent.mkdir(parents=True, exist_ok=True)
+        other_file.write_bytes(b"companion-pdf")
+        append_csv_row(
+            artifact_path,
+            {
+                "artifact_id": "ART-FINAL-OTHER",
+                "artifact_type": "pdf",
+                "path": "AD-creative/ppt/exports/current_companion.pdf",
+                "stage": "final_delivery",
+                "version": "v2",
+                "status": "done",
+                "visibility": "client_visible",
+                "created_at": "2026-07-10T12:00:00+08:00",
+                "updated_at": "2026-07-10T12:00:00+08:00",
+                "sha256": file_sha256(other_file),
+                "size_bytes": str(other_file.stat().st_size),
+                "lifecycle_state": "active",
+            },
+        )
+        version_fields, version_rows = read_csv_rows(version_path)
+        new_version = next(
+            row for row in version_rows if row.get("version_id") == "VER-FINAL-002"
+        )
+        new_version["artifact_id"] = "ART-FINAL-OTHER"
+        write_csv_rows(version_path, version_fields, version_rows)
+        truth_path.write_text(
+            truth_path.read_text(encoding="utf-8").replace(
+                "current_pdf_artifact_id:",
+                "current_pdf_artifact_id: ART-FINAL-OTHER",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        try:
+            reconcile_final_delivery(
+                project,
+                old_path=old_initial["path"],
+                new_path="05_最终交付_FinalDelivery/client_final_v2.pptx",
+                kind="supersession",
+                confirmed_by="fixture-human",
+                confirmed_at="2026-07-10T12:05:00+08:00",
+                evidence_ref=str(evidence_path.relative_to(project)),
+                version_id="VER-FINAL-002",
+            )
+        except ValueError as exc:
+            assert "version_id must bind" in str(exc)
+        else:
+            raise AssertionError("current version must not bind a different current artifact")
+        version_fields, version_rows = read_csv_rows(version_path)
+        next(
+            row for row in version_rows if row.get("version_id") == "VER-FINAL-002"
+        )["artifact_id"] = "ART-FINAL-002"
+        write_csv_rows(version_path, version_fields, version_rows)
+
+        for invalid_lifecycle in ["pending", "legacy_unknown"]:
+            artifact_fields, artifact_rows = read_csv_rows(artifact_path)
+            current_new = next(
+                row
+                for row in artifact_rows
+                if row.get("artifact_id") == "ART-FINAL-002"
+            )
+            current_new["lifecycle_state"] = invalid_lifecycle
+            current_new["status"] = invalid_lifecycle
+            write_csv_rows(artifact_path, artifact_fields, artifact_rows)
+            try:
+                reconcile_final_delivery(
+                    project,
+                    old_path=old_initial["path"],
+                    new_path="05_最终交付_FinalDelivery/client_final_v2.pptx",
+                    kind="supersession",
+                    confirmed_by="fixture-human",
+                    confirmed_at="2026-07-10T12:05:00+08:00",
+                    evidence_ref=str(evidence_path.relative_to(project)),
+                    version_id="VER-FINAL-002",
+                )
+            except ValueError as exc:
+                assert "version_id must bind" in str(exc)
+            else:
+                raise AssertionError(
+                    f"exact-current {invalid_lifecycle} artifact must not reconcile"
+                )
+        artifact_fields, artifact_rows = read_csv_rows(artifact_path)
+        current_new = next(
+            row
+            for row in artifact_rows
+            if row.get("artifact_id") == "ART-FINAL-002"
+        )
+        current_new["lifecycle_state"] = "active"
+        current_new["status"] = "done"
+        write_csv_rows(artifact_path, artifact_fields, artifact_rows)
+
+        wrong_slot_truth = truth_path.read_text(encoding="utf-8").replace(
+            "current_pptx_artifact_id: ART-FINAL-002",
+            "current_pptx_artifact_id:",
+            1,
+        ).replace(
+            "current_pdf_artifact_id: ART-FINAL-OTHER",
+            "current_pdf_artifact_id: ART-FINAL-002",
+            1,
+        )
+        truth_path.write_text(wrong_slot_truth, encoding="utf-8")
+        try:
+            reconcile_final_delivery(
+                project,
+                old_path=old_initial["path"],
+                new_path="05_最终交付_FinalDelivery/client_final_v2.pptx",
+                kind="supersession",
+                confirmed_by="fixture-human",
+                confirmed_at="2026-07-10T12:05:00+08:00",
+                evidence_ref=str(evidence_path.relative_to(project)),
+                version_id="VER-FINAL-002",
+            )
+        except ValueError as exc:
+            assert "version_id must bind" in str(exc)
+        else:
+            raise AssertionError("PPTX must not bind only through current_pdf_artifact_id")
+        truth_path.write_text(
+            wrong_slot_truth.replace(
+                "current_pptx_artifact_id:",
+                "current_pptx_artifact_id: ART-FINAL-002",
+                1,
+            ).replace(
+                "current_pdf_artifact_id: ART-FINAL-002",
+                "current_pdf_artifact_id: ART-FINAL-OTHER",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        structured_evidence_ref = write_final_delivery_confirmation_receipt(
+            project,
+            source_event_id="SRC-FINAL-SUPERSESSION",
+            old_row=old_initial,
+            new_path="05_最终交付_FinalDelivery/client_final_v2.pptx",
+            kind="supersession",
+            confirmed_by="fixture-human",
+            confirmed_at="2026-07-10T12:05:00+08:00",
+            version_id="VER-FINAL-002",
+            supersedes_version_id="VER-FINAL-001",
+            new_artifact_id="ART-FINAL-002",
+        )
+
+        reconciled, _ = reconcile_final_delivery(
+            project,
+            old_path=old_initial["path"],
+            new_path="05_最终交付_FinalDelivery/client_final_v2.pptx",
+            kind="supersession",
+            confirmed_by="fixture-human",
+            confirmed_at="2026-07-10T12:05:00+08:00",
+            evidence_ref=structured_evidence_ref,
+            version_id="VER-FINAL-002",
+        )
+        _, reconciled_rows = read_csv_rows(lock_path)
+        old_after = next(
+            row for row in reconciled_rows if row.get("lock_id") == old_initial["lock_id"]
+        )
+        assert old_after == old_baseline
+        by_path = {
+            row.get("path", ""): row for row in reconciled_rows if row.get("path", "")
+        }
+        assert final_delivery_reconciliation_valid(project, by_path, old_after)
+        for required_field in [
+            "confirmed_by",
+            "confirmed_at",
+            "evidence_ref",
+            "evidence_sha256",
+            "host_attestation_ref",
+            "host_attestation_sha256",
+            "version_id",
+            "supersedes_lock_id",
+            "supersedes_version_id",
+        ]:
+            mutated = {path: dict(row) for path, row in by_path.items()}
+            mutated[reconciled["path"]][required_field] = ""
+            assert not final_delivery_reconciliation_valid(
+                project, mutated, mutated[old_after["path"]]
+            )
+        assert reconciled["supersedes_lock_id"] == old_initial["lock_id"]
+        final_delivery_lock(project)
+
+
+def test_final_delivery_inventory_rejects_symlinked_files() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-final-symlink-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        outside = project / "outside-final.pdf"
+        outside.write_bytes(b"must-not-be-inventoried-through-a-link")
+        linked = project / "05_最终交付_FinalDelivery/linked-final.pdf"
+        linked.symlink_to(outside)
+        try:
+            final_delivery_lock(project)
+        except RuntimeError as exc:
+            assert "symlink" in str(exc)
+        else:
+            raise AssertionError("FinalDelivery symlink inventory must fail closed")
+        _, rows = read_csv_rows(
+            project / "AD-creative/orchestrator/final_delivery_lock.csv"
+        )
+        assert not any(row.get("path", "").endswith("linked-final.pdf") for row in rows)
+
+
+def test_final_delivery_metadata_classifier_does_not_exclude_real_deliverables() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-final-metadata-name-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        final_root = project / "05_最终交付_FinalDelivery"
+        real_names = [
+            "Brand_Manifesto_Final.pdf",
+            "Brand_Lockup_Final.pdf",
+            "Gateway_Story_Final.pptx",
+        ]
+        for name in real_names:
+            (final_root / name).write_bytes(("deliverable:" + name).encode("utf-8"))
+        metadata = final_root / "delivery_gate_checklist.md"
+        metadata.write_text("generated checklist", encoding="utf-8")
+
+        final_delivery_lock(project)
+        _, rows = read_csv_rows(
+            project / "AD-creative/orchestrator/final_delivery_lock.csv"
+        )
+        by_name = {Path(row.get("path", "")).name: row for row in rows}
+        for name in real_names:
+            assert by_name[name].get("protected") in {"true", "yes"}
+            assert by_name[name].get("inventory_state") == "protected_baseline"
+        assert by_name[metadata.name].get("protected") == "no"
+        assert by_name[metadata.name].get("inventory_state") == "metadata_excluded"
+        issues, _ = validate_issues(project)
+        assert not any(
+            issue.code in {
+                "final_delivery_uninventoried_file",
+                "final_delivery_pending_inventory",
+            }
+            for issue in issues
+        )
+
+
+def test_final_delivery_pending_inventory_recovers_after_old_blocker_is_fixed() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-final-pending-recovery-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        final_root = project / "05_最终交付_FinalDelivery"
+        old_file = final_root / "original_final.pdf"
+        old_file.write_bytes(b"original-baseline")
+        final_delivery_lock(project)
+        old_file.unlink()
+        pending_file = final_root / "separate_new_delivery.pdf"
+        pending_file.write_bytes(b"separate-new-delivery")
+        try:
+            final_delivery_lock(project)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("missing old baseline must initially block")
+        _, pending_rows = read_csv_rows(
+            project / "AD-creative/orchestrator/final_delivery_lock.csv"
+        )
+        pending = next(
+            row
+            for row in pending_rows
+            if row.get("path", "").endswith("separate_new_delivery.pdf")
+        )
+        assert pending.get("inventory_state") == "pending_reconciliation"
+        assert pending.get("protected") == "no"
+
+        old_file.write_bytes(b"original-baseline")
+        recovered_rows, _ = final_delivery_lock(project)
+        recovered = next(
+            row
+            for row in recovered_rows
+            if row.get("path", "").endswith("separate_new_delivery.pdf")
+        )
+        assert recovered.get("inventory_state") == "protected_baseline"
+        assert recovered.get("protected") in {"true", "yes"}
+
+
+def test_install_skill_syncs_complete_managed_tree_without_deleting_unrelated_files() -> None:
+    required = {
+        "SKILL.md",
+        "migration_and_lifecycle.md",
+        "operator_cli_and_gates.md",
+        "specialist_exchange_and_craft.md",
+        "thread_operations.md",
+    }
+    with tempfile.TemporaryDirectory(prefix="adco-skill-install-") as raw_target:
+        target = Path(raw_target)
+        sentinel = target / "user-owned-sentinel.txt"
+        sentinel.write_text("preserve me", encoding="utf-8")
+
+        first = install_global_skill(target)
+        assert first["match"] is True
+        assert required.issubset(set(first["managed_files"]))
+        assert first["source_tree_hash"] == first["target_tree_hash"]
+        assert sentinel.read_text(encoding="utf-8") == "preserve me"
+        for rel_path in required:
+            assert (target / rel_path).is_file()
+
+        retired = target / "retired_reference.md"
+        retired.write_text("old managed content", encoding="utf-8")
+        manifest_path = target / ".adco-skill-install-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["managed_files"].append("retired_reference.md")
+        manifest["managed_file_sha256"]["retired_reference.md"] = file_sha256(
+            retired
+        )
+        manifest["source_tree_sha256"] = skill_hash_map_digest(
+            manifest["managed_file_sha256"]
+        )
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+        second = install_global_skill(target)
+        assert second["match"] is True
+        assert retired.read_text(encoding="utf-8") == "old managed content"
+        assert "retired_reference.md" in second["preserved_stale_files"]
+        assert second["removed_stale_files"] == []
+        assert sentinel.read_text(encoding="utf-8") == "preserve me"
+
+        tampered_user_file = target / "user-owned-tampered.txt"
+        tampered_user_file.write_text("not managed by ADCO", encoding="utf-8")
+        tampered_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        tampered_manifest["managed_files"].append(tampered_user_file.name)
+        manifest_path.write_text(
+            json.dumps(tampered_manifest, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        third = install_global_skill(target)
+        assert third["match"] is True
+        assert third["manifest_warning"]
+        assert tampered_user_file.read_text(encoding="utf-8") == "not managed by ADCO"
+        assert sentinel.read_text(encoding="utf-8") == "preserve me"
+
+        unapproved_link = target / "unapproved-skill-target-link"
+        unapproved_link.symlink_to(target, target_is_directory=True)
+        try:
+            install_global_skill(unapproved_link)
+        except RuntimeError as exc:
+            assert "root symlink" in str(exc)
+        else:
+            raise AssertionError("unapproved Skill root symlink must fail closed")
+        try:
+            command_install_skill(
+                type("InstallArgs", (), {"target": str(unapproved_link)})()
+            )
+        except RuntimeError as exc:
+            assert "root symlink" in str(exc)
+        else:
+            raise AssertionError("CLI must not resolve away an unapproved root symlink")
+
+
 def test_migrate_control_plane_creates_new_gate_files() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-migrate-control-") as raw_project:
         project = Path(raw_project)
@@ -1653,6 +2820,129 @@ def test_migrate_control_plane_creates_new_gate_files() -> None:
         assert (project / "AD-creative/client_review/client_outline.csv").exists()
         assert (project / "AD-creative/orchestrator/agency/specialist_preflight.csv").exists()
         assert_valid(project)
+
+
+def test_fresh_v2_template_migration_has_no_unreported_schema_write() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-fresh-v2-schema-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        schema_path = project / "AD-creative/orchestrator/control_plane_schema.json"
+        before = file_sha256(schema_path)
+        dry = migrate_control_plane(project, dry_run=True)
+        assert dry["changes"] == []
+        actual = migrate_control_plane(project)
+        assert actual["changes"] == []
+        assert file_sha256(schema_path) == before
+        assert migrate_control_plane(project)["changes"] == []
+
+
+def test_forged_legacy_error_baseline_cannot_hide_current_active_error() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-forged-legacy-baseline-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        append_csv_row(
+            project / "AD-creative/orchestrator/gate_log.csv",
+            {
+                "gate_id": "GATE-FORGED-ACTIVE",
+                "gate_run_id": "GATE-RUN-FORGED-ACTIVE",
+                "stage": "current_review",
+                "status": "needs_revision",
+                "checked_artifacts": "ART-FORGED-MISSING",
+                "created_at": "2026-07-11T00:00:00+08:00",
+                "owner": "fixture-human",
+            },
+        )
+        message = (
+            "gate GATE-FORGED-ACTIVE unknown artifact ART-FORGED-MISSING"
+        )
+        gate_path = project / "AD-creative/orchestrator/gate_log.csv"
+        manifest_path = (
+            project
+            / "AD-creative/orchestrator/migrations/control_plane_v2_manifest.json"
+        )
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "manifest_id": "adco-control-plane-v2",
+                    "schema_version": "2.0",
+                    "source_hashes": {
+                        "AD-creative/orchestrator/gate_log.csv": file_sha256(
+                            gate_path
+                        )
+                    },
+                    "raw_legacy_evidence": {
+                        "string_error_baseline": [
+                            {
+                                "message": message,
+                                "fingerprint": hashlib.sha256(
+                                    message.encode("utf-8")
+                                ).hexdigest(),
+                            }
+                        ]
+                    },
+                    "active_blockers": [],
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        issues, _ = validate_issues(project)
+        assert any(
+            issue.message == message
+            and issue.scope == "active"
+            and issue.severity == "P1"
+            for issue in issues
+        )
+
+        # Even a fully self-consistent pre-v2 claim remains project-local and
+        # therefore cannot authorize downgrading a live validation error.
+        snapshot = {
+            "captured_from_schema_state": "pre_v2",
+            "source_hashes": {
+                "AD-creative/orchestrator/gate_log.csv": file_sha256(gate_path)
+            },
+            "messages": [message],
+        }
+        def canonical(payload: object) -> str:
+            return hashlib.sha256(
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+        evidence_sha = canonical(snapshot)
+        source_sha = canonical(snapshot["source_hashes"])
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        payload["raw_legacy_evidence"] = {
+            "string_error_snapshot": snapshot,
+            "string_error_baseline": [
+                {
+                    "message": message,
+                    "evidence_sha256": evidence_sha,
+                    "fingerprint": canonical(
+                        {
+                            "message": message,
+                            "evidence_sha256": evidence_sha,
+                            "source_hashes_sha256": source_sha,
+                        }
+                    ),
+                }
+            ],
+        }
+        manifest_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        issues, _ = validate_issues(project)
+        assert any(
+            issue.message == message and issue.scope == "active" for issue in issues
+        )
 
 
 def test_migrate_control_plane_normalizes_legacy_short_rows() -> None:
@@ -1691,6 +2981,646 @@ def test_migrate_control_plane_normalizes_legacy_short_rows() -> None:
         assert all(row.get(field) is not None for row in rows for field in fields)
         assert None not in rows[0]
 
+
+def test_migration_keeps_cleanup_tombstone_original_path_unknown() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-tombstone-migrate-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        cleanup_summary = project / "AD-creative/gates/cleanup_summary.md"
+        cleanup_summary.write_text("legacy cleanup evidence", encoding="utf-8")
+        append_csv_row(
+            project / "AD-creative/orchestrator/artifact_index.csv",
+            {
+                "artifact_id": "ART-LEGACY-TOMBSTONE",
+                "artifact_type": "pptx",
+                "path": "AD-creative/gates/cleanup_summary.md",
+                "stage": "legacy_cleanup",
+                "version": "v1",
+                "status": "cleaned_removed",
+                "visibility": "internal_only",
+                "source_event_ids": "",
+                "linked_requirements": "",
+                "linked_work_items": "",
+                "linked_references": "",
+                "linked_assets": "",
+                "gate_status": "",
+                "supersedes_artifact_id": "",
+                "created_at": "2025-01-01T00:00:00+08:00",
+                "updated_at": "2025-01-01T00:00:00+08:00",
+            },
+        )
+        result = migrate_control_plane(project)
+        assert result["blockers"] == []
+        _, rows = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+        row = next(item for item in rows if item.get("artifact_id") == "ART-LEGACY-TOMBSTONE")
+        assert row.get("lifecycle_state") == "legacy_unresolved_tombstone"
+        assert row.get("original_path") == ""
+        assert row.get("cleanup_ref") == "AD-creative/gates/cleanup_summary.md"
+        assert row.get("status_reason") == "cleaned_removed"
+        manifest = project / "AD-creative/orchestrator/migrations/control_plane_v2_manifest.json"
+        assert manifest.is_file()
+        manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+        raw_rows = manifest_payload["raw_legacy_evidence"]["artifact_rows"]
+        assert any(item["raw"].get("status") == "cleaned_removed" for item in raw_rows)
+        artifact_hash = file_sha256(project / "AD-creative/orchestrator/artifact_index.csv")
+        manifest_hash = file_sha256(manifest)
+        second = migrate_control_plane(project)
+        assert second["changes"] == []
+        assert file_sha256(project / "AD-creative/orchestrator/artifact_index.csv") == artifact_hash
+        assert file_sha256(manifest) == manifest_hash
+
+
+def test_pre_v2_full_header_thread_row_is_hash_bound_quarantined() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-quarantine-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        (project / "AD-creative/orchestrator/control_plane_schema.json").unlink()
+        project_yml = project / "AD-creative/orchestrator/project.yml"
+        project_yml.write_text(
+            "\n".join(
+                line
+                for line in project_yml.read_text(encoding="utf-8").splitlines()
+                if "schema_version:" not in line
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        legacy_row = {field: "" for field in THREADOPS_REGISTRY_FIELDS}
+        legacy_row.update(
+            {
+                "thread_id": "legacy-worker-row",
+                "title": "Legacy worker with appended empty proof columns",
+                "role": "copy_creative",
+                "lane_id": "LANE-LEGACY",
+                "work_id": "WORK-LEGACY",
+                "lifecycle_state": "running",
+                "created_at": "2025-01-01T00:00:00+08:00",
+                "updated_at": "2025-01-01T00:00:00+08:00",
+            }
+        )
+        append_csv_row(
+            project / "AD-creative/orchestrator/thread_registry.csv", legacy_row
+        )
+        result = migrate_control_plane(project)
+        assert result["blockers"] == []
+        fields, rows = read_csv_rows(
+            project / "AD-creative/orchestrator/thread_registry.csv"
+        )
+        assert fields == THREADOPS_REGISTRY_FIELDS
+        row = rows[0]
+        assert row.get("schema_state") == "legacy_quarantined"
+        assert len(row.get("legacy_evidence_sha256", "")) == 64
+        assert row.get("legacy_quarantine_reason") == "pre_v2_threadops_row_missing_proof_columns"
+        assert row.get("legacy_raw_ref", "").endswith(
+            "/thread_rows_by_sha/" + row["legacy_evidence_sha256"]
+        )
+        manifest = json.loads(
+            (
+                project
+                / "AD-creative/orchestrator/migrations/control_plane_v2_manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert manifest["raw_legacy_evidence"]["thread_rows"][0]["raw"]["thread_id"] == "legacy-worker-row"
+        assert manifest["raw_legacy_evidence"]["thread_rows_by_sha"][
+            row["legacy_evidence_sha256"]
+        ]["raw"]["thread_id"] == "legacy-worker-row"
+        second = migrate_control_plane(project)
+        assert second["changes"] == []
+
+
+def test_legacy_current_package_backfills_exact_current_truth_or_blocks_ambiguity() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-current-package-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        pptx = project / "AD-creative/ppt/exports/legacy_current_v7.pptx"
+        pptx.parent.mkdir(parents=True, exist_ok=True)
+        pptx.write_bytes(b"legacy-current-pptx")
+        append_csv_row(
+            project / "AD-creative/orchestrator/artifact_index.csv",
+            {
+                "artifact_id": "ART-LEGACY-CURRENT-PPTX",
+                "artifact_type": "pptx",
+                "path": "AD-creative/ppt/exports/legacy_current_v7.pptx",
+                "stage": "ppt_gate",
+                "version": "v7",
+                "status": "done",
+                "visibility": "client_visible",
+                "gate_status": "PASS",
+                "created_at": "2025-01-01T00:00:00+08:00",
+                "updated_at": "2025-01-01T00:00:00+08:00",
+            },
+        )
+        append_csv_row(
+            project / "AD-creative/orchestrator/version_map.csv",
+            {
+                "version_id": "VER-LEGACY-007",
+                "artifact_id": "ART-LEGACY-CURRENT-PPTX",
+                "version": "v7",
+                "status": "current",
+                "created_at": "2025-01-01T00:00:00+08:00",
+                "source_event_ids": "",
+                "supersedes_version_id": "",
+                "notes": "",
+            },
+        )
+        truth_path = project / "AD-creative/orchestrator/current_truth.md"
+        truth = truth_path.read_text(encoding="utf-8")
+        start = truth.index("## Current Version Truth")
+        end = truth.index("## Next Action", start)
+        truth_path.write_text(
+            truth[:start]
+            + """## Current Package
+
+version_id: VER-LEGACY-007
+pptx_path: AD-creative/ppt/exports/legacy_current_v7.pptx
+
+"""
+            + truth[end:],
+            encoding="utf-8",
+        )
+        result = migrate_control_plane(project)
+        assert result["blockers"] == []
+        migrated = truth_path.read_text(encoding="utf-8")
+        assert migrated.count("## Current Version Truth") == 1
+        assert "current_version_id: VER-LEGACY-007" in migrated
+        assert "current_pptx_artifact_id: ART-LEGACY-CURRENT-PPTX" in migrated
+        assert migrate_control_plane(project)["changes"] == []
+
+    with tempfile.TemporaryDirectory(prefix="adco-current-package-ambiguous-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        truth_path = project / "AD-creative/orchestrator/current_truth.md"
+        truth = truth_path.read_text(encoding="utf-8")
+        start = truth.index("## Current Version Truth")
+        end = truth.index("## Next Action", start)
+        truth_path.write_text(
+            truth[:start]
+            + """## Current Package
+
+version_id: VER-NOT-UNIQUE
+pptx_path: AD-creative/ppt/exports/shared.pptx
+
+"""
+            + truth[end:],
+            encoding="utf-8",
+        )
+        for artifact_id in ["ART-A", "ART-B"]:
+            append_csv_row(
+                project / "AD-creative/orchestrator/artifact_index.csv",
+                {
+                    "artifact_id": artifact_id,
+                    "artifact_type": "pptx",
+                    "path": "AD-creative/ppt/exports/shared.pptx",
+                    "stage": "ppt_gate",
+                    "version": "v1",
+                    "status": "done",
+                    "visibility": "client_visible",
+                    "created_at": "2025-01-01T00:00:00+08:00",
+                    "updated_at": "2025-01-01T00:00:00+08:00",
+                },
+            )
+        result = migrate_control_plane(project)
+        assert any(
+            blocker["code"] == "ambiguous_legacy_current_package_artifact"
+            for blocker in result["blockers"]
+        )
+        assert "## Current Version Truth" not in truth_path.read_text(encoding="utf-8")
+        manifest_path = (
+            project
+            / "AD-creative/orchestrator/migrations/control_plane_v2_manifest.json"
+        )
+        first_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert any(
+            blocker["code"] == "ambiguous_legacy_current_package_artifact"
+            for blocker in first_manifest["active_blockers"]
+        )
+        immutable_raw = first_manifest["raw_legacy_evidence"]
+        immutable_source_hashes = first_manifest["source_hashes"]
+
+        append_csv_row(
+            project / "AD-creative/orchestrator/version_map.csv",
+            {
+                "version_id": "VER-HUMAN-CORRECTED",
+                "artifact_id": "ART-A",
+                "version": "v2",
+                "status": "current",
+                "created_at": "2025-01-02T00:00:00+08:00",
+                "source_event_ids": "",
+                "supersedes_version_id": "",
+                "notes": "explicit human correction",
+            },
+        )
+        corrected_truth = truth_path.read_text(encoding="utf-8")
+        corrected_values = {
+            "current_version_id": "VER-HUMAN-CORRECTED",
+            "current_pptx_artifact_id": "ART-A",
+            "version_map_status": "current",
+        }
+        truth_path.write_text(
+            corrected_truth.rstrip()
+            + "\n\n## Current Version Truth\n\n```text\n"
+            + "".join(
+                f"{key}: {corrected_values.get(key, '')}\n"
+                for key in [
+                    "current_version_id",
+                    "current_pptx_artifact_id",
+                    "current_pdf_artifact_id",
+                    "current_preview_artifact_id",
+                    "current_text_extract_artifact_id",
+                    "current_ppt_editability_artifact_id",
+                    "version_map_status",
+                    "last_archive_before_edit",
+                ]
+            )
+            + "```\n",
+            encoding="utf-8",
+        )
+
+        resolved = migrate_control_plane(project)
+        assert resolved["blockers"] == []
+        resolved_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert resolved_manifest["active_blockers"] == []
+        assert resolved_manifest["raw_legacy_evidence"] == immutable_raw
+        assert resolved_manifest["source_hashes"] == immutable_source_hashes
+        assert any(
+            entry.get("blocker", {}).get("code")
+            == "ambiguous_legacy_current_package_artifact"
+            and entry.get("resolved_attempt_id")
+            for entry in resolved_manifest["blocker_history"]
+        )
+        assert len(resolved_manifest["attempts"]) == 2
+        resolved_manifest_hash = file_sha256(manifest_path)
+        third = migrate_control_plane(project)
+        assert third["blockers"] == []
+        assert third["changes"] == []
+        assert file_sha256(manifest_path) == resolved_manifest_hash
+        resolved_issues, _ = validate_issues(project)
+        assert not any(
+            issue.code.startswith("ambiguous_legacy_current_package")
+            for issue in resolved_issues
+        )
+
+
+def test_realistic_legacy_forward_fixture_prioritizes_current_p0_and_groups_debt() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-realistic-legacy-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        folders = [
+            "00_项目资料_ProjectMaterials",
+            "01_参考资料_References",
+            "02_重要素材_KeyAssets",
+            "03_阶段成果_WorkInProgress",
+            "04_客户审阅_ClientReview",
+            "05_最终交付_FinalDelivery",
+        ]
+        for index, folder in enumerate(folders):
+            (project / folder / f"manual legacy ({index}).txt").write_text(
+                f"manual-{index}", encoding="utf-8"
+            )
+
+        final_file = project / "05_最终交付_FinalDelivery/current legacy (v9).pptx"
+        final_file.write_bytes(b"immutable-v9-baseline")
+        cleanup_summary = project / "AD-creative/gates/legacy_cleanup_summary.md"
+        cleanup_summary.write_text("legacy cleanup evidence", encoding="utf-8")
+        current_row = {field: "" for field in ARTIFACT_INDEX_FIELDS}
+        current_row.update(
+            {
+                "artifact_id": "ART-CURRENT-LEGACY-V9",
+                "artifact_type": "pptx",
+                "path": "05_最终交付_FinalDelivery/current legacy (v9).pptx",
+                "stage": "final_delivery",
+                "version": "v9",
+                "status": "done",
+                "visibility": "internal_only",
+                "created_at": "2025-01-01T00:00:00+08:00",
+                "updated_at": "2025-01-01T00:00:00+08:00",
+                "lifecycle_state": "active",
+                "original_path": "05_最终交付_FinalDelivery/current legacy (v9).pptx",
+            }
+        )
+        legacy_rows = [current_row]
+        for index in range(180):
+            row = {field: "" for field in ARTIFACT_INDEX_FIELDS}
+            row.update(
+                {
+                    "artifact_id": f"ART-TOMBSTONE-{index:04d}",
+                    "artifact_type": "pptx",
+                    "path": "AD-creative/gates/legacy_cleanup_summary.md",
+                    "stage": "legacy_cleanup",
+                    "version": "v1",
+                    "status": "cleaned_removed" if index % 2 == 0 else "removed_by_cleanup",
+                    "visibility": "internal_only",
+                    "created_at": "2024-01-01T00:00:00+08:00",
+                    "updated_at": "2024-01-01T00:00:00+08:00",
+                }
+            )
+            legacy_rows.append(row)
+        write_csv_rows(
+            project / "AD-creative/orchestrator/artifact_index.csv",
+            ARTIFACT_INDEX_FIELDS,
+            legacy_rows,
+        )
+        append_csv_row(
+            project / "AD-creative/orchestrator/version_map.csv",
+            {
+                "version_id": "VER-LEGACY-009",
+                "artifact_id": "ART-CURRENT-LEGACY-V9",
+                "version": "v9",
+                "status": "current",
+                "created_at": "2025-01-01T00:00:00+08:00",
+                "source_event_ids": "",
+                "supersedes_version_id": "",
+                "notes": "",
+            },
+        )
+        truth_path = project / "AD-creative/orchestrator/current_truth.md"
+        truth = truth_path.read_text(encoding="utf-8")
+        start = truth.index("## Current Version Truth")
+        end = truth.index("## Next Action", start)
+        truth_path.write_text(
+            truth[:start]
+            + """## Current Package
+
+version_id: VER-LEGACY-009
+pptx_path: 05_最终交付_FinalDelivery/current legacy (v9).pptx
+
+"""
+            + truth[end:],
+            encoding="utf-8",
+        )
+
+        lock_path = project / "AD-creative/orchestrator/final_delivery_lock.csv"
+        append_csv_row(
+            lock_path,
+            {
+                "lock_id": "LOCK-CURRENT-V9",
+                "path": "05_最终交付_FinalDelivery/current legacy (v9).pptx",
+                "sha256": file_sha256(final_file),
+                "size_bytes": str(final_file.stat().st_size),
+                "mtime": "2025-01-01T00:00:00+08:00",
+                "protected": "yes",
+                "registered_at": "2025-01-01T00:00:00+08:00",
+                "notes": "immutable legacy baseline",
+                "inventory_state": "protected_baseline",
+                "reconciliation_state": "not_required",
+            },
+        )
+        _, baseline_rows = read_csv_rows(lock_path)
+        baseline = {
+            key: baseline_rows[0].get(key, "")
+            for key in ["path", "sha256", "size_bytes", "mtime", "registered_at"]
+        }
+
+        thread_rows = []
+        agent_rows = []
+        for index in range(180):
+            thread = {field: "" for field in THREADOPS_REGISTRY_FIELDS}
+            thread.update(
+                {
+                    "thread_id": f"legacy-thread-{index:04d}",
+                    "title": f"Legacy thread {index:04d}",
+                    "role": "copy_creative",
+                    "lane_id": f"LANE-{index:04d}",
+                    "work_id": f"WORK-{index:04d}",
+                    "lifecycle_state": "running",
+                    "created_at": "2024-01-01T00:00:00+08:00",
+                    "updated_at": "2024-01-01T00:00:00+08:00",
+                }
+            )
+            thread_rows.append(thread)
+            run = {field: "" for field in THREADOPS_AGENT_RUN_FIELDS}
+            run.update(
+                {
+                    "run_id": f"RUN-{index:04d}",
+                    "work_id": f"WORK-{index:04d}",
+                    "lane_id": f"LANE-{index:04d}",
+                    "thread_id": f"legacy-thread-{index:04d}",
+                    "status": "running",
+                }
+            )
+            agent_rows.append(run)
+        write_csv_rows(
+            project / "AD-creative/orchestrator/thread_registry.csv",
+            THREADOPS_REGISTRY_FIELDS,
+            thread_rows,
+        )
+        write_csv_rows(
+            project / "AD-creative/orchestrator/agent_runs.csv",
+            THREADOPS_AGENT_RUN_FIELDS,
+            agent_rows,
+        )
+        append_csv_row(
+            project / "AD-creative/orchestrator/gate_log.csv",
+            {
+                "gate_id": "GATE-LEGACY-DAMAGED",
+                "gate_run_id": "GATE-RUN-LEGACY-DAMAGED",
+                "stage": "legacy_review",
+                "status": "needs_revision",
+                "checked_artifacts": "ART-NO-LONGER-EXISTS",
+                "created_at": "2024-01-01T00:00:00+08:00",
+                "owner": "legacy-import",
+            },
+        )
+        rights_asset = project / "AD-creative/visual_assets/selected/legacy-client-use.png"
+        rights_asset.parent.mkdir(parents=True, exist_ok=True)
+        rights_asset.write_bytes(b"legacy-client-visible-asset")
+        append_csv_row(
+            project / "AD-creative/visual_assets/asset_manifest.csv",
+            {
+                "asset_id": "ASSET-LEGACY-RIGHTS",
+                "path": "AD-creative/visual_assets/selected/legacy-client-use.png",
+                "asset_type": "image",
+                "stage": "client_review",
+                "version": "v1",
+                "status": "approved",
+                "visibility": "client_visible",
+                "qa_status": "PASS",
+                "risk_level": "low",
+            },
+        )
+        append_csv_row(
+            project / "AD-creative/visual_assets/asset_current_manifest.csv",
+            {
+                "asset_id": "ASSET-LEGACY-RIGHTS",
+                "source": "legacy-import",
+                "local_file": "AD-creative/visual_assets/selected/legacy-client-use.png",
+                "path": "AD-creative/visual_assets/selected/legacy-client-use.png",
+                "sha256": file_sha256(rights_asset),
+                "original_or_processed": "original",
+                "approval": "approved",
+                "direct_client_use": "yes",
+                "used_in_slide": "S01",
+                "qa_flags": "legacy-fixture",
+                "protected": "false",
+                "status": "approved",
+            },
+        )
+        (project / "AD-creative/orchestrator/control_plane_schema.json").unlink()
+        project_yml = project / "AD-creative/orchestrator/project.yml"
+        project_yml.write_text(
+            "\n".join(
+                line
+                for line in project_yml.read_text(encoding="utf-8").splitlines()
+                if "schema_version:" not in line
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        first = migrate_control_plane(project)
+        assert first["blockers"] == []
+        assert "current_version_id: VER-LEGACY-009" in truth_path.read_text(encoding="utf-8")
+        assert "current_pptx_artifact_id: ART-CURRENT-LEGACY-V9" in truth_path.read_text(encoding="utf-8")
+        artifact_hash = file_sha256(project / "AD-creative/orchestrator/artifact_index.csv")
+        thread_hash = file_sha256(project / "AD-creative/orchestrator/thread_registry.csv")
+        manifest = project / "AD-creative/orchestrator/migrations/control_plane_v2_manifest.json"
+        manifest_hash = file_sha256(manifest)
+        assert migrate_control_plane(project)["changes"] == []
+        assert file_sha256(project / "AD-creative/orchestrator/artifact_index.csv") == artifact_hash
+        assert file_sha256(project / "AD-creative/orchestrator/thread_registry.csv") == thread_hash
+        assert file_sha256(manifest) == manifest_hash
+
+        legacy_gate_message = (
+            "gate GATE-LEGACY-DAMAGED unknown artifact ART-NO-LONGER-EXISTS"
+        )
+        baseline_payload = json.loads(manifest.read_text(encoding="utf-8"))[
+            "raw_legacy_evidence"
+        ]["string_error_baseline"]
+        assert any(
+            item.get("message") == legacy_gate_message for item in baseline_payload
+        )
+        pre_delta_issues, _ = validate_issues(project)
+        assert any(
+            issue.message == legacy_gate_message
+            and issue.scope == "active"
+            and issue.severity == "P1"
+            for issue in pre_delta_issues
+        )
+        default_errors, _ = validate(project)
+        strict_errors, _ = validate(project, strict_legacy=True)
+        assert legacy_gate_message in default_errors
+        assert legacy_gate_message in strict_errors
+        rights_message = (
+            "asset_current_manifest ASSET-LEGACY-RIGHTS direct_client_use=yes "
+            "without hash-bound authorization receipt"
+        )
+        assert rights_message in default_errors
+        assert not any(
+            item.get("message") == rights_message for item in baseline_payload
+        )
+        assert any(
+            issue.message == rights_message
+            and issue.scope == "active"
+            and issue.severity == "P1"
+            for issue in pre_delta_issues
+        )
+
+        append_csv_row(
+            project / "AD-creative/orchestrator/gate_log.csv",
+            {
+                "gate_id": "GATE-NEW-BROKEN",
+                "gate_run_id": "GATE-RUN-NEW-BROKEN",
+                "stage": "current_review",
+                "status": "needs_revision",
+                "checked_artifacts": "ART-NEW-MISSING",
+                "created_at": "2026-07-10T00:00:00+08:00",
+                "owner": "fixture-human",
+            },
+        )
+        delta_message = "gate GATE-NEW-BROKEN unknown artifact ART-NEW-MISSING"
+        delta_issues, _ = validate_issues(project)
+        assert any(
+            issue.message == delta_message
+            and issue.scope == "active"
+            and issue.severity == "P1"
+            for issue in delta_issues
+        )
+
+        final_file.write_bytes(b"drifted-v9-content")
+        pending_file = project / "05_最终交付_FinalDelivery/new pending (v10).pptx"
+        pending_file.write_bytes(b"new-v10-content")
+        try:
+            final_delivery_lock(project)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("current FinalDelivery drift must block")
+        _, lock_rows = read_csv_rows(lock_path)
+        old_row = next(row for row in lock_rows if row.get("lock_id") == "LOCK-CURRENT-V9")
+        assert {key: old_row.get(key, "") for key in baseline} == baseline
+        pending_row = next(row for row in lock_rows if row.get("path", "").endswith("new pending (v10).pptx"))
+        assert pending_row.get("inventory_state") == "pending_reconciliation"
+
+        issues, stats = validate_issues(project)
+        assert issues[0].severity == "P0" and issues[0].scope == "current"
+        assert any(issue.code == "final_delivery_protected_drift" for issue in issues[:5])
+        assert stats["legacy_debt"] >= 3
+        assert any(issue.code == "legacy_artifact_debt" for issue in issues)
+        assert any(issue.code == "legacy_threadops_quarantine" for issue in issues)
+
+        render_human_workspace_indexes(project)
+        for index, folder in enumerate(folders):
+            index_text = (project / folder / "目录索引.md").read_text(encoding="utf-8")
+            assert f"manual legacy ({index}).txt" in index_text
+            assert "](<" in index_text
+        final_index = (project / folders[-1] / "目录索引.md").read_text(encoding="utf-8")
+        current_line = next(
+            line for line in final_index.splitlines() if "ART-CURRENT-LEGACY-V9" in line
+        )
+        assert "EXACT CURRENT" in current_line
+        assert "LOCAL/UNREGISTERED" not in current_line
+
+
+def test_v2_unclassified_imported_thread_row_is_hash_bound_quarantined() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-v2-thread-import-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        row = {field: "" for field in THREADOPS_REGISTRY_FIELDS}
+        row.update(
+            {
+                "thread_id": "imported-thread-without-writer-proof",
+                "title": "Imported row",
+                "role": "copy_creative",
+                "lane_id": "LANE-IMPORTED",
+                "work_id": "WORK-IMPORTED",
+                "lifecycle_state": "running",
+                "created_at": "2026-07-10T00:00:00+08:00",
+                "updated_at": "2026-07-10T00:00:00+08:00",
+                "schema_state": "",
+            }
+        )
+        registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
+        write_csv_rows(registry_path, THREADOPS_REGISTRY_FIELDS, [row])
+        result = migrate_control_plane(project)
+        assert result["blockers"] == []
+        _, migrated = read_csv_rows(registry_path)
+        assert migrated[0]["schema_state"] == "legacy_quarantined"
+        assert migrated[0]["legacy_quarantine_reason"] == (
+            "v2_unclassified_threadops_row_without_writer_proof"
+        )
+        evidence_sha = migrated[0]["legacy_evidence_sha256"]
+        assert migrated[0]["legacy_raw_ref"].endswith(
+            f"/thread_rows_by_sha/{evidence_sha}"
+        )
+        manifest = json.loads(
+            (
+                project
+                / "AD-creative/orchestrator/migrations/control_plane_v2_manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert manifest["raw_legacy_evidence"]["thread_rows_by_sha"][
+            evidence_sha
+        ]["raw"]["thread_id"] == row["thread_id"]
+        issues, _ = validate_issues(project)
+        assert any(issue.code == "legacy_threadops_quarantine" for issue in issues)
+        assert not any(
+            issue.scope == "current" and row["thread_id"] in issue.message
+            for issue in issues
+        )
+        assert not any("expected exactly one matching agent_runs" in issue.message for issue in issues)
+        default_errors, _ = validate(project)
+        strict_errors, _ = validate(project, strict_legacy=True)
+        assert len(strict_errors) > len(default_errors)
 
 def test_migrate_control_plane_adds_missing_current_truth_keys_without_overwrite() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-migrate-truth-keys-") as raw_project:
@@ -1808,6 +3738,7 @@ def main() -> int:
     test_validate_rejects_missing_project_agents_policy()
     test_existing_agents_policy_is_not_overwritten()
     test_human_workspace_indexes_mirror_control_plane()
+    test_human_workspace_v2_is_current_first_deduped_clickable_and_scans_all_folders()
     test_intake_preserves_version_truth_and_custom_sections()
     test_pptx_export_uses_immutable_version_transaction()
     test_pptx_export_blocks_unconfirmed_generated_outline()
@@ -1819,10 +3750,12 @@ def main() -> int:
     test_thread_plan_creates_control_plane()
     test_thread_plan_includes_harness_loop_and_adoption_contracts()
     test_thread_progress_invalidates_stale_convergence_reminder()
+    test_invalid_and_dead_threads_fail_closed_with_one_bounded_rescue()
     test_execution_worker_receipt_cannot_be_prompt_only()
     test_threadops_validation_allows_pending_execution_worker_receipt_template()
     test_threadops_validation_rejects_prompt_only_received_execution_receipt()
     test_thread_reconcile_rejects_failed_or_out_of_scope_self_report()
+    test_thread_worker_cannot_write_host_attestation_even_if_scope_declares_it()
     test_threadops_validation_rejects_missing_helper_evidence()
     test_threadops_validation_rejects_helper_thread_id_claim()
     test_threadops_validation_rejects_observation_only_evidence_refs()
@@ -1845,8 +3778,23 @@ def main() -> int:
     test_client_language_gate_blocks_internal_execution_terms()
     test_asset_current_manifest_and_visual_layout_gate_use_real_assets()
     test_final_delivery_lock_protects_user_placed_files()
+    test_final_delivery_lock_ids_are_unicode_safe_unique_and_required()
+    test_final_delivery_human_identity_rejects_automation_names_consistently()
+    test_final_delivery_inventory_persists_pending_before_missing_baseline_blocker()
+    test_final_delivery_different_hash_supersession_requires_explicit_bound_evidence()
+    test_final_delivery_inventory_rejects_symlinked_files()
+    test_final_delivery_metadata_classifier_does_not_exclude_real_deliverables()
+    test_final_delivery_pending_inventory_recovers_after_old_blocker_is_fixed()
+    test_install_skill_syncs_complete_managed_tree_without_deleting_unrelated_files()
     test_migrate_control_plane_creates_new_gate_files()
+    test_fresh_v2_template_migration_has_no_unreported_schema_write()
+    test_forged_legacy_error_baseline_cannot_hide_current_active_error()
     test_migrate_control_plane_normalizes_legacy_short_rows()
+    test_migration_keeps_cleanup_tombstone_original_path_unknown()
+    test_pre_v2_full_header_thread_row_is_hash_bound_quarantined()
+    test_v2_unclassified_imported_thread_row_is_hash_bound_quarantined()
+    test_legacy_current_package_backfills_exact_current_truth_or_blocks_ambiguity()
+    test_realistic_legacy_forward_fixture_prioritizes_current_p0_and_groups_debt()
     test_migrate_control_plane_adds_missing_current_truth_keys_without_overwrite()
     test_duffy_v2_regression_allows_long_low_density_client_outline()
     test_browser_asset_current_manifest_records_platform_conversation_and_qa_flags()

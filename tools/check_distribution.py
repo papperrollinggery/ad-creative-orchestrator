@@ -28,6 +28,7 @@ REQUIRED_PATHS = [
     "test_specialist_exchange.py",
     "adco_resources/templates/project/AGENTS.md",
     "adco_resources/templates/project/AD-creative/orchestrator/project.yml",
+    "adco_resources/templates/project/AD-creative/orchestrator/control_plane_schema.json",
     "adco_resources/templates/project/AD-creative/orchestrator/thread_registry.csv",
     "adco_resources/templates/project/AD-creative/orchestrator/thread_lane_plan_template.md",
     "adco_resources/templates/project/AD-creative/orchestrator/agency_staff_selection_template.md",
@@ -35,6 +36,10 @@ REQUIRED_PATHS = [
     "adco_resources/templates/project/AD-creative/handoff/项目看板.md",
     "adco_resources/templates/project/AD-creative/gates/adversarial_council_gate_template.md",
     "adco_resources/skill_drafts/ad-creative-orchestrator/SKILL.md",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/migration_and_lifecycle.md",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/operator_cli_and_gates.md",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/specialist_exchange_and_craft.md",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/thread_operations.md",
     "adco_resources/contracts/specialist_exchange/v1/descriptor.schema.json",
     "adco_resources/contracts/specialist_exchange/v1/handoff.schema.json",
     "adco_resources/contracts/specialist_exchange/v1/receipt.schema.json",
@@ -48,7 +53,7 @@ REQUIRED_ENTRY_POINTS = [
 ]
 REQUIRED_PYPROJECT_SNIPPETS = [
     'name = "ad-creative-orchestrator"',
-    'version = "0.2.0"',
+    'version = "0.3.0"',
     'adco = "ad_creative_operator:main"',
     'adco-check = "run_checks:main"',
     'adco-init = "init_project:main"',
@@ -56,6 +61,7 @@ REQUIRED_PYPROJECT_SNIPPETS = [
     '"check_specialist_schemas",',
     '"specialist_schema_validation",',
     '"contracts/specialist_exchange/v1/*.schema.json"',
+    '"skill_drafts/ad-creative-orchestrator/**/*"',
 ]
 WHEEL_BUILD_TIMEOUT_SECONDS = 120
 
@@ -153,7 +159,7 @@ def main() -> int:
                     metadata_text = archive.read(metadata_path).decode("utf-8")
                     if "Name: ad-creative-orchestrator" not in metadata_text:
                         issues.append("wheel metadata missing package name")
-                    if "Version: 0.2.0" not in metadata_text:
+                    if "Version: 0.3.0" not in metadata_text:
                         issues.append("wheel metadata missing version")
 
                 if entry_points_path:

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-07-11
+
+- Rebuilt Human Workspace indexes around exact-current truth, canonical path deduplication, resolvable links, physical-file discovery, and explicit missing or unregistered evidence.
+- Added schema-v2 control-plane migrations with traceable artifact tombstones, legacy quarantine, current-versus-legacy diagnostics, and strict legacy validation when required.
+- Added fail-closed FinalDelivery inventory and explicit rename or supersession reconciliation without silently rewriting protected baselines.
+- Hardened Thread convergence around observable progress, absolute deadlines, a single bounded extension, and at most one bounded rescue.
+- Split the operating Skill into focused references and added complete managed-tree installation manifests and source/package/install parity checks.
+- Expanded adversarial regression coverage for legacy migration, FinalDelivery safety, Thread identity, Human Workspace projection, and global Skill synchronization.
+
 ## 0.2.0 - 2026-07-10
 
 - Made client-readable proposal structure and explicit client confirmation first-class, with fail-closed outline, language, visual, package, and send-readiness Gates.

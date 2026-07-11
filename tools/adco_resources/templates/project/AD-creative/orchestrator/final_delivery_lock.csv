@@ -1,1 +1,1 @@
-lock_id,path,sha256,size_bytes,mtime,protected,registered_at,notes
+lock_id,path,sha256,size_bytes,mtime,protected,registered_at,notes,inventory_state,reconciliation_state,reconciliation_kind,reconciles_lock_id,supersedes_lock_id,confirmed_by,confirmed_at,evidence_ref,evidence_sha256,host_attestation_ref,host_attestation_sha256,version_id,supersedes_version_id,status_reason

@@ -8,7 +8,9 @@ import csv
 import hashlib
 import json
 import re
+import unicodedata
 import zipfile
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -21,6 +23,82 @@ from specialist_schema_validation import (
 
 
 CLIENT_DELIVERY_VISIBILITIES = {"client_visible", "client_visible_ready", "sent"}
+CONTROL_PLANE_SCHEMA_VERSION = "2.0"
+CONTROL_PLANE_SCHEMA_REL = Path("AD-creative/orchestrator/control_plane_schema.json")
+FINAL_DELIVERY_CONFIRMATION_PROTOCOL = (
+    "adco.final-delivery-reconciliation-confirmation"
+)
+FINAL_DELIVERY_CONFIRMATION_VERSION = "1.0"
+FINAL_DELIVERY_HOST_ATTESTATION_PROTOCOL = "adco.host-readback-attestation"
+FINAL_DELIVERY_HOST_ATTESTATION_VERSION = "1.0"
+FINAL_DELIVERY_HOST_ATTESTATION_ROOT = Path(
+    "AD-creative/orchestrator/host_attestations"
+)
+ARTIFACT_LIFECYCLE_VALUES = {
+    "active",
+    "pending",
+    "superseded",
+    "withdrawn",
+    "archived",
+    "deprecated",
+    "rejected",
+    "removed",
+    "legacy_unresolved_tombstone",
+    "legacy_unknown",
+}
+ARTIFACT_INACTIVE_LIFECYCLE_VALUES = {
+    "superseded",
+    "withdrawn",
+    "archived",
+    "deprecated",
+    "rejected",
+    "removed",
+    "legacy_unresolved_tombstone",
+}
+CURRENT_ARTIFACT_TRUTH_KEYS = (
+    "current_pptx_artifact_id",
+    "current_pdf_artifact_id",
+    "current_preview_artifact_id",
+    "current_text_extract_artifact_id",
+    "current_ppt_editability_artifact_id",
+)
+CURRENT_VIEW_VERSION_STATUSES = {
+    "draft",
+    "internal_review",
+    "ready",
+    "active",
+    "current",
+}
+FINAL_DELIVERY_METADATA_MARKERS = {
+    "gate",
+    "checklist",
+    "preview",
+    "editability",
+    "manifest",
+    "lock",
+}
+FINAL_DELIVERY_ALWAYS_DELIVERABLE_SUFFIXES = {
+    ".pdf",
+    ".pptx",
+    ".docx",
+    ".xlsx",
+    ".key",
+    ".mov",
+    ".mp4",
+    ".zip",
+}
+
+
+@dataclass(frozen=True)
+class ValidationIssue:
+    severity: str
+    scope: str
+    code: str
+    message: str
+    evidence: str = ""
+
+    def as_dict(self) -> dict[str, str]:
+        return asdict(self)
 PASS_GATE_VALUES = {"pass", "passed"}
 CLIENT_DELIVERY_REQUIRED_TYPES = {
     "current_pptx_artifact_id": {"pptx"},
@@ -88,6 +166,10 @@ THREADOPS_REGISTRY_FIELDS = [
     "receipt_thread_id",
     "adoption_decision",
     "rejection_reason",
+    "schema_state",
+    "legacy_evidence_sha256",
+    "legacy_quarantine_reason",
+    "legacy_raw_ref",
 ]
 THREADOPS_EXECUTION_MODE = "execution_worker"
 THREADOPS_EXECUTION_MODES = {THREADOPS_EXECUTION_MODE, "isolated_worktree_execution_worker"}
@@ -288,6 +370,20 @@ FINAL_DELIVERY_LOCK_FIELDS = [
     "protected",
     "registered_at",
     "notes",
+    "inventory_state",
+    "reconciliation_state",
+    "reconciliation_kind",
+    "reconciles_lock_id",
+    "supersedes_lock_id",
+    "confirmed_by",
+    "confirmed_at",
+    "evidence_ref",
+    "evidence_sha256",
+    "host_attestation_ref",
+    "host_attestation_sha256",
+    "version_id",
+    "supersedes_version_id",
+    "status_reason",
 ]
 ARTIFACT_INDEX_FIELDS = [
     "artifact_id",
@@ -310,6 +406,13 @@ ARTIFACT_INDEX_FIELDS = [
     "size_bytes",
     "derived_from_artifact_id",
     "derived_from_sha256",
+    "lifecycle_state",
+    "original_path",
+    "cleanup_ref",
+    "removed_at",
+    "removal_reason",
+    "superseded_by",
+    "status_reason",
 ]
 GATE_LOG_FIELDS = [
     "gate_id",
@@ -511,6 +614,68 @@ def split_ids(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(";") if item.strip()]
+
+
+def normalized_artifact_lifecycle(row: dict[str, str]) -> str:
+    explicit = (row.get("lifecycle_state") or "").strip().lower().replace("-", "_")
+    if explicit:
+        return explicit
+    status = (row.get("status") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if "removed" in status and any(token in status for token in ("clean", "cleanup")):
+        return "legacy_unresolved_tombstone"
+    return {
+        "superseded": "superseded",
+        "withdrawn": "withdrawn",
+        "archived": "archived",
+        "deprecated": "deprecated",
+        "rejected": "rejected",
+        "removed": "removed",
+        "deleted": "removed",
+        "pending": "pending",
+        "draft": "pending",
+        "blocked": "pending",
+        "not_run": "pending",
+    }.get(status, "active" if status in {"", "active", "current", "done", "complete", "completed", "approved", "registered", "pass", "passed"} else "legacy_unknown")
+
+
+def canonical_row_sha256(row: dict[str, object]) -> str:
+    payload = json.dumps(
+        {str(key): row.get(key, "") or "" for key in sorted(key for key in row if key is not None)},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def canonical_payload_sha256(payload: object) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def final_delivery_metadata_path(path: Path) -> bool:
+    if path.suffix.lower() in FINAL_DELIVERY_ALWAYS_DELIVERABLE_SUFFIXES:
+        return False
+    stem = re.sub(r"[^a-z0-9]+", "_", path.stem.lower()).strip("_")
+    tokens = {token for token in stem.split("_") if token}
+    strong_phrases = {
+        "text_extract",
+        "gate_report",
+        "gate_checklist",
+        "delivery_gate",
+        "final_delivery_index",
+        "delivery_index",
+        "lock_snapshot",
+        "delivery_manifest",
+    }
+    return bool(tokens & FINAL_DELIVERY_METADATA_MARKERS) or any(
+        phrase in stem for phrase in strong_phrases
+    )
 
 
 def load_csv(path: Path, errors: list[str]) -> list[dict[str, str]]:
@@ -2278,6 +2443,481 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def final_delivery_project_path(
+    project: Path, raw_path: str, *, require_file: bool = False
+) -> tuple[str, Path]:
+    raw = (raw_path or "").strip().strip("`")
+    candidate = Path(raw)
+    if not raw or candidate.is_absolute() or ".." in candidate.parts:
+        raise ValueError(f"FinalDelivery path must be project-relative: {raw_path}")
+    rel = unicodedata.normalize("NFC", candidate.as_posix())
+    relative = Path(rel)
+    if not relative.parts or relative.parts[0] != "05_最终交付_FinalDelivery":
+        raise ValueError(f"FinalDelivery path is outside FinalDelivery: {raw_path}")
+    if project_relative_path_has_symlink_component(project, rel):
+        raise ValueError(f"FinalDelivery path contains a symlink component: {raw_path}")
+    lexical = project / relative
+    resolved = lexical.resolve()
+    try:
+        resolved.relative_to((project / "05_最终交付_FinalDelivery").resolve())
+        resolved.relative_to(project.resolve())
+    except ValueError as exc:
+        raise ValueError(f"FinalDelivery path escapes the protected root: {raw_path}") from exc
+    if require_file and (not lexical.is_file() or lexical.is_symlink()):
+        raise ValueError(f"FinalDelivery path is not a regular file: {raw_path}")
+    return rel, lexical
+
+
+def final_delivery_human_identity_valid(value: str) -> bool:
+    identity = value.strip()
+    if len(re.sub(r"\s+", "", identity)) < 2:
+        return False
+    if identity.lower() in {"-", "tbd", "todo", "pending", "unknown", "n/a"}:
+        return False
+    normalized = re.sub(r"[^a-z0-9]+", "_", identity.lower()).strip("_")
+    if "main_controller" in normalized or normalized == "maincontroller":
+        return False
+    tokens = {token for token in normalized.split("_") if token}
+    if tokens & {
+        "adco",
+        "assistant",
+        "automation",
+        "agent",
+        "bot",
+        "chatgpt",
+        "claude",
+        "codex",
+        "gemini",
+        "model",
+        "system",
+        "worker",
+        "ai",
+    }:
+        return False
+    return not any(token in identity for token in ("自动化", "机器人", "系统代理", "执行代理"))
+
+
+def final_delivery_evidence_binding_valid(
+    project: Path, row: dict[str, str]
+) -> bool:
+    raw = (row.get("evidence_ref") or "").strip().strip("`")
+    candidate = Path(raw)
+    if not raw or candidate.is_absolute() or ".." in candidate.parts:
+        return False
+    rel = unicodedata.normalize("NFC", candidate.as_posix())
+    if project_relative_path_has_symlink_component(project, rel):
+        return False
+    path = project / rel
+    try:
+        path.resolve().relative_to(project.resolve())
+    except ValueError:
+        return False
+    if not path.is_file() or path.is_symlink() or path.stat().st_nlink != 1:
+        return False
+    expected_sha = (row.get("evidence_sha256") or "").strip()
+    return bool(
+        re.fullmatch(r"[0-9a-f]{64}", expected_sha)
+        and file_sha256(path) == expected_sha
+    )
+
+
+def final_delivery_artifact_for_path(
+    project: Path, rel_path: str, *, require_active: bool
+) -> dict[str, str] | None:
+    artifacts = load_optional_csv(
+        project / "AD-creative/orchestrator/artifact_index.csv", []
+    )
+    matches: list[dict[str, str]] = []
+    for row in artifacts:
+        try:
+            artifact_rel, _ = final_delivery_project_path(
+                project, row.get("path") or row.get("original_path") or ""
+            )
+        except ValueError:
+            continue
+        if artifact_rel != rel_path:
+            continue
+        if require_active and normalized_artifact_lifecycle(row) != "active":
+            continue
+        matches.append(row)
+    return matches[0] if len(matches) == 1 else None
+
+
+def final_delivery_old_version_id(
+    project: Path, old_row: dict[str, str]
+) -> str:
+    try:
+        old_rel, _ = final_delivery_project_path(
+            project, (old_row.get("path") or "").strip()
+        )
+    except ValueError:
+        return ""
+    artifact = final_delivery_artifact_for_path(
+        project, old_rel, require_active=False
+    )
+    if not artifact:
+        return ""
+    artifact_id = (artifact.get("artifact_id") or "").strip()
+    versions = load_optional_csv(
+        project / "AD-creative/orchestrator/version_map.csv", []
+    )
+    explicit = (old_row.get("version_id") or "").strip()
+    matches = [
+        row
+        for row in versions
+        if (row.get("artifact_id") or "").strip() == artifact_id
+        and (not explicit or (row.get("version_id") or "").strip() == explicit)
+    ]
+    return (
+        (matches[0].get("version_id") or "").strip()
+        if artifact_id and len(matches) == 1
+        else ""
+    )
+
+
+def final_delivery_host_attestation_binding(
+    project: Path,
+    *,
+    attestation_ref: str,
+    confirmation_receipt_ref: str,
+    confirmation_receipt_sha256: str,
+) -> tuple[str, str] | None:
+    raw = (attestation_ref or "").strip().strip("`")
+    candidate = Path(raw)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return None
+    rel = unicodedata.normalize("NFC", candidate.as_posix())
+    if not rel.startswith(FINAL_DELIVERY_HOST_ATTESTATION_ROOT.as_posix() + "/"):
+        return None
+    if project_relative_path_has_symlink_component(project, rel):
+        return None
+    path = project / rel
+    try:
+        path.resolve().relative_to(project.resolve())
+    except ValueError:
+        return None
+    if not path.is_file() or path.is_symlink() or path.stat().st_nlink != 1:
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    expected = {
+        "protocol_id": FINAL_DELIVERY_HOST_ATTESTATION_PROTOCOL,
+        "schema_version": FINAL_DELIVERY_HOST_ATTESTATION_VERSION,
+        "attestation_scope": "final_delivery_reconciliation",
+        "attestation_role": "host_main_thread",
+        "verified_by": "main_controller",
+        "readback_status": "verified",
+        "readback_tool": "codex_app.read_thread",
+        "confirmation_receipt_ref": confirmation_receipt_ref,
+        "confirmation_receipt_sha256": confirmation_receipt_sha256,
+    }
+    if any(
+        str(payload.get(key, "")).strip() != value
+        for key, value in expected.items()
+    ):
+        return None
+    if str(payload.get("authority", "")).strip() not in {
+        "user",
+        "client",
+        "project_owner",
+    }:
+        return None
+    if len(str(payload.get("attestation_id", "")).strip()) < 8:
+        return None
+    if not threadops_timestamp_is_aware(str(payload.get("verified_at", ""))):
+        return None
+    if not THREADOPS_REAL_THREAD_ID_PATTERN.fullmatch(
+        str(payload.get("thread_id", "")).strip()
+    ):
+        return None
+    if len(str(payload.get("user_message_id", "")).strip()) < 8:
+        return None
+    if not re.fullmatch(
+        r"[0-9a-f]{64}", str(payload.get("user_message_sha256", "")).strip()
+    ):
+        return None
+    return rel, file_sha256(path)
+
+
+def final_delivery_confirmation_receipt_valid(
+    project: Path,
+    *,
+    old_row: dict[str, str],
+    new_row: dict[str, str],
+    kind: str,
+) -> bool:
+    if not final_delivery_evidence_binding_valid(project, new_row):
+        return False
+    evidence_rel = (new_row.get("evidence_ref") or "").strip().strip("`")
+    evidence_path = project / evidence_rel
+    try:
+        payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    try:
+        old_rel, _ = final_delivery_project_path(
+            project, (old_row.get("path") or "").strip()
+        )
+        new_rel, new_path = final_delivery_project_path(
+            project, (new_row.get("path") or "").strip(), require_file=True
+        )
+    except ValueError:
+        return False
+    new_artifact = final_delivery_artifact_for_path(
+        project, new_rel, require_active=True
+    )
+    new_artifact_id = (
+        (new_artifact.get("artifact_id") or "").strip()
+        if new_artifact
+        else ""
+    )
+    old_version_id = (
+        final_delivery_old_version_id(project, old_row)
+        if kind == "supersession"
+        else ""
+    )
+    if kind == "supersession" and not old_version_id:
+        return False
+    expected = {
+        "protocol_id": FINAL_DELIVERY_CONFIRMATION_PROTOCOL,
+        "schema_version": FINAL_DELIVERY_CONFIRMATION_VERSION,
+        "confirmation_scope": "final_delivery_reconciliation",
+        "decision": "approve_reconciliation",
+        "confirmed_by": (new_row.get("confirmed_by") or "").strip(),
+        "confirmed_at": (new_row.get("confirmed_at") or "").strip(),
+        "reconciliation_kind": kind,
+        "old_lock_id": (old_row.get("lock_id") or "").strip(),
+        "old_path": old_rel,
+        "old_sha256": (old_row.get("sha256") or "").strip(),
+        "new_path": new_rel,
+        "new_sha256": file_sha256(new_path),
+        "new_artifact_id": new_artifact_id,
+        "version_id": (new_row.get("version_id") or "").strip(),
+        "supersedes_version_id": old_version_id,
+    }
+    if any(
+        str(payload.get(key, "")).strip() != expected_value
+        for key, expected_value in expected.items()
+    ):
+        return False
+    confirmation_id = str(payload.get("confirmation_id", "")).strip()
+    source_event_id = str(payload.get("source_event_id", "")).strip()
+    if len(confirmation_id) < 8 or not source_event_id:
+        return False
+    source_events = load_optional_csv(
+        project / "AD-creative/orchestrator/source_events.csv", []
+    )
+    sources = [
+        row
+        for row in source_events
+        if (row.get("source_event_id") or "").strip() == source_event_id
+    ]
+    if len(sources) != 1:
+        return False
+    source = sources[0]
+    if (source.get("source_type") or "").strip().lower() != "file":
+        return False
+    if (source.get("source_owner") or "").strip().casefold() != (
+        new_row.get("confirmed_by") or ""
+    ).strip().casefold():
+        return False
+    if (source.get("declared_semantics") or "").strip().lower() not in {
+        "approval",
+        "confirmation",
+        "final_delivery_reconciliation",
+    }:
+        return False
+    if (source.get("trust_level") or "").strip().lower() not in {
+        "confirmed",
+        "user_confirmed",
+        "client_confirmed",
+    }:
+        return False
+    source_paths = {
+        unicodedata.normalize("NFC", Path(value).as_posix())
+        for value in split_ids(source.get("file_paths"))
+        if value and not Path(value).is_absolute() and ".." not in Path(value).parts
+    }
+    if source_paths != {evidence_rel}:
+        return False
+    if new_artifact_id and new_artifact_id not in set(
+        split_ids(source.get("affects_artifacts"))
+    ):
+        return False
+    host_binding = final_delivery_host_attestation_binding(
+        project,
+        attestation_ref=str(payload.get("host_attestation_ref", "")).strip(),
+        confirmation_receipt_ref=evidence_rel,
+        confirmation_receipt_sha256=(new_row.get("evidence_sha256") or "").strip(),
+    )
+    if not host_binding:
+        return False
+    host_rel, host_sha = host_binding
+    if (
+        (new_row.get("host_attestation_ref") or "").strip() != host_rel
+        or (new_row.get("host_attestation_sha256") or "").strip() != host_sha
+    ):
+        return False
+    return True
+
+
+def final_delivery_version_binding_valid(
+    project: Path, rel_path: str, version_id: str
+) -> bool:
+    version_id = version_id.strip()
+    if not version_id:
+        return False
+    artifacts = load_optional_csv(
+        project / "AD-creative/orchestrator/artifact_index.csv", []
+    )
+    artifact_matches: list[dict[str, str]] = []
+    for row in artifacts:
+        try:
+            artifact_rel, _ = final_delivery_project_path(
+                project, row.get("path") or row.get("original_path") or ""
+            )
+        except ValueError:
+            continue
+        if (
+            artifact_rel == rel_path
+            and normalized_artifact_lifecycle(row) == "active"
+        ):
+            artifact_matches.append(row)
+    if len(artifact_matches) != 1:
+        return False
+    artifact_id = (artifact_matches[0].get("artifact_id") or "").strip()
+    versions = load_optional_csv(
+        project / "AD-creative/orchestrator/version_map.csv", []
+    )
+    version_matches = [
+        row for row in versions if (row.get("version_id") or "").strip() == version_id
+    ]
+    if not artifact_id or len(version_matches) != 1:
+        return False
+    truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    truth_text = truth_path.read_text(encoding="utf-8") if truth_path.is_file() else ""
+    truth_version_matches = current_truth_value(truth_text, "current_version_id") == version_id
+    version = version_matches[0]
+    version_artifact_id = (version.get("artifact_id") or "").strip()
+    if (version.get("status") or "").strip().lower() != "current":
+        return False
+    if not truth_version_matches:
+        return False
+    if version_artifact_id != artifact_id:
+        return False
+    artifact_type = (artifact_matches[0].get("artifact_type") or "").strip().lower()
+    truth_key_by_type = {
+        "pptx": "current_pptx_artifact_id",
+        "pdf": "current_pdf_artifact_id",
+        "preview": "current_preview_artifact_id",
+        "deck_preview": "current_preview_artifact_id",
+        "png_preview": "current_preview_artifact_id",
+        "jpg_preview": "current_preview_artifact_id",
+        "text_extract": "current_text_extract_artifact_id",
+        "ppt_text_extract": "current_text_extract_artifact_id",
+        "ppt_editability_check": "current_ppt_editability_artifact_id",
+    }
+    truth_key = truth_key_by_type.get(artifact_type, "")
+    if not truth_key or current_truth_value(truth_text, truth_key) != artifact_id:
+        return False
+    return True
+
+
+def final_delivery_supersession_chain_valid(
+    project: Path, old_row: dict[str, str], new_version_id: str
+) -> bool:
+    old_version_id = final_delivery_old_version_id(project, old_row)
+    if not old_version_id:
+        return False
+    versions = load_optional_csv(
+        project / "AD-creative/orchestrator/version_map.csv", []
+    )
+    matches = [
+        row
+        for row in versions
+        if (row.get("version_id") or "").strip() == new_version_id.strip()
+    ]
+    return bool(
+        len(matches) == 1
+        and (matches[0].get("supersedes_version_id") or "").strip()
+        == old_version_id
+    )
+
+
+def final_delivery_reconciliation_valid(
+    project: Path,
+    rows_by_path: dict[str, dict[str, str]],
+    old_row: dict[str, str],
+) -> bool:
+    old_lock_id = (old_row.get("lock_id") or "").strip()
+    if not old_lock_id:
+        return False
+    candidates = [
+        row
+        for row in rows_by_path.values()
+        if (row.get("reconciles_lock_id") or "").strip() == old_lock_id
+    ]
+    if len(candidates) != 1:
+        return False
+    new_row = candidates[0]
+    if not (
+        (new_row.get("protected") or "").strip().lower() in {"yes", "true", "1"}
+        and (new_row.get("reconciliation_state") or "").strip().lower()
+        == "reconciled"
+        and final_delivery_human_identity_valid(
+            (new_row.get("confirmed_by") or "").strip()
+        )
+        and (new_row.get("confirmed_at") or "").strip()
+    ):
+        return False
+    if not threadops_timestamp_is_aware((new_row.get("confirmed_at") or "").strip()):
+        return False
+    try:
+        new_rel, path = final_delivery_project_path(
+            project, (new_row.get("path") or "").strip(), require_file=True
+        )
+        final_delivery_project_path(project, (old_row.get("path") or "").strip())
+    except ValueError:
+        return False
+    actual_sha = file_sha256(path)
+    if actual_sha != (new_row.get("sha256") or "").strip():
+        return False
+    kind = (new_row.get("reconciliation_kind") or "").strip().lower()
+    if not final_delivery_confirmation_receipt_valid(
+        project, old_row=old_row, new_row=new_row, kind=kind
+    ):
+        return False
+    old_version_id = (
+        final_delivery_old_version_id(project, old_row)
+        if kind == "supersession"
+        else ""
+    )
+    if (new_row.get("supersedes_version_id") or "").strip() != old_version_id:
+        return False
+    old_sha = (old_row.get("sha256") or "").strip()
+    if kind == "rename":
+        return actual_sha == old_sha
+    if kind == "supersession":
+        return (
+            actual_sha != old_sha
+            and bool((new_row.get("version_id") or "").strip())
+            and (new_row.get("supersedes_lock_id") or "").strip() == old_lock_id
+            and final_delivery_version_binding_valid(
+                project, new_rel, (new_row.get("version_id") or "").strip()
+            )
+            and final_delivery_supersession_chain_valid(
+                project, old_row, (new_row.get("version_id") or "").strip()
+            )
+        )
+    return False
+
+
 def has_client_delivery_artifact(artifacts: list[dict[str, str]]) -> bool:
     return any(
         row.get("visibility", "").strip().lower() in CLIENT_DELIVERY_VISIBILITIES
@@ -2490,10 +3130,22 @@ def validate_client_delivery_readiness(
     return errors
 
 
-def validate(project: Path) -> tuple[list[str], dict[str, int]]:
+def _validate_strings(project: Path) -> tuple[list[str], dict[str, int]]:
     errors: list[str] = []
     project = project.resolve()
     ad_root = project / "AD-creative"
+    schema_v2 = False
+    schema_path = project / CONTROL_PLANE_SCHEMA_REL
+    if schema_path.is_file():
+        try:
+            schema_v2 = (
+                json.loads(schema_path.read_text(encoding="utf-8")).get(
+                    "schema_version"
+                )
+                == CONTROL_PLANE_SCHEMA_VERSION
+            )
+        except json.JSONDecodeError:
+            schema_v2 = False
 
     for rel_path in REQUIRED_FILES:
         if not (project / rel_path).exists():
@@ -2559,8 +3211,37 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
     check_required_columns(errors, "client_outline", ad_root / "client_review/client_outline.csv", CLIENT_OUTLINE_FIELDS)
     check_required_columns(errors, "asset_current_manifest", ad_root / "visual_assets/asset_current_manifest.csv", ASSET_CURRENT_FIELDS)
     check_required_columns(errors, "asset_authorizations", ad_root / "visual_assets/asset_authorizations.csv", ASSET_AUTHORIZATION_FIELDS)
-    check_required_columns(errors, "final_delivery_lock", ad_root / "orchestrator/final_delivery_lock.csv", FINAL_DELIVERY_LOCK_FIELDS)
-    check_required_columns(errors, "artifact_index", ad_root / "orchestrator/artifact_index.csv", ARTIFACT_INDEX_FIELDS)
+    check_required_columns(
+        errors,
+        "final_delivery_lock",
+        ad_root / "orchestrator/final_delivery_lock.csv",
+        FINAL_DELIVERY_LOCK_FIELDS if schema_v2 else FINAL_DELIVERY_LOCK_FIELDS[:8],
+    )
+    final_delivery_lock_ids = [
+        (row.get("lock_id") or "").strip() for row in final_delivery_lock_rows
+    ]
+    for index, (row, lock_id) in enumerate(
+        zip(final_delivery_lock_rows, final_delivery_lock_ids), start=2
+    ):
+        if not lock_id:
+            errors.append(
+                "FinalDelivery lock row missing lock_id: "
+                f"row {index} path {(row.get('path') or '<blank>').strip()}"
+            )
+    for lock_id in sorted(
+        {
+            value
+            for value in final_delivery_lock_ids
+            if value and final_delivery_lock_ids.count(value) > 1
+        }
+    ):
+        errors.append(f"FinalDelivery duplicate lock_id: {lock_id}")
+    check_required_columns(
+        errors,
+        "artifact_index",
+        ad_root / "orchestrator/artifact_index.csv",
+        ARTIFACT_INDEX_FIELDS if schema_v2 else ARTIFACT_INDEX_FIELDS[:20],
+    )
     check_required_columns(errors, "gate_log", ad_root / "orchestrator/gate_log.csv", GATE_LOG_FIELDS)
     check_required_columns(
         errors,
@@ -2593,12 +3274,35 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
     except FileNotFoundError:
         agent_runs_fields = []
 
+    quarantined_thread_rows = [
+        row
+        for row in thread_registry_fields
+        if (row.get("schema_state") or "").strip() == "legacy_quarantined"
+    ]
+    current_thread_rows = [
+        row for row in thread_registry_fields if row not in quarantined_thread_rows
+    ]
+    quarantined_thread_ids = {
+        (row.get("thread_id") or "").strip()
+        for row in quarantined_thread_rows
+        if (row.get("thread_id") or "").strip()
+    }
+    quarantined_work_lanes = {
+        ((row.get("work_id") or "").strip(), (row.get("lane_id") or "").strip())
+        for row in quarantined_thread_rows
+    }
     threadops_enabled = bool(thread_registry_fields) or (
         ad_root / "orchestrator/thread_lane_plan.md"
     ).exists()
     if threadops_enabled:
         missing_threadops_registry_fields = [
-            field for field in THREADOPS_REGISTRY_FIELDS if field not in registry_fields
+            field
+            for field in (
+                THREADOPS_REGISTRY_FIELDS
+                if schema_v2
+                else THREADOPS_REGISTRY_FIELDS[:-4]
+            )
+            if field not in registry_fields
         ]
         if missing_threadops_registry_fields:
             errors.append(
@@ -2615,7 +3319,7 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
             )
         lane_runs = [
             row.get("lane_run_id", "").strip()
-            for row in thread_registry_fields
+            for row in current_thread_rows
             if row.get("lane_run_id", "").strip()
         ]
         for lane_run_id in sorted(
@@ -2624,7 +3328,7 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
             errors.append(f"thread_registry duplicate lane_run_id: {lane_run_id}")
         thread_ids = [
             value
-            for row in thread_registry_fields
+            for row in current_thread_rows
             for value in [
                 row.get("real_thread_id", "").strip(),
                 row.get("rescue_thread_id", "").strip(),
@@ -2635,7 +3339,7 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
             {value for value in thread_ids if thread_ids.count(value) > 1}
         ):
             errors.append(f"thread_registry duplicate real/rescue thread id: {thread_id}")
-        for row in thread_registry_fields:
+        for row in current_thread_rows:
             owner = f"thread_registry {row.get('thread_id', '').strip() or '<missing thread_id>'}"
             check_threadops_lane_contract(errors, owner, row)
             check_threadops_receipt_identity(project, errors, owner, row)
@@ -2704,7 +3408,12 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
     for artifact in artifact_index:
         artifact_id = artifact.get("artifact_id", "")
         rel_path = artifact.get("path", "").strip()
-        if rel_path and not (project / rel_path).exists():
+        lifecycle = normalized_artifact_lifecycle(artifact)
+        if (
+            rel_path
+            and not (project / rel_path).exists()
+            and lifecycle not in ARTIFACT_INACTIVE_LIFECYCLE_VALUES
+        ):
             errors.append(f"artifact {artifact_id} missing path {rel_path}")
         check_refs(errors, f"artifact {artifact_id}", artifact.get("linked_work_items"), work_ids, "work")
         check_refs(errors, f"artifact {artifact_id}", artifact.get("linked_requirements"), req_ids, "requirement")
@@ -2716,6 +3425,12 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
     for run in agent_runs:
         run_id = run.get("run_id", "")
         work_id = run.get("work_id", "").strip()
+        work_lane = (work_id, (run.get("lane_id") or "").strip())
+        if (
+            (run.get("thread_id") or "").strip() in quarantined_thread_ids
+            or work_lane in quarantined_work_lanes
+        ):
+            continue
         if work_id and work_id not in work_ids:
             errors.append(f"agent_run {run_id} unknown work {work_id}")
         gate_id = run.get("gate_id", "").strip()
@@ -2862,6 +3577,11 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
         check_refs(errors, f"client_outline {slide_id}", outline.get("asset_ids"), asset_ids, "asset")
 
     final_dir = project / "05_最终交付_FinalDelivery"
+    inventory_rows = {
+        (row.get("path") or "").strip(): row
+        for row in final_delivery_lock_rows
+        if (row.get("path") or "").strip()
+    }
     protected_rows = {
         row.get("path", "").strip(): row
         for row in final_delivery_lock_rows
@@ -2871,19 +3591,15 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
     protected_paths = set(protected_rows)
     for rel_path, row in protected_rows.items():
         try:
-            path = project_contained_path(
-                project, rel_path, "FinalDelivery lock path"
-            )
+            _, path = final_delivery_project_path(project, rel_path)
         except ValueError as exc:
             errors.append(str(exc))
             continue
-        try:
-            path.relative_to(final_dir.resolve())
-        except ValueError:
-            errors.append(f"FinalDelivery lock path is outside FinalDelivery: {rel_path}")
-            continue
         if not path.exists() or not path.is_file():
-            errors.append(f"FinalDelivery locked file missing: {rel_path}")
+            if not final_delivery_reconciliation_valid(
+                project, inventory_rows, row
+            ):
+                errors.append(f"FinalDelivery locked file missing: {rel_path}")
             continue
         expected_sha = row.get("sha256", "").strip()
         expected_size = row.get("size_bytes", "").strip()
@@ -2894,12 +3610,34 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
         actual_sha = file_sha256(path)
         if actual_sha != expected_sha or actual_size != expected_size:
             errors.append(f"FinalDelivery protected file changed: {rel_path}")
-    if final_dir.exists():
+    if final_dir.exists() and project_relative_path_has_symlink_component(
+        project, "05_最终交付_FinalDelivery"
+    ):
+        errors.append("FinalDelivery root contains a forbidden symlink component")
+    elif final_dir.exists():
         for path in final_dir.rglob("*"):
             if not path.is_file() or path.name in {"README.md", "目录索引.md", ".DS_Store"}:
                 continue
-            rel_path = str(path.relative_to(project))
-            if rel_path not in protected_paths:
+            lexical_rel = path.relative_to(project).as_posix()
+            try:
+                rel_path, path = final_delivery_project_path(
+                    project, lexical_rel, require_file=True
+                )
+            except ValueError as exc:
+                errors.append(str(exc))
+                continue
+            inventory = inventory_rows.get(rel_path)
+            if final_delivery_metadata_path(path):
+                if inventory and (inventory.get("inventory_state") or "").strip() not in {"", "metadata_excluded"}:
+                    errors.append(
+                        f"FinalDelivery generated metadata incorrectly classified as user final: {rel_path}"
+                    )
+                continue
+            if not inventory:
+                errors.append(f"FinalDelivery file is not locked/protected: {rel_path}")
+            elif (inventory.get("inventory_state") or "").strip() == "pending_reconciliation":
+                errors.append(f"FinalDelivery pending inventory unresolved: {rel_path}")
+            elif rel_path not in protected_paths:
                 errors.append(f"FinalDelivery file is not locked/protected: {rel_path}")
 
     if has_client_delivery_artifact(artifact_index):
@@ -2935,12 +3673,460 @@ def validate(project: Path) -> tuple[list[str], dict[str, int]]:
     return errors, stats
 
 
+def string_validation_errors(project: Path) -> list[str]:
+    errors, _ = _validate_strings(project)
+    return errors
+
+
+def migration_legacy_error_messages(project: Path) -> set[str]:
+    """Never let a project-local manifest downgrade a live validation error.
+
+    The migration manifest is valuable audit evidence, but it lives inside the
+    same writable project as the rows it describes. Internal hashes can prove
+    consistency, not that the snapshot really predates migration. Only the
+    explicit row-level quarantine paths validated in
+    ``supplemental_validation_issues`` may become non-blocking legacy debt.
+    """
+    del project
+    return set()
+
+
+LEGACY_BASELINE_ALLOWED_PATTERNS = (
+    re.compile(r"^gate [^ ]+ unknown artifact .+$"),
+    re.compile(r"^work [^ ]+ unknown (?:requirement|artifact|source_event|reference|asset|blocked_by) .+$"),
+    re.compile(r"^gate_log row missing gate_run_id$"),
+    re.compile(r"^gate_log duplicate gate_run_id: .+$"),
+    re.compile(r"^gate_log .+ supersedes(?:_gate_run_id does not match previous run for| missing or different gate run).*$"),
+    re.compile(r"^profile_(?:subject|voice|insight|conflict) .+ (?:invalid|unknown|missing) .+$"),
+)
+
+
+def legacy_baseline_message_allowed(message: str) -> bool:
+    """Allowlist low-risk legacy row debt; safety/readiness errors never downgrade."""
+    return any(pattern.fullmatch(message) for pattern in LEGACY_BASELINE_ALLOWED_PATTERNS)
+
+
+def classify_string_issue(
+    message: str, *, legacy_baseline: set[str] | None = None
+) -> ValidationIssue:
+    lowered = message.lower()
+    if "finaldelivery" in lowered or "client delivery" in lowered:
+        severity, scope = "P0", "current"
+    elif "current_truth" in lowered or "current version truth" in lowered:
+        severity, scope = "P0", "current"
+    elif (
+        message in (legacy_baseline or set())
+        and legacy_baseline_message_allowed(message)
+    ):
+        severity, scope = "P2", "legacy"
+    else:
+        severity, scope = "P1", "active"
+    known_codes = (
+        ("FinalDelivery protected file changed", "final_delivery_protected_drift"),
+        ("FinalDelivery locked file missing", "final_delivery_locked_missing"),
+        ("FinalDelivery pending inventory unresolved", "final_delivery_pending_inventory"),
+        ("FinalDelivery file is not locked/protected", "final_delivery_uninventoried_file"),
+        ("current_truth", "current_truth_invalid"),
+        ("client delivery", "current_delivery_invalid"),
+    )
+    code = next((value for marker, value in known_codes if marker.lower() in lowered), "")
+    if not code:
+        code = re.sub(r"[^a-z0-9]+", "_", lowered).strip("_")[:96] or "validation_issue"
+    return ValidationIssue(severity, scope, code, message)
+
+
+def supplemental_validation_issues(project: Path) -> list[ValidationIssue]:
+    project = project.resolve()
+    issues: list[ValidationIssue] = []
+    schema_path = project / CONTROL_PLANE_SCHEMA_REL
+    if not schema_path.is_file():
+        issues.append(
+            ValidationIssue(
+                "P2",
+                "legacy",
+                "legacy_control_plane_schema_missing",
+                f"legacy control plane has not been migrated to schema {CONTROL_PLANE_SCHEMA_VERSION}",
+                CONTROL_PLANE_SCHEMA_REL.as_posix(),
+            )
+        )
+    else:
+        try:
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            issues.append(
+                ValidationIssue(
+                    "P0",
+                    "current",
+                    "malformed_control_plane_schema",
+                    f"control_plane_schema.json is malformed: {exc}",
+                )
+            )
+        else:
+            if schema.get("schema_version") != CONTROL_PLANE_SCHEMA_VERSION:
+                issues.append(
+                    ValidationIssue(
+                        "P0",
+                        "current",
+                        "unsupported_control_plane_schema",
+                        f"control plane schema is {schema.get('schema_version')!r}; expected {CONTROL_PLANE_SCHEMA_VERSION}",
+                    )
+                )
+    project_yml = project / "AD-creative/orchestrator/project.yml"
+    project_yml_text = project_yml.read_text(encoding="utf-8") if project_yml.is_file() else ""
+    if schema_path.is_file() and not re.search(
+        rf'(?m)^  schema_version:[ \t]*["\']?{re.escape(CONTROL_PLANE_SCHEMA_VERSION)}["\']?[ \t]*$',
+        project_yml_text,
+    ):
+        issues.append(
+            ValidationIssue(
+                "P0",
+                "current",
+                "project_schema_version_mismatch",
+                f"project.yml does not declare schema_version {CONTROL_PLANE_SCHEMA_VERSION}",
+            )
+        )
+
+    artifact_errors: list[str] = []
+    artifacts = load_optional_csv(
+        project / "AD-creative/orchestrator/artifact_index.csv", artifact_errors
+    )
+    artifacts_by_id = {
+        (row.get("artifact_id") or "").strip(): row
+        for row in artifacts
+        if (row.get("artifact_id") or "").strip()
+    }
+    truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    truth_text = truth_path.read_text(encoding="utf-8") if truth_path.is_file() else ""
+    exact_ids = {
+        key: current_truth_value(truth_text, key)
+        for key in CURRENT_ARTIFACT_TRUTH_KEYS
+        if current_truth_value(truth_text, key)
+    }
+    for key, artifact_id in exact_ids.items():
+        row = artifacts_by_id.get(artifact_id)
+        if row is None:
+            issues.append(
+                ValidationIssue(
+                    "P0",
+                    "current",
+                    "exact_current_artifact_unknown",
+                    f"{key} points to unknown artifact {artifact_id}",
+                    artifact_id,
+                )
+            )
+            continue
+        lifecycle = normalized_artifact_lifecycle(row)
+        if lifecycle != "active":
+            issues.append(
+                ValidationIssue(
+                    "P0",
+                    "current",
+                    "exact_current_artifact_not_active",
+                    f"{key} points to non-active artifact {artifact_id} ({lifecycle})",
+                    artifact_id,
+                )
+            )
+        rel_path = (row.get("path") or row.get("original_path") or "").strip()
+        if not rel_path or not (project / rel_path).is_file():
+            issues.append(
+                ValidationIssue(
+                    "P0",
+                    "current",
+                    "exact_current_artifact_missing",
+                    f"{key} exact-current target is missing: {rel_path or '<blank>'}",
+                    artifact_id,
+                )
+            )
+
+    current_version_id = current_truth_value(truth_text, "current_version_id")
+    if current_version_id:
+        version_rows = load_optional_csv(
+            project / "AD-creative/orchestrator/version_map.csv", []
+        )
+        current_versions = [
+            row
+            for row in version_rows
+            if (row.get("version_id") or "").strip() == current_version_id
+        ]
+        if len(current_versions) == 1:
+            version_status = (
+                current_versions[0].get("status") or ""
+            ).strip().lower()
+            if version_status not in CURRENT_VIEW_VERSION_STATUSES:
+                issues.append(
+                    ValidationIssue(
+                        "P0",
+                        "current",
+                        "exact_current_version_not_current_view",
+                        f"current_version_id {current_version_id} has non-current-view status {version_status or '<blank>'}",
+                        current_version_id,
+                    )
+                )
+
+    legacy_artifacts: list[str] = []
+    tombstones: list[str] = []
+    for row in artifacts:
+        artifact_id = (row.get("artifact_id") or "<missing>").strip()
+        explicit = (row.get("lifecycle_state") or "").strip().lower().replace("-", "_")
+        lifecycle = normalized_artifact_lifecycle(row)
+        if explicit and explicit not in ARTIFACT_LIFECYCLE_VALUES:
+            issues.append(
+                ValidationIssue(
+                    "P1",
+                    "active",
+                    "artifact_lifecycle_invalid",
+                    f"artifact {artifact_id} has invalid lifecycle_state {explicit}",
+                    artifact_id,
+                )
+            )
+        if lifecycle in ARTIFACT_INACTIVE_LIFECYCLE_VALUES or lifecycle == "legacy_unknown":
+            legacy_artifacts.append(artifact_id)
+        if lifecycle == "legacy_unresolved_tombstone":
+            tombstones.append(artifact_id)
+            original = (row.get("original_path") or "").strip()
+            cleanup_ref = (row.get("cleanup_ref") or "").strip()
+            if not cleanup_ref or (original and original == cleanup_ref):
+                issues.append(
+                    ValidationIssue(
+                        "P2",
+                        "legacy",
+                        "legacy_tombstone_malformed",
+                        f"artifact {artifact_id} tombstone must keep cleanup_ref separate and must not fabricate original_path",
+                        artifact_id,
+                    )
+                )
+    if legacy_artifacts:
+        issues.append(
+            ValidationIssue(
+                "P2",
+                "legacy",
+                "legacy_artifact_debt",
+                f"legacy artifact debt grouped: {len(legacy_artifacts)} inactive/unknown rows",
+                ";".join(legacy_artifacts[:12]),
+            )
+        )
+    if tombstones:
+        issues.append(
+            ValidationIssue(
+                "P2",
+                "legacy",
+                "legacy_unresolved_tombstones",
+                f"legacy unresolved tombstones grouped: {len(tombstones)} rows",
+                ";".join(tombstones[:12]),
+            )
+        )
+
+    thread_rows = load_optional_csv(
+        project / "AD-creative/orchestrator/thread_registry.csv", []
+    )
+    quarantined = [
+        row
+        for row in thread_rows
+        if (row.get("schema_state") or "").strip() == "legacy_quarantined"
+    ]
+    manifest_path = (
+        project
+        / "AD-creative/orchestrator/migrations/control_plane_v2_manifest.json"
+    )
+    manifest: dict[str, object] = {}
+    manifest_malformed = False
+    if manifest_path.is_file():
+        try:
+            loaded_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(loaded_manifest, dict):
+                raise ValueError("migration manifest must be a JSON object")
+            manifest = loaded_manifest
+        except (json.JSONDecodeError, ValueError):
+            manifest = {}
+            manifest_malformed = True
+    raw_thread_rows = (
+        manifest.get("raw_legacy_evidence", {}).get("thread_rows", [])
+        if isinstance(manifest.get("raw_legacy_evidence"), dict)
+        else []
+    )
+    raw_thread_rows_by_sha = (
+        manifest.get("raw_legacy_evidence", {}).get("thread_rows_by_sha", {})
+        if isinstance(manifest.get("raw_legacy_evidence"), dict)
+        else {}
+    )
+    invalid_quarantine: list[str] = []
+    for row in quarantined:
+        thread_id = (row.get("thread_id") or "<missing>").strip()
+        ref = (row.get("legacy_raw_ref") or "").strip()
+        match = re.search(r"/thread_rows/(\d+)$", ref)
+        sha_match = re.search(r"/thread_rows_by_sha/([0-9a-f]{64})$", ref)
+        raw_entry: object = None
+        if sha_match and isinstance(raw_thread_rows_by_sha, dict):
+            raw_entry = raw_thread_rows_by_sha.get(sha_match.group(1))
+        elif match and isinstance(raw_thread_rows, list):
+            index = int(match.group(1))
+            if 0 <= index < len(raw_thread_rows):
+                raw_entry = raw_thread_rows[index]
+        raw = raw_entry.get("raw") if isinstance(raw_entry, dict) else None
+        expected = (row.get("legacy_evidence_sha256") or "").strip()
+        if not isinstance(raw, dict) or not re.fullmatch(r"[0-9a-f]{64}", expected) or canonical_row_sha256(raw) != expected:
+            invalid_quarantine.append(thread_id)
+    if quarantined:
+        issues.append(
+            ValidationIssue(
+                "P2",
+                "legacy",
+                "legacy_threadops_quarantine",
+                f"legacy ThreadOps debt grouped: {len(quarantined)} hash-bound quarantined rows",
+                ";".join((row.get("thread_id") or "") for row in quarantined[:12]),
+            )
+        )
+    if invalid_quarantine:
+        issues.append(
+            ValidationIssue(
+                "P0",
+                "current",
+                "legacy_threadops_quarantine_evidence_invalid",
+                f"legacy ThreadOps quarantine evidence is invalid for {len(invalid_quarantine)} rows",
+                ";".join(invalid_quarantine[:12]),
+            )
+        )
+
+    if manifest_malformed:
+        issues.append(
+            ValidationIssue(
+                "P0",
+                "current",
+                "malformed_migration_manifest",
+                "control-plane migration manifest is malformed and cannot prove current blocker state",
+                str(manifest_path),
+            )
+        )
+
+    manifest_blockers = manifest.get("active_blockers", [])
+    if "active_blockers" in manifest and isinstance(manifest_blockers, list):
+        for blocker in manifest_blockers:
+            if not isinstance(blocker, dict):
+                issues.append(
+                    ValidationIssue(
+                        "P0",
+                        "current",
+                        "migration_active_blocker_malformed",
+                        "migration manifest contains a malformed active blocker row",
+                        str(manifest_path),
+                    )
+                )
+                continue
+            issues.append(
+                ValidationIssue(
+                    "P0",
+                    "current",
+                    str(blocker.get("code") or "migration_blocker"),
+                    str(blocker.get("message") or "control-plane migration blocker"),
+                    str(manifest_path),
+                )
+            )
+    elif manifest_path.is_file() and not manifest_malformed:
+        issues.append(
+            ValidationIssue(
+                "P0",
+                "current",
+                "migration_active_blocker_state_unknown",
+                "migration manifest lacks active_blockers; rerun the schema-aware migration before current delivery",
+                str(manifest_path),
+            )
+        )
+    legacy_manifest_blockers = manifest.get("blockers", [])
+    if (
+        manifest_path.is_file()
+        and "active_blockers" not in manifest
+        and isinstance(legacy_manifest_blockers, list)
+    ):
+        issues.append(
+            ValidationIssue(
+                "P2",
+                "legacy",
+                "legacy_migration_blocker_history",
+                f"legacy migration manifest retains {len(legacy_manifest_blockers)} historical blocker rows awaiting refresh",
+                str(manifest_path),
+            )
+        )
+    return issues
+
+
+def validate_issues(
+    project: Path, *, strict_legacy: bool = False
+) -> tuple[list[ValidationIssue], dict[str, int]]:
+    string_errors, stats = _validate_strings(project)
+    legacy_baseline = migration_legacy_error_messages(project)
+    issues = [
+        classify_string_issue(message, legacy_baseline=legacy_baseline)
+        for message in string_errors
+    ]
+    issues.extend(supplemental_validation_issues(project))
+    deduped: dict[tuple[str, str, str], ValidationIssue] = {}
+    for issue in issues:
+        deduped.setdefault((issue.scope, issue.code, issue.message), issue)
+    severity_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+    scope_order = {"current": 0, "active": 1, "legacy": 2}
+    ordered = sorted(
+        deduped.values(),
+        key=lambda issue: (
+            severity_order.get(issue.severity, 9),
+            scope_order.get(issue.scope, 9),
+            issue.code,
+            issue.message,
+        ),
+    )
+    blocking = [
+        issue for issue in ordered if strict_legacy or issue.scope != "legacy"
+    ]
+    stats = dict(stats)
+    stats["issues"] = len(ordered)
+    stats["errors"] = len(blocking)
+    stats["p0"] = sum(1 for issue in ordered if issue.severity == "P0")
+    stats["legacy_debt"] = sum(1 for issue in ordered if issue.scope == "legacy")
+    return ordered, stats
+
+
+def validate(
+    project: Path, *, strict_legacy: bool = False
+) -> tuple[list[str], dict[str, int]]:
+    issues, stats = validate_issues(project, strict_legacy=strict_legacy)
+    errors = [
+        issue.message
+        for issue in issues
+        if strict_legacy or issue.scope != "legacy"
+    ]
+    return errors, stats
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("project", help="Project root containing AD-creative/")
+    parser.add_argument("--strict-legacy", action="store_true", help="Treat grouped legacy-only debt as blocking.")
+    parser.add_argument("--json", action="store_true", help="Print structured validation issues as JSON.")
     args = parser.parse_args()
 
-    errors, stats = validate(Path(args.project))
+    issues, stats = validate_issues(
+        Path(args.project), strict_legacy=args.strict_legacy
+    )
+    blocking = [
+        issue for issue in issues if args.strict_legacy or issue.scope != "legacy"
+    ]
+    errors = [issue.message for issue in blocking]
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "project": str(Path(args.project).resolve()),
+                    "validation": "PASS" if not errors else "CHECK",
+                    "strict_legacy": args.strict_legacy,
+                    "stats": stats,
+                    "issues": [issue.as_dict() for issue in issues],
+                    "errors": errors,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 1 if errors else 0
     for key, value in stats.items():
         print(f"{key.upper()}={value}")
     if errors:
