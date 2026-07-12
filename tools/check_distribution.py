@@ -53,7 +53,7 @@ REQUIRED_ENTRY_POINTS = [
 ]
 REQUIRED_PYPROJECT_SNIPPETS = [
     'name = "ad-creative-orchestrator"',
-    'version = "0.3.0"',
+    'version = "0.3.1"',
     'adco = "ad_creative_operator:main"',
     'adco-check = "run_checks:main"',
     'adco-init = "init_project:main"',
@@ -159,7 +159,7 @@ def main() -> int:
                     metadata_text = archive.read(metadata_path).decode("utf-8")
                     if "Name: ad-creative-orchestrator" not in metadata_text:
                         issues.append("wheel metadata missing package name")
-                    if "Version: 0.3.0" not in metadata_text:
+                    if "Version: 0.3.1" not in metadata_text:
                         issues.append("wheel metadata missing version")
 
                 if entry_points_path:

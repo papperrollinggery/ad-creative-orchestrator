@@ -76,7 +76,17 @@ Creative/reference/search/visual/client-pack Gates downgrade a clean result when
 
 `handoff-readiness-gate` means an operator can continue internally. It does not prove PPT, FinalDelivery, Client Pack, or send readiness.
 
-## Command routing
+## Agent route mapping
+
+The labels in this section are agent-level routes, not additional CLI
+subcommands. Use these command mappings when operating through `adco`:
+
+| Agent route | CLI entrypoint |
+| --- | --- |
+| `start` / `status` | `adco status <project>`; `start` means a read-only resume/status route. |
+| `add-materials` | `adco run <project> --material <file_or_folder>`. |
+| `next` | `adco next <project>`. |
+| `gate` | The stage-specific Gate command, such as `adco film-quality-gate <project>`. |
 
 ### `run`
 
@@ -143,6 +153,7 @@ Migration manifests are written only when legacy evidence exists. They are immut
 - `search-quality-gate` and `reference-pack-gate`: source role, provenance, live evidence, borrow/do-not-copy boundary.
 - `visual-quality-gate`: asset source, quality, authorization, and slot suitability.
 - `visual-layout-gate`: exact PPTX plus real preview; distortion, crop, scale, crowding, report feel, copy/image mismatch, repeated-image misuse, orientation.
+- `film-quality-gate`: scans exact active physical `film.*` artifact rows in the ADCO control plane, including path and hash; planned/pending rows are not current scan targets. Adopted specialist outputs are additionally resolved by exact artifact id/path/hash, while `domain.film_qa` remains receipt/QA evidence. Blocked creative or invalid exchange evidence blocks downstream advance.
 - `client-pack-gate`: fresh exact-current input binding; ready for independent review only.
 - `client-send-readiness-gate`: independent review and separate send authorization on the same fresh package digest; never sends.
 

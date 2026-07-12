@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-07-12
+
+- Made Thread dispatch proof immutable per work/lane/attempt and kept host projections outside worker scope baselines.
+- Bound Film Quality Gate evidence to exact adopted specialist artifact ids, paths, and hashes without treating domain QA as client readiness.
+- Hardened section-aware brief extraction, removed cross-domain scenario defaults, and kept fresh review artifacts/ThreadOps rows out of legacy debt.
+- Clarified that Film Quality Gate scans active control-plane film artifacts while separately validating adopted specialist outputs and domain QA evidence.
+- Clarified agent route names and their `adco` CLI entrypoints.
+
 ## 0.3.0 - 2026-07-11
 
 - Rebuilt Human Workspace indexes around exact-current truth, canonical path deduplication, resolvable links, physical-file discovery, and explicit missing or unregistered evidence.

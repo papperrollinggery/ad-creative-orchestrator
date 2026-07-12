@@ -75,6 +75,7 @@ Rules:
 - For unresolved tombstones, leave `original_path` blank. Never infer it from artifact id, filename, cleanup report, version, or neighboring rows.
 - Reverse supersession links may populate `superseded_by`; never delete the old row.
 - Invalid lifecycle values are diagnostics, not an invitation to drop the row.
+- Fresh `internal_review` and `ready` artifacts are active current-view work; fresh `planned` artifacts are pending work. Neither is legacy debt.
 
 Ordinary inactive rows are excluded from current views but preserved in compact history. An inactive row referenced by exact current truth becomes P0/current.
 
@@ -90,6 +91,7 @@ Use the pre-migration schema boundary:
 - Validator skips quarantined rows for current ThreadOps dispatch/receipt/matching checks and reports one grouped legacy-debt issue.
 - Invalid or missing quarantine hash evidence is P0/current.
 - New v2 rows use `schema_state=current` and remain under full ThreadOps validation.
+- Every new planned or dispatched row writes `schema_state=current`; migration must not quarantine a row created by the current writer merely because it has not returned a receipt yet.
 
 `--strict-legacy` makes grouped legacy debt blocking; it does not change classification or mutate data.
 

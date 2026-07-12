@@ -19,7 +19,7 @@ from runtime_paths import source_root, template_root
 SOURCE_ROOT = source_root()
 ROOT = SOURCE_ROOT or Path(__file__).resolve().parent
 SOURCE_MODE = SOURCE_ROOT is not None
-EXPECTED_CLI_VERSION = "adco 0.3.0"
+EXPECTED_CLI_VERSION = "adco 0.3.1"
 
 
 def run(args: list[str]) -> None:

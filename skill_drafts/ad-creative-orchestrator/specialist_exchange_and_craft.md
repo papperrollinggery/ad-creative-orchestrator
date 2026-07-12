@@ -67,6 +67,13 @@ ADCO separately records adopt/partial-adopt/reject/defer with reason and explici
 5. Record rejected/deferred reasoning.
 6. Advance only the ADCO-owned stage supported by evidence.
 
+For DIRcreative film adoption, the Film Gate scans active control-plane rows of
+only `film.story_package`,
+`film.treatment`, `film.script`, `film.shot_plan`, `film.visual_bible`, and
+`film.reference_prompt_plan` as physical film artifacts. Resolve every adopted
+`target_artifact_id` through the artifact index and verify its exact path/hash.
+`domain.film_qa` is separate QA evidence, not a physical film-output kind.
+
 ## Profile analysis
 
 Use `adco profile-analyze` for meeting notes, transcripts, client discussion, brand, or company context. It maintains:

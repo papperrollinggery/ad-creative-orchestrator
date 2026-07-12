@@ -25,6 +25,8 @@ from ad_creative_operator import (
     client_outline_confirmed_content_sha256,
     confirm_client_outline,
     command_install_skill,
+    contained_thread_scope_baseline_path,
+    create_specialist_handoff,
     creative_doctor_report,
     ensure_project,
     ensure_profile_work,
@@ -33,8 +35,10 @@ from ad_creative_operator import (
     final_delivery_human_identity_valid,
     final_delivery_lock,
     final_delivery_reconciliation_valid,
+    filtered_scope_manifest_files,
     import_creative_production_run,
     install_global_skill,
+    labeled_proposal_evidence,
     inspect_pptx,
     migrate_control_plane,
     now_iso,
@@ -50,8 +54,10 @@ from ad_creative_operator import (
     receipt_thread_ids,
     reconcile_thread_receipt,
     declared_thread_changed_paths,
+    refresh_threadops_projections,
     refresh_asset_current_manifest,
     read_csv_rows,
+    read_json_object,
     reconcile_final_delivery,
     review_client_language,
     review_client_outline,
@@ -257,6 +263,8 @@ def mark_first_execution_receipt_received(project: Path) -> Path:
                 "AD-creative/orchestrator/thread_scope_proofs",
                 "AD-creative/orchestrator/thread_registry.csv",
                 "AD-creative/orchestrator/agent_runs.csv",
+                "AD-creative/orchestrator/thread_lane_plan.md",
+                f"AD-creative/orchestrator/thread_cleanup_{row['work_id']}.md",
                 "AD-creative/orchestrator/thread_dispatch_TEST.md",
                 row["receipt_path"],
             ]
@@ -322,6 +330,7 @@ def mark_first_execution_receipt_received(project: Path) -> Path:
         "title_verified_at: 2026-06-27T00:00:30Z\n",
         encoding="utf-8",
     )
+    refresh_threadops_projections(project, work_id)
     return receipt_path
 
 
@@ -925,6 +934,541 @@ def test_thread_plan_creates_control_plane() -> None:
         assert_valid(project)
 
 
+def test_dispatch_receipts_are_immutable_per_lane() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-dispatch-per-lane-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        render_thread_execution_plan(
+            project,
+            goal_id="GOAL-DISPATCH-PROOF",
+            title="Immutable dispatch proof",
+            objective="Keep every lane proof immutable.",
+            roles=["brand_client", "qa_review"],
+        )
+        fresh_issues, fresh_stats = validate_issues(project)
+        assert fresh_stats["legacy_debt"] == 0, (fresh_issues, fresh_stats)
+        assert not any(
+            issue.code == "legacy_artifact_debt"
+            and "CLEANUP" in issue.evidence
+            for issue in fresh_issues
+        ), fresh_issues
+        work_id = "WORK-GOAL-DISPATCH-PROOF-THREADS"
+        first = record_thread_dispatch(
+            project, lane_id="LANE-01-BRAND_CLIENT", work_id=work_id,
+            real_thread_id="019f1111-1111-7111-8111-111111111111",
+            title_action="dispatcher_set", title_verified_at="2026-07-11T10:00:00+08:00",
+            dispatch_evidence="host readback lane one", dispatch_status="dispatched",
+            absolute_deadline_at="2026-07-11T11:00:00+08:00",
+        )
+        first_path = project / first["dispatch_receipt_path"]
+        first_bytes = first_path.read_bytes()
+        second = record_thread_dispatch(
+            project, lane_id="LANE-02-QA_REVIEW", work_id=work_id,
+            real_thread_id="019f2222-2222-7222-8222-222222222222",
+            title_action="dispatcher_set", title_verified_at="2026-07-11T10:01:00+08:00",
+            dispatch_evidence="host readback lane two", dispatch_status="dispatched",
+            absolute_deadline_at="2026-07-11T11:01:00+08:00",
+        )
+        assert first["dispatch_receipt_path"] != second["dispatch_receipt_path"]
+        assert first_path.read_bytes() == first_bytes
+        _, rows = read_csv_rows(project / "AD-creative/orchestrator/thread_registry.csv")
+        assert all(row.get("schema_state") == "current" for row in rows)
+        assert all(row.get("lane_run_id") == f"{work_id}:{row['lane_id']}" for row in rows)
+
+        registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
+        fields, rows = read_csv_rows(registry_path)
+        for row in rows:
+            row.update(
+                {
+                    "lifecycle_state": "archived",
+                    "receipt_status": "received",
+                    "reconciliation_status": "reconciled",
+                    "archived": "true",
+                    "archived_at": "2026-07-11T10:30:00+08:00",
+                    "cleanup_action": "archived_after_receipt_reconcile",
+                }
+            )
+        write_csv_rows(registry_path, fields, rows)
+        refresh_threadops_projections(project, work_id)
+
+        plan_text = (project / "AD-creative/orchestrator/thread_lane_plan.md").read_text(
+            encoding="utf-8"
+        )
+        lane_map = plan_text.split("## Lane Map", 1)[1].split("## Thread Registry", 1)[0]
+        registry_projection = plan_text.split("## Thread Registry", 1)[1].split(
+            "## Master Thread Rules", 1
+        )[0]
+        for thread_id in (
+            "019f1111-1111-7111-8111-111111111111",
+            "019f2222-2222-7222-8222-222222222222",
+        ):
+            assert thread_id in lane_map
+            assert thread_id in registry_projection
+        assert "| received | reconciled |" in lane_map
+        assert "| archived |" in lane_map
+        assert "| true |" in registry_projection
+        cleanup_text = (
+            project / f"AD-creative/orchestrator/thread_cleanup_{work_id}.md"
+        ).read_text(encoding="utf-8")
+        assert "status: archived" in cleanup_text
+        try:
+            record_thread_dispatch(
+                project,
+                lane_id="LANE-01-BRAND_CLIENT",
+                work_id=work_id,
+                real_thread_id="019f3333-3333-7333-8333-333333333333",
+                title_action="dispatcher_set",
+                title_verified_at="2026-07-11T10:31:00+08:00",
+                dispatch_evidence="terminal lane must not reopen",
+                dispatch_status="dispatched",
+                absolute_deadline_at="2026-07-11T11:31:00+08:00",
+            )
+        except ValueError as exc:
+            assert "terminal lane" in str(exc), exc
+        else:
+            raise AssertionError("terminal lane redispatch must fail closed")
+
+
+def test_same_lane_redispatch_preserves_attempt_proof_and_specialist_identity() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-redispatch-immutable-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        payload = render_thread_execution_plan(
+            project,
+            goal_id="GOAL-REDISPATCH-IMMUTABLE",
+            work_id="WORK-REDISPATCH-001",
+            title="Redispatch identity",
+            objective="Bind each same-lane attempt to its own immutable envelope.",
+            roles=["film_director"],
+        )
+        work_id = str(payload["work_id"])
+        _, registry = read_csv_rows(project / "AD-creative/orchestrator/thread_registry.csv")
+        lane_id = next(row["lane_id"] for row in registry if row["work_id"] == work_id)
+        first = record_thread_dispatch(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            real_thread_id="019faaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
+            title_action="dispatcher_set",
+            title_verified_at="2026-07-12T00:00:00Z",
+            dispatch_evidence="attempt A readback",
+            dispatch_status="dispatched",
+            absolute_deadline_at="2026-07-12T00:05:00Z",
+        )
+        _, registry = read_csv_rows(project / "AD-creative/orchestrator/thread_registry.csv")
+        first_row = next(row for row in registry if row["lane_id"] == lane_id)
+        first_prompt = project / first_row["notes"].partition("prompt=")[2].strip()
+        first_envelope = project / first_row["receipt_path"]
+        first_dispatch = project / first["dispatch_receipt_path"]
+        first_prompt_bytes = first_prompt.read_bytes()
+        first_envelope_bytes = first_envelope.read_bytes()
+        first_dispatch_bytes = first_dispatch.read_bytes()
+        first_baseline = project / first_row["scope_baseline_path"]
+        first_baseline_bytes = first_baseline.read_bytes()
+        first_baseline_sha = file_sha256(first_baseline)
+        _, first_agent_runs = read_csv_rows(
+            project / "AD-creative/orchestrator/agent_runs.csv"
+        )
+        first_agent = next(row for row in first_agent_runs if row["lane_id"] == lane_id)
+        assert (
+            f"scope_baseline_path={first_row['scope_baseline_path']};"
+            f"scope_baseline_sha256={first_baseline_sha}"
+        ) in first_agent["summary"]
+        assert first_agent["summary"].count("scope_baseline_path=") == 1
+        first_dispatch_text = first_dispatch.read_text(encoding="utf-8")
+        assert f"scope_baseline_path: {first_baseline.relative_to(project)}" in first_dispatch_text
+        assert f"scope_baseline_sha256: {first_baseline_sha}" in first_dispatch_text
+
+        source = project / "AD-creative/film/redispatch_input.md"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("Bounded specialist input.", encoding="utf-8")
+        work_fields, work_rows = read_csv_rows(project / "AD-creative/orchestrator/work_items.csv")
+        work_row = {field: "" for field in work_fields}
+        work_row.update({
+            "work_id": work_id,
+            "stage": "specialist_handoff",
+            "title": "Redispatch specialist",
+            "objective": "Bind a new specialist task after a position correction.",
+            "owner_agent": "Main Controller",
+            "status": "ready",
+            "priority": "high",
+            "input_refs": "ART-REDISPATCH-INPUT",
+            "gate_required": "creative-quality-gate",
+            "client_visibility": "internal_only",
+        })
+        work_rows.append(work_row)
+        write_csv_rows(project / "AD-creative/orchestrator/work_items.csv", work_fields, work_rows)
+        artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+        artifact_fields, artifacts = read_csv_rows(artifact_path)
+        artifact = {field: "" for field in artifact_fields}
+        artifact.update({
+            "artifact_id": "ART-REDISPATCH-INPUT",
+            "artifact_type": "proposal_structure",
+            "path": str(source.relative_to(project)),
+            "stage": "specialist_handoff",
+            "version": "v001",
+            "status": "done",
+            "visibility": "internal_only",
+            "linked_work_items": work_id,
+            "gate_status": "PASS",
+            "sha256": file_sha256(source),
+            "size_bytes": str(source.stat().st_size),
+        })
+        artifacts.append(artifact)
+        write_csv_rows(artifact_path, artifact_fields, artifacts)
+        handoff_a, handoff_a_path = create_specialist_handoff(
+            project,
+            work_id=work_id,
+            profile_id="dircreative.film-preproduction",
+            objective="Create an internal specialist package for attempt A.",
+            input_artifact_ids=["ART-REDISPATCH-INPUT"],
+            expected_output_kinds=["film.story_package"],
+            required_capabilities=[],
+            descriptor_path=None,
+            execution_mode="codex_thread",
+            workspace_mode="isolated_workspace",
+            lane_id=lane_id,
+        )
+        handoff_a_bytes = handoff_a_path.read_bytes()
+        assert not (project / str(handoff_a["scope"]["receipt_path"])).exists()
+        _, registry = read_csv_rows(project / "AD-creative/orchestrator/thread_registry.csv")
+        bound_a = project / next(row for row in registry if row["lane_id"] == lane_id)["scope_baseline_path"]
+        bound_a_bytes = bound_a.read_bytes()
+        bound_a_sha = file_sha256(bound_a)
+        bound_a_payload = read_json_object(bound_a, "bound attempt A baseline")
+        assert bound_a != first_baseline
+        assert next(row for row in registry if row["lane_id"] == lane_id)["scope_baseline_sha256"] == bound_a_sha
+        _, agent_runs = read_csv_rows(project / "AD-creative/orchestrator/agent_runs.csv")
+        bound_a_agent = next(row for row in agent_runs if row["lane_id"] == lane_id)
+        assert (
+            f"scope_baseline_path={bound_a.relative_to(project)};"
+            f"scope_baseline_sha256={bound_a_sha}"
+        ) in bound_a_agent["summary"]
+        assert str(first_baseline.relative_to(project)) not in bound_a_agent["summary"]
+        assert bound_a_payload["derived_from_baseline_path"] == str(first_baseline.relative_to(project))
+        assert bound_a_payload["derived_from_baseline_sha256"] == first_baseline_sha
+        assert bound_a_payload["binding_kind"] == "specialist_handoff"
+        assert bound_a_payload["binding_ref"] == "SPH-001"
+        assert bound_a_payload["derived_at"]
+        assert str(source.relative_to(project)) not in bound_a_payload["files"]
+        assert first_baseline.read_bytes() == first_baseline_bytes
+        assert file_sha256(first_baseline) == first_baseline_sha
+
+        second = record_thread_dispatch(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            real_thread_id="019fbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb",
+            title_action="dispatcher_set",
+            title_verified_at="2026-07-12T00:06:00Z",
+            dispatch_evidence="attempt B corrected-position readback",
+            dispatch_status="dispatched",
+            absolute_deadline_at="2026-07-12T00:11:00Z",
+        )
+        assert second["dispatch_attempt"] == "2"
+        _, registry = read_csv_rows(project / "AD-creative/orchestrator/thread_registry.csv")
+        current = next(row for row in registry if row["lane_id"] == lane_id)
+        second_prompt = project / current["notes"].partition("prompt=")[2].strip()
+        second_envelope = project / current["receipt_path"]
+        second_dispatch = project / second["dispatch_receipt_path"]
+        second_baseline = project / second["scope_baseline_path"]
+        second_baseline_bytes = second_baseline.read_bytes()
+        second_baseline_sha = file_sha256(second_baseline)
+        _, second_agent_runs = read_csv_rows(
+            project / "AD-creative/orchestrator/agent_runs.csv"
+        )
+        second_agent = next(row for row in second_agent_runs if row["lane_id"] == lane_id)
+        assert (
+            f"scope_baseline_path={second_baseline.relative_to(project)};"
+            f"scope_baseline_sha256={second_baseline_sha}"
+        ) in second_agent["summary"]
+        assert str(bound_a.relative_to(project)) not in second_agent["summary"]
+        assert second_prompt != first_prompt
+        assert second_envelope != first_envelope
+        assert second_dispatch != first_dispatch
+        assert second_baseline not in {first_baseline, bound_a}
+        assert f"scope_baseline_path: {second_baseline.relative_to(project)}" in second_dispatch.read_text(encoding="utf-8")
+        assert f"scope_baseline_sha256: {second_baseline_sha}" in second_dispatch.read_text(encoding="utf-8")
+        assert first_prompt.read_bytes() == first_prompt_bytes
+        assert first_envelope.read_bytes() == first_envelope_bytes
+        assert first_dispatch.read_bytes() == first_dispatch_bytes
+        assert first_baseline.read_bytes() == first_baseline_bytes
+        assert bound_a.read_bytes() == bound_a_bytes
+        assert first["real_thread_id"] not in second_prompt.read_text(encoding="utf-8")
+        assert second["real_thread_id"] in second_prompt.read_text(encoding="utf-8")
+        assert receipt_thread_ids(second_envelope.read_text(encoding="utf-8")) == [second["real_thread_id"]]
+        second_envelope_text = second_envelope.read_text(encoding="utf-8")
+        assert first["real_thread_id"] not in second_envelope_text
+        assert second_envelope_text.count(second["real_thread_id"]) == 1
+        dispatch_text = second_dispatch.read_text(encoding="utf-8")
+        for expected in [
+            "dispatch_attempt: 2",
+            f"prompt_path: {second_prompt.relative_to(project)}",
+            f"worker_receipt_path: {second_envelope.relative_to(project)}",
+            f"supersedes_thread_id: {first['real_thread_id']}",
+        ]:
+            assert expected in dispatch_text
+
+        handoff_b, handoff_b_path = create_specialist_handoff(
+            project,
+            work_id=work_id,
+            profile_id="dircreative.film-preproduction",
+            objective="Create an internal specialist package for attempt B.",
+            input_artifact_ids=["ART-REDISPATCH-INPUT"],
+            expected_output_kinds=["film.story_package"],
+            required_capabilities=[],
+            descriptor_path=None,
+            execution_mode="codex_thread",
+            workspace_mode="isolated_workspace",
+            lane_id=lane_id,
+        )
+        assert handoff_b["handoff_id"] == "SPH-002"
+        assert handoff_b["attempt"] == 2
+        assert handoff_b["execution"]["thread_id"] == second["real_thread_id"]
+        assert handoff_a_path.read_bytes() == handoff_a_bytes
+        assert handoff_b_path != handoff_a_path
+        _, registry = read_csv_rows(project / "AD-creative/orchestrator/thread_registry.csv")
+        bound_b = project / next(row for row in registry if row["lane_id"] == lane_id)["scope_baseline_path"]
+        bound_b_sha = file_sha256(bound_b)
+        bound_b_payload = read_json_object(bound_b, "bound attempt B baseline")
+        assert bound_b not in {first_baseline, bound_a, second_baseline}
+        assert next(row for row in registry if row["lane_id"] == lane_id)["scope_baseline_sha256"] == bound_b_sha
+        _, agent_runs = read_csv_rows(project / "AD-creative/orchestrator/agent_runs.csv")
+        bound_b_agent = next(row for row in agent_runs if row["lane_id"] == lane_id)
+        assert (
+            f"scope_baseline_path={bound_b.relative_to(project)};"
+            f"scope_baseline_sha256={bound_b_sha}"
+        ) in bound_b_agent["summary"]
+        assert str(second_baseline.relative_to(project)) not in bound_b_agent["summary"]
+        assert bound_b_payload["derived_from_baseline_path"] == str(second_baseline.relative_to(project))
+        assert bound_b_payload["derived_from_baseline_sha256"] == second_baseline_sha
+        assert bound_b_payload["binding_kind"] == "specialist_handoff"
+        assert bound_b_payload["binding_ref"] == "SPH-002"
+        assert bound_b_payload["derived_at"]
+        assert first_baseline.read_bytes() == first_baseline_bytes
+        assert bound_a.read_bytes() == bound_a_bytes
+        assert second_baseline.read_bytes() == second_baseline_bytes
+        assert file_sha256(second_baseline) == second_baseline_sha
+        _, exchanges = read_csv_rows(
+            project / "AD-creative/orchestrator/specialist_exchange/exchange_index.csv"
+        )
+        assert [row["handoff_id"] for row in exchanges if row["work_id"] == work_id] == [
+            "SPH-001", "SPH-002"
+        ]
+        try:
+            record_thread_dispatch(
+                project,
+                lane_id=lane_id,
+                work_id=work_id,
+                real_thread_id="019fcccc-cccc-7ccc-8ccc-cccccccccccc",
+                title_action="dispatcher_set",
+                title_verified_at="2026-07-12T00:12:00Z",
+                dispatch_evidence="attempt C must fail closed",
+                dispatch_status="dispatched",
+                absolute_deadline_at="2026-07-12T00:17:00Z",
+            )
+        except ValueError as exc:
+            assert "attempt limit exceeded" in str(exc), exc
+        else:
+            raise AssertionError("attempt-03 same-lane redispatch must fail closed")
+
+
+def test_thread_scope_baseline_paths_reject_lexical_symlink_components() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-baseline-symlink-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        source_dir = project / "AD-creative/orchestrator/baseline-source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        source = source_dir / "WORK-001_LANE-001.json"
+        source.write_text("{}\n", encoding="utf-8")
+        lexical_link = project / "AD-creative/orchestrator/baseline-link"
+        lexical_link.symlink_to(source_dir, target_is_directory=True)
+
+        for rel_path in [
+            "AD-creative/orchestrator/baseline-link/WORK-001_LANE-001.json",
+            "AD-creative/orchestrator/baseline-link/WORK-001_LANE-001_handoff-SPH-001.json",
+        ]:
+            try:
+                contained_thread_scope_baseline_path(
+                    project, rel_path, "thread scope baseline"
+                )
+            except ValueError as exc:
+                assert "symlink component" in str(exc), exc
+            else:
+                raise AssertionError("scope baseline lexical symlink must fail closed")
+
+        assert contained_thread_scope_baseline_path(
+            project,
+            "AD-creative/orchestrator/baseline-source/WORK-001_LANE-001.json",
+            "thread scope baseline",
+        ).resolve() == source.resolve()
+
+        payload = render_thread_execution_plan(
+            project,
+            goal_id="GOAL-BASELINE-SYMLINK",
+            work_id="WORK-BASELINE-SYMLINK",
+            title="Baseline symlink guard",
+            objective="Reject a lexical symlink in a registry baseline path.",
+            roles=["film_director"],
+        )
+        work_id = str(payload["work_id"])
+        _, registry = read_csv_rows(
+            project / "AD-creative/orchestrator/thread_registry.csv"
+        )
+        lane_id = next(row["lane_id"] for row in registry if row["work_id"] == work_id)
+        first = record_thread_dispatch(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            real_thread_id="019fdddd-dddd-7ddd-8ddd-dddddddddddd",
+            title_action="dispatcher_set",
+            title_verified_at="2026-07-12T01:00:00Z",
+            dispatch_evidence="symlink guard setup",
+            dispatch_status="dispatched",
+            absolute_deadline_at="2026-07-12T01:05:00Z",
+        )
+        registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
+        registry_fields, registry = read_csv_rows(registry_path)
+        row = next(row for row in registry if row["lane_id"] == lane_id)
+        baseline = project / first["scope_baseline_path"]
+        lexical_baseline_link = baseline.parent / "baseline-link"
+        lexical_baseline_link.symlink_to(baseline.parent, target_is_directory=True)
+        row["scope_baseline_path"] = (
+            f"{lexical_baseline_link.relative_to(project).as_posix()}/{baseline.name}"
+        )
+        write_csv_rows(registry_path, registry_fields, registry)
+        try:
+            record_thread_dispatch(
+                project,
+                lane_id=lane_id,
+                work_id=work_id,
+                real_thread_id="019feeee-eeee-7eee-8eee-eeeeeeeeeeee",
+                title_action="dispatcher_set",
+                title_verified_at="2026-07-12T01:06:00Z",
+                dispatch_evidence="lexical symlink must fail closed",
+                dispatch_status="dispatched",
+                absolute_deadline_at="2026-07-12T01:11:00Z",
+            )
+        except ValueError as exc:
+            assert "symlink component" in str(exc), exc
+        else:
+            raise AssertionError("registry scope baseline symlink must fail closed")
+
+
+def test_scope_manifest_filter_fails_closed_for_invalid_roots_keys_and_digests() -> None:
+    valid_digest = "a" * 64
+    invalid_roots = [
+        "",
+        ".",
+        "/",
+        "/absolute/outside",
+        "../outside",
+        "AD-creative",
+        "AD-creative/",
+        "AD-creative//orchestrator",
+        "AD-creative/./orchestrator",
+        r"AD-creative\orchestrator",
+        r"foo\..\outside",
+        "C:/outside",
+    ]
+    for root in invalid_roots:
+        try:
+            filtered_scope_manifest_files(
+                {"safe.txt": valid_digest}, excluded_roots=[root]
+            )
+        except ValueError as exc:
+            assert "scope" in str(exc) or "path" in str(exc), exc
+        else:
+            raise AssertionError(f"invalid exclusion root must fail closed: {root!r}")
+
+    assert filtered_scope_manifest_files(
+        {"safe.txt": "A" * 64}, excluded_roots=[]
+    ) == {"safe.txt": valid_digest}
+    assert filtered_scope_manifest_files(
+        {
+            "safe.txt": valid_digest,
+            "AD-creative/orchestrator/control.md": "b" * 64,
+            "AD-creative/workspaces/WORK-001/LANE-001/receipt.md": "c" * 64,
+        },
+        excluded_roots=[
+            "AD-creative/orchestrator",
+            "AD-creative/workspaces/WORK-001/LANE-001",
+        ],
+    ) == {"safe.txt": valid_digest}
+    assert filtered_scope_manifest_files(
+        {"safe.txt": "A" * 64}, excluded_roots=["safe.txt"]
+    ) == {}
+
+    for key in [
+        "../outside.txt",
+        "/absolute.txt",
+        r"dir\outside.txt",
+        "",
+        "./inside.txt",
+        "dir//file.txt",
+    ]:
+        try:
+            filtered_scope_manifest_files(
+                {key: valid_digest}, excluded_roots=["safe/root"]
+            )
+        except ValueError as exc:
+            assert "manifest key" in str(exc) or "path" in str(exc), exc
+        else:
+            raise AssertionError(f"invalid manifest key must fail closed: {key!r}")
+
+    for digest in ["", "h", "g" * 64, "a" * 63, None]:
+        try:
+            filtered_scope_manifest_files(
+                {"safe.txt": digest}, excluded_roots=["safe/root"]
+            )
+        except ValueError as exc:
+            assert "digest" in str(exc), exc
+        else:
+            raise AssertionError(f"invalid manifest digest must fail closed: {digest!r}")
+
+    assert filtered_scope_manifest_files(
+        {"safe.txt": "A" * 64}, excluded_roots=["safe/root"]
+    ) == {"safe.txt": valid_digest}
+
+
+def test_brief_evidence_is_label_aware_and_ignores_deliverables() -> None:
+    materials = [(
+        {"source_event_id": "SRC-001"}, Path("brief.md"),
+        """# Deliverables\n1. Launch film\n2. Product page\n\n# Brief\nBusiness problem: Buyers cannot compare maintenance cost.\nAudience: Fleet managers\nBarrier: Switching downtime feels risky.\nFeature: Predictive maintenance alerts\nVisual direction: Clean diagnostic interface\n""",
+    )]
+    evidence = labeled_proposal_evidence(materials)
+    assert evidence["business_problem"][0] == "Buyers cannot compare maintenance cost."
+    assert evidence["barrier"][0] == "Switching downtime feels risky."
+    assert "Launch film" not in str(evidence)
+
+    section_brief = [(
+        {"source_event_id": "SRC-002"}, Path("lumen-brief.md"),
+        """# Lumen product brief
+
+## 商业任务
+- 为产品上市准备一支 30 秒社交广告的客户可读创意方案。
+- 目标人群：28–40 岁城市上班族。
+- 希望观众记住的不是参数，而是开灯就是回到自己的夜晚。
+
+## 品牌与产品
+- 已锁定产品事实：2700K 暖光、三档触控调光、USB-C 充电。
+
+## 已锁定创意边界
+- 方向：真实晚归仪式，普通城市公寓，夜间可拍。
+
+## 需要 DIRcreative 提供的影视前期产物
+1. story package
+2. shot plan
+""",
+    )]
+    section_evidence = labeled_proposal_evidence(section_brief)
+    assert section_evidence["client_objective"][0].startswith("为产品上市准备")
+    assert section_evidence["audience"][0] == "28–40 岁城市上班族。"
+    assert "2700K 暖光" in section_evidence["product_feature"][0]
+    assert section_evidence["visual_reference"][0].startswith("真实晚归仪式")
+    assert "story package" not in str(section_evidence)
+
+
 def test_thread_plan_includes_harness_loop_and_adoption_contracts() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-harness-") as raw_project:
         project = Path(raw_project)
@@ -1115,7 +1659,7 @@ def test_invalid_and_dead_threads_fail_closed_with_one_bounded_rescue() -> None:
 
         primary_id = "019f1234-5678-7000-8000-000000000011"
         rescue_id = "019f1234-5678-7000-8000-000000000012"
-        record_thread_dispatch(
+        primary_dispatch = record_thread_dispatch(
             project,
             lane_id=lane_id,
             work_id=work_id,
@@ -1126,6 +1670,9 @@ def test_invalid_and_dead_threads_fail_closed_with_one_bounded_rescue() -> None:
             dispatch_status="dispatched",
             absolute_deadline_at="2026-07-05T00:05:00Z",
         )
+        primary_baseline = project / primary_dispatch["scope_baseline_path"]
+        primary_baseline_bytes = primary_baseline.read_bytes()
+        primary_baseline_sha = file_sha256(primary_baseline)
         record_thread_observation(
             project,
             lane_id=lane_id,
@@ -1162,6 +1709,35 @@ def test_invalid_and_dead_threads_fail_closed_with_one_bounded_rescue() -> None:
         assert rescued_row["real_thread_id"] == primary_id
         assert rescued_row["rescue_thread_id"] == rescue_id
         assert rescued_row["receipt_path"].endswith("_rescue.md")
+        rescue_baseline = project / rescued_row["scope_baseline_path"]
+        rescue_baseline_bytes = rescue_baseline.read_bytes()
+        rescue_baseline_sha = file_sha256(rescue_baseline)
+        rescue_baseline_payload = read_json_object(rescue_baseline, "rescue-bound baseline")
+        assert rescue_baseline != primary_baseline
+        assert rescued_row["scope_baseline_sha256"] == rescue_baseline_sha
+        _, rescue_agent_runs = read_csv_rows(
+            project / "AD-creative/orchestrator/agent_runs.csv"
+        )
+        rescue_agent = next(row for row in rescue_agent_runs if row["lane_id"] == lane_id)
+        assert (
+            f"scope_baseline_path={rescue_baseline.relative_to(project)};"
+            f"scope_baseline_sha256={rescue_baseline_sha}"
+        ) in rescue_agent["summary"]
+        assert str(primary_baseline.relative_to(project)) not in rescue_agent["summary"]
+        assert rescue_baseline_payload["derived_from_baseline_path"] == str(primary_baseline.relative_to(project))
+        assert rescue_baseline_payload["derived_from_baseline_sha256"] == primary_baseline_sha
+        assert rescue_baseline_payload["binding_kind"] == "rescue"
+        assert rescue_baseline_payload["binding_ref"] == rescue_id
+        assert rescue_baseline_payload["derived_at"]
+        assert rescued_row["receipt_path"] not in rescue_baseline_payload["files"]
+        assert rescued_row["rescue_dispatch_receipt_path"] not in rescue_baseline_payload["files"]
+        assert primary_baseline.read_bytes() == primary_baseline_bytes
+        assert file_sha256(primary_baseline) == primary_baseline_sha
+        rescue_dispatch_text = (
+            project / rescued_row["rescue_dispatch_receipt_path"]
+        ).read_text(encoding="utf-8")
+        assert f"scope_baseline_path: {rescue_baseline.relative_to(project)}" in rescue_dispatch_text
+        assert f"scope_baseline_sha256: {rescue_baseline_sha}" in rescue_dispatch_text
         assert receipt_thread_ids(
             (project / rescued_row["receipt_path"]).read_text(encoding="utf-8")
         ) == [rescue_id]
@@ -1187,6 +1763,8 @@ def test_invalid_and_dead_threads_fail_closed_with_one_bounded_rescue() -> None:
         final_row = next(row for row in final_rows if row["lane_id"] == lane_id)
         assert final_row["rescue_count"] == "1"
         assert final_row["rescue_thread_id"] == rescue_id
+        assert rescue_baseline.read_bytes() == rescue_baseline_bytes
+        assert file_sha256(rescue_baseline) == rescue_baseline_sha
 
 
 def test_execution_worker_receipt_cannot_be_prompt_only() -> None:
@@ -1932,6 +2510,128 @@ def test_film_quality_gate_writes_report() -> None:
         assert status == "BLOCKED", (status, findings)
         assert report.exists()
         assert_valid(project)
+
+
+def test_film_gate_scans_adopted_artifact_type_schema_and_excludes_domain_qa() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-film-adopted-schema-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        film_artifacts = [
+            ("ART-FILM-STORY", "film.story_package", "adopted_story.md"),
+            ("ART-FILM-TREATMENT", "film.treatment", "adopted_treatment.md"),
+            ("ART-FILM-SCRIPT", "film.script", "adopted_script.md"),
+            ("ART-FILM-SHOT-PLAN", "film.shot_plan", "adopted_shot_plan.md"),
+            ("ART-FILM-VISUAL-BIBLE", "film.visual_bible", "adopted_visual_bible.md"),
+            ("ART-FILM-REFERENCE-PROMPT", "film.reference_prompt_plan", "adopted_reference_prompt_plan.md"),
+        ]
+        qa = project / "AD-creative/film/domain_qa.json"
+        qa.parent.mkdir(parents=True, exist_ok=True)
+        for _, _, filename in film_artifacts:
+            (qa.parent / filename).write_text(f"# {filename}\n", encoding="utf-8")
+        qa.write_text('{"status":"pass"}\n', encoding="utf-8")
+        artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+        fields, rows = read_csv_rows(artifact_path)
+        for artifact_id, artifact_type, filename in [*film_artifacts, ("ART-FILM-QA", "domain.film_qa", "domain_qa.json")]:
+            path = qa.parent / filename
+            row = {field: "" for field in fields}
+            row.update({
+                "artifact_id": artifact_id, "artifact_type": artifact_type,
+                "path": str(path.relative_to(project)), "status": "internal_review",
+                "lifecycle_state": "active", "visibility": "internal_only",
+                "sha256": file_sha256(path), "size_bytes": str(path.stat().st_size),
+            })
+            rows.append(row)
+        write_csv_rows(artifact_path, fields, rows)
+        adoption_path = project / "AD-creative/orchestrator/specialist_exchange/adoptions/SPA-FILM.json"
+        adoption_path.parent.mkdir(parents=True, exist_ok=True)
+        write_json_object(adoption_path, {"decision": "adopt", "adopted_outputs": [
+            *[
+                {"target_artifact_id": artifact_id, "target_path": str((qa.parent / filename).relative_to(project)), "sha256": file_sha256(qa.parent / filename)}
+                for artifact_id, _, filename in film_artifacts
+            ],
+            {"target_artifact_id": "ART-FILM-QA", "target_path": str(qa.relative_to(project)), "sha256": file_sha256(qa)},
+        ]})
+        exchange_path = project / "AD-creative/orchestrator/specialist_exchange/exchange_index.csv"
+        exchange_fields, exchange_rows = read_csv_rows(exchange_path)
+        exchange = {field: "" for field in exchange_fields}
+        exchange.update({
+            "exchange_id": "SPX-FILM",
+            "adoption_decision": "adopt",
+            "adoption_path": str(adoption_path.relative_to(project)),
+            "adoption_sha256": file_sha256(adoption_path),
+        })
+        exchange_rows.append(exchange)
+        write_csv_rows(exchange_path, exchange_fields, exchange_rows)
+        _, findings, report = review_film_quality(project)
+        report_text = report.read_text(encoding="utf-8")
+        for artifact_id, artifact_type, filename in film_artifacts:
+            path = qa.parent / filename
+            assert (
+                f"film_artifact id={artifact_id} kind={artifact_type} "
+                f"path={path.relative_to(project)} sha256={file_sha256(path)}"
+            ) in report_text
+        assert "film_domain_qa id=ART-FILM-QA" in report_text
+        assert not any("domain_qa.json" in finding and "not scanned" in finding for finding in findings)
+
+        exchange_rows[-1]["adoption_sha256"] = "0" * 64
+        write_csv_rows(exchange_path, exchange_fields, exchange_rows)
+        blocked_status, blocked_findings, _ = review_film_quality(project)
+        assert blocked_status == "BLOCKED"
+        assert any("adoption hash does not match" in finding for finding in blocked_findings)
+
+
+def test_film_gate_scans_active_local_rows_and_skips_planned_rows() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-film-active-lifecycle-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        active_path = project / "AD-creative/film/active_local_story.md"
+        active_path.parent.mkdir(parents=True, exist_ok=True)
+        active_path.write_text("# Active local film artifact\n", encoding="utf-8")
+        artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+        fields, rows = read_csv_rows(artifact_path)
+        active_row = {field: "" for field in fields}
+        active_row.update(
+            {
+                "artifact_id": "ART-FILM-ACTIVE-LOCAL",
+                "artifact_type": "film.story_package",
+                "path": str(active_path.relative_to(project)),
+                "status": "internal_review",
+                "lifecycle_state": "active",
+                "visibility": "internal_only",
+                "sha256": file_sha256(active_path),
+                "size_bytes": str(active_path.stat().st_size),
+            }
+        )
+        planned_row = {field: "" for field in fields}
+        planned_row.update(
+            {
+                "artifact_id": "ART-FILM-PLANNED",
+                "artifact_type": "film.script",
+                "path": "AD-creative/film/not_created_yet.md",
+                "status": "planned",
+                "visibility": "internal_only",
+            }
+        )
+        rows.extend([active_row, planned_row])
+        write_csv_rows(artifact_path, fields, rows)
+
+        status, findings, report = review_film_quality(project)
+        report_text = report.read_text(encoding="utf-8")
+        assert status == "BLOCKED"
+        assert (
+            "film_artifact id=ART-FILM-ACTIVE-LOCAL "
+            f"kind=film.story_package path={active_path.relative_to(project)} "
+            f"sha256={file_sha256(active_path)}"
+        ) in report_text
+        assert not any("ART-FILM-PLANNED" in finding for finding in findings)
+
+        active_path.unlink()
+        blocked_status, blocked_findings, _ = review_film_quality(project)
+        assert blocked_status == "BLOCKED"
+        assert any(
+            "film artifact missing/non-regular: ART-FILM-ACTIVE-LOCAL" in finding
+            for finding in blocked_findings
+        )
 
 
 def test_duffy_hardening_cli_commands_are_exposed() -> None:
@@ -3748,6 +4448,11 @@ def main() -> int:
     test_independent_adversarial_review_allows_clean_gate_pass()
     test_goal_run_stops_without_material()
     test_thread_plan_creates_control_plane()
+    test_dispatch_receipts_are_immutable_per_lane()
+    test_same_lane_redispatch_preserves_attempt_proof_and_specialist_identity()
+    test_thread_scope_baseline_paths_reject_lexical_symlink_components()
+    test_scope_manifest_filter_fails_closed_for_invalid_roots_keys_and_digests()
+    test_brief_evidence_is_label_aware_and_ignores_deliverables()
     test_thread_plan_includes_harness_loop_and_adoption_contracts()
     test_thread_progress_invalidates_stale_convergence_reminder()
     test_invalid_and_dead_threads_fail_closed_with_one_bounded_rescue()
@@ -3773,6 +4478,8 @@ def main() -> int:
     test_creative_doctor_respects_env_root()
     test_import_creative_production_run_registers_assets()
     test_film_quality_gate_writes_report()
+    test_film_gate_scans_adopted_artifact_type_schema_and_excludes_domain_qa()
+    test_film_gate_scans_active_local_rows_and_skips_planned_rows()
     test_duffy_hardening_cli_commands_are_exposed()
     test_client_outline_gate_blocks_until_page_framework_exists()
     test_client_language_gate_blocks_internal_execution_terms()

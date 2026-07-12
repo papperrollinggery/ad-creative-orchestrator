@@ -53,7 +53,7 @@ REPO_ROOT = repo_or_module_root()
 TEMPLATE_ROOT = template_root()
 SKILL_DRAFT_DIR = skill_draft_dir()
 PACKAGE_NAME = "ad-creative-orchestrator"
-FALLBACK_VERSION = "0.3.0"
+FALLBACK_VERSION = "0.3.1"
 CONTROL_PLANE_SCHEMA_VERSION = "2.0"
 CONTROL_PLANE_SCHEMA_REL = Path("AD-creative/orchestrator/control_plane_schema.json")
 CONTROL_PLANE_MIGRATION_MANIFEST_REL = Path(
@@ -2763,13 +2763,14 @@ def normalized_artifact_lifecycle(
         "removed": "removed",
         "deleted": "removed",
         "pending": "pending",
+        "planned": "pending",
         "draft": "pending",
         "blocked": "pending",
         "not_run": "pending",
     }
     if status in status_map:
         return status_map[status]
-    if status in {"", "active", "current", "done", "complete", "completed", "approved", "registered", "pass", "passed"}:
+    if status in {"", "active", "current", "done", "complete", "completed", "approved", "registered", "pass", "passed", "internal_review", "ready"}:
         return "active"
     return "legacy_unknown"
 
@@ -4424,6 +4425,73 @@ def material_evidence_lines(source_materials: list[tuple[dict[str, str], Path, s
     return evidence
 
 
+PROPOSAL_EVIDENCE_LABELS = {
+    "business_problem": ("business problem", "business challenge", "商业问题", "业务问题", "创意问题", "挑战"),
+    "client_objective": ("objective", "client objective", "目标", "客户目标", "商业任务", "项目目标", "任务目标"),
+    "audience": ("audience", "target audience", "受众", "目标人群", "人群"),
+    "barrier": ("barrier", "behavior barrier", "痛点", "障碍", "顾虑"),
+    "insight": ("insight", "consumer insight", "洞察", "消费者洞察"),
+    "product_feature": ("feature", "product feature", "卖点", "产品卖点", "产品功能", "产品事实", "已锁定产品事实", "功能"),
+    "visual_reference": ("visual direction", "visual", "direction", "方向", "场景", "画面方向", "视觉方向", "关键视觉"),
+}
+
+PROPOSAL_EVIDENCE_SECTIONS = {
+    "business_problem": ("business problem", "business challenge", "商业问题", "业务问题", "创意问题"),
+    "client_objective": ("objective", "client objective", "商业任务", "项目目标", "客户目标", "任务目标"),
+    "audience": ("audience", "target audience", "目标人群", "受众"),
+    "barrier": ("barrier", "behavior barrier", "行为阻力", "痛点", "障碍"),
+    "insight": ("insight", "consumer insight", "消费者洞察", "用户洞察"),
+    "visual_reference": ("visual direction", "画面方向", "视觉方向", "关键视觉"),
+}
+
+
+def labeled_proposal_evidence(
+    source_materials: list[tuple[dict[str, str], Path, str]],
+) -> dict[str, tuple[str, str]]:
+    """Extract only explicitly labelled brief facts; ignore deliverable/list pollution."""
+    found: dict[str, tuple[str, str]] = {}
+    label_map = {
+        label.lower(): key
+        for key, labels in PROPOSAL_EVIDENCE_LABELS.items()
+        for label in labels
+    }
+    for source, _, text in source_materials:
+        source_id = source.get("source_event_id", "")
+        section = ""
+        section_key = ""
+        for raw in text.splitlines():
+            heading = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", raw)
+            if heading:
+                section = heading.group(1).strip().lower()
+                section_key = next(
+                    (
+                        key
+                        for key, names in PROPOSAL_EVIDENCE_SECTIONS.items()
+                        if any(name in section for name in names)
+                    ),
+                    "",
+                )
+                continue
+            match = re.match(r"^\s*(?:[-*]\s*)?([^:：]{1,40})[:：]\s*(.+?)\s*$", raw)
+            if any(token in section for token in ("deliverable", "交付", "output")):
+                continue
+            if match:
+                label = match.group(1).strip().lower()
+                value = clean_material_line(match.group(2))
+                key = label_map.get(label)
+                if key and key not in found and value:
+                    found[key] = (compact_evidence(value), source_id)
+                continue
+            value = clean_material_line(raw)
+            if not value or re.match(r"^\d+[.)、]\s+", value):
+                continue
+            if "希望观众记住" in value and "insight" not in found:
+                found["insight"] = (compact_evidence(value), source_id)
+            elif section_key and section_key not in found:
+                found[section_key] = (compact_evidence(value), source_id)
+    return found
+
+
 def collect_proposal_evidence(project: Path) -> dict[str, object]:
     _, requirement_rows = read_csv_rows(project / "AD-creative/orchestrator/requirements.csv")
     _, gap_rows = read_csv_rows(project / "AD-creative/orchestrator/gaps.csv")
@@ -4431,6 +4499,7 @@ def collect_proposal_evidence(project: Path) -> dict[str, object]:
     _, profile_insights = read_csv_rows(project / "AD-creative/orchestrator/profile_knowledge/profile_insights.csv")
     source_materials, resolved_source_ids = collect_source_materials(project, [])
     source_lines = material_evidence_lines(source_materials)
+    labeled = labeled_proposal_evidence(source_materials)
     requirement_lines: list[tuple[str, str]] = []
     gap_lines: list[tuple[str, str]] = []
     for requirement in requirement_rows:
@@ -4447,47 +4516,13 @@ def collect_proposal_evidence(project: Path) -> dict[str, object]:
     creative_lines = source_lines + requirement_lines + gap_lines
     source_or_requirement_lines = source_lines + requirement_lines
 
-    business_problem, business_source = first_evidence_line(
-        creative_lines,
-        ["too generic", "draft client language", "creative problem", "问题", "挑战", "新品", "launch", "广告创意", "提案", "内部评审", "交付"],
-        open_question("business problem"),
-    )
-    client_objective, objective_source = first_evidence_line(
-        creative_lines,
-        ["create an internal creative", "requested deliverables", "launch goal", "客户希望", "目标", "本轮交付", "需要", "PPT", "内部评审", "审阅"],
-        open_question("client real objective"),
-    )
-    audience, audience_source = first_evidence_line(
-        source_or_requirement_lines,
-        ["24-36", "city professionals", "commuting", "weekend trails", "人群", "用户", "消费者", "轻运动", "户外", "年轻", "audience"],
-        open_question("target audience"),
-    )
-    barrier, barrier_source = first_evidence_line(
-        source_or_requirement_lines,
-        ["distrust", "inflated", "empty words", "generic", "担心", "不信", "顾虑", "障碍", "痛点", "限制"],
-        open_question("target behavior barrier"),
-    )
-    if barrier.startswith("TBD"):
-        barrier, barrier_source = first_evidence_line(
-            gap_lines,
-            ["担心", "不要", "不能", "缺少", "暂缺", "风险", "障碍", "痛点", "限制"],
-            open_question("target behavior barrier"),
-        )
-    product_feature, feature_source = first_evidence_line(
-        source_or_requirement_lines,
-        ["3-layer", "waterproof", "packable", "underarm", "reflective", "fabric", "colors", "retail", "产品", "功能", "包装", "高清图", "卖点"],
-        open_question("product feature"),
-    )
-    visual_reference, visual_source = first_evidence_line(
-        source_or_requirement_lines,
-        ["office rain", "weekend trails", "slate green", "rain gray", "canyon red", "reflective", "真实户外", "清爽", "清晨", "山路", "手持产品", "关键视觉", "画面", "视觉"],
-        open_question("visual/action evidence"),
-    )
-    insight, insight_source = first_evidence_line(
-        source_or_requirement_lines,
-        ["specific use moments", "without looking", "distrust", "want a jacket", "可信", "具体", "真实", "担心", "希望", "需要", "不要", "轻运动", "户外"],
-        open_question("consumer insight"),
-    )
+    business_problem, business_source = labeled.get("business_problem", (open_question("business problem (internal-only)"), ""))
+    client_objective, objective_source = labeled.get("client_objective", (open_question("client real objective (internal-only)"), ""))
+    audience, audience_source = labeled.get("audience", (open_question("target audience (internal-only)"), ""))
+    barrier, barrier_source = labeled.get("barrier", (open_question("target behavior barrier (internal-only)"), ""))
+    product_feature, feature_source = labeled.get("product_feature", (open_question("product feature (internal-only)"), ""))
+    visual_reference, visual_source = labeled.get("visual_reference", (open_question("visual/action evidence (internal-only)"), ""))
+    insight, insight_source = labeled.get("insight", (open_question("consumer insight (internal-only)"), ""))
     for row in profile_insights:
         if not insight.startswith("TBD"):
             break
@@ -4495,12 +4530,6 @@ def collect_proposal_evidence(project: Path) -> dict[str, object]:
             insight = compact_evidence(row.get("statement", ""))
             insight_source = row.get("source_event_id", "")
             break
-    if insight.startswith("TBD"):
-        insight, insight_source = first_evidence_line(
-            creative_lines,
-            ["真实", "清爽", "担心", "偏", "希望", "需要", "不要", "轻运动", "户外"],
-            open_question("consumer insight"),
-        )
     reference_notes = [
         f"{ref.get('reference_id')}: {ref.get('title') or ref.get('url')} ({ref.get('role')})"
         for ref in reference_rows
@@ -4536,23 +4565,6 @@ def proposal_evidence_ref(source: str) -> str:
 
 def proposal_display_phrase(label: str, value: str) -> str:
     cleaned = value.strip().strip("。.")
-    lower = cleaned.lower()
-    if cleaned.startswith("TBD"):
-        return cleaned
-    if label == "business_problem" and ("too generic" in lower or "generic" in lower):
-        return "现有文案过空，需要从口号改成具体场景和可核验利益"
-    if label == "client_objective" and "internal creative direction package" in lower:
-        return "为晚夏新品发布做一套内部方向提案，覆盖短视频、种草内容和客户审阅"
-    if label == "audience" and ("24-36" in lower or "city professionals" in lower):
-        return "24-36 岁城市职场人"
-    if label in {"barrier", "insight"} and "distrust inflated outdoor claims" in lower:
-        return "他们不相信夸大的户外性能话术，只接受具体使用瞬间"
-    if label == "insight" and "office rain" in lower and "weekend trails" in lower:
-        return "他们想要一件从办公室雨天到周末山路都不突兀的外套"
-    if label == "product_feature" and "3-layer waterproof fabric" in lower:
-        return "3 层防水面料"
-    if label == "visual_reference" and "office rain" in lower and "weekend trails" in lower:
-        return "办公室雨天到周末山路的同一件外套"
     return cleaned
 
 
@@ -4565,7 +4577,7 @@ def build_creative_direction_rows(context: dict[str, object]) -> list[dict[str, 
     insight_phrase = proposal_display_phrase("insight", str(context["insight"]))
     visual_phrase = proposal_display_phrase("visual_reference", str(context["visual_reference"]))
     benefit = (
-        "把产品卖点翻译成通勤和短途路线里的具体行动价值。"
+        "把已证实的产品卖点翻译成具体使用价值。"
         if not feature.startswith("TBD")
         else open_question("communication benefit")
     )
@@ -4582,7 +4594,7 @@ def build_creative_direction_rows(context: dict[str, object]) -> list[dict[str, 
             "communication_benefit": benefit,
             "behavior_barrier": barrier_phrase,
             "key_visual_or_action": visual_phrase,
-            "title_or_use_case": "清晨出发前 / 山路途中 / 手持产品的连续动作",
+            "title_or_use_case": "待资料确认的使用场景与连续动作",
             "reference_ids": str(context["reference_ids"]),
             "risk": "缺少产品高清图时只能保留 internal_only placeholder。",
             "why_choose": "适合先说明产品如何进入真实行为，不依赖竞品或案例背书。",
@@ -4630,7 +4642,11 @@ def build_creative_direction_rows(context: dict[str, object]) -> list[dict[str, 
             "product_feature": feature,
             "communication_benefit": "让受众先理解为什么需要它，再记住产品。",
             "behavior_barrier": barrier_phrase,
-            "key_visual_or_action": "障碍前后对比：出发前犹豫 / 使用产品 / 继续行动。",
+            "key_visual_or_action": (
+                "把已确认的行为阻力转成前后可验证动作；具体动作待资料确认。"
+                if not barrier_phrase.startswith("TBD")
+                else open_question("barrier-to-action execution")
+            ),
             "title_or_use_case": "受众痛点页或短片第一幕",
             "reference_ids": str(context["reference_ids"]),
             "risk": "若 insight 未被资料支持，只能作为假设方向，不可客户可见。",
@@ -5972,6 +5988,9 @@ def review_film_quality(project: Path) -> tuple[str, list[str], Path]:
         project / "AD-creative/visual_assets/asset_authorizations.csv"
     )
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
+    _, exchanges = read_csv_rows(
+        project / "AD-creative/orchestrator/specialist_exchange/exchange_index.csv"
+    )
     issues: list[str] = []
     warnings: list[str] = []
     evidence: list[str] = [
@@ -5980,6 +5999,107 @@ def review_film_quality(project: Path) -> tuple[str, list[str], Path]:
         f"assets={counts['assets']}",
         f"artifacts={counts['artifacts']}",
     ]
+    physical_film_kinds = {
+        "film.story_package",
+        "film.treatment",
+        "film.script",
+        "film.shot_plan",
+        "film.visual_bible",
+        "film.reference_prompt_plan",
+    }
+    scanned_paths: set[str] = set()
+    for artifact in artifacts:
+        kind = artifact.get("artifact_type", "").strip()
+        if kind not in physical_film_kinds or normalized_artifact_lifecycle(artifact) != "active":
+            continue
+        artifact_id = artifact.get("artifact_id", "").strip()
+        rel_path = artifact.get("path", "").strip()
+        expected_sha = artifact.get("sha256", "").strip()
+        try:
+            physical = contained_project_path(project, rel_path, f"film artifact {artifact_id}")
+        except ValueError as exc:
+            issues.append(str(exc))
+            continue
+        if not physical.is_file() or physical.is_symlink():
+            issues.append(f"film artifact missing/non-regular: {artifact_id} {rel_path}")
+            continue
+        actual_sha = file_sha256(physical)
+        if not expected_sha or actual_sha != expected_sha:
+            issues.append(f"film artifact hash mismatch: {artifact_id} {rel_path}")
+            continue
+        scanned_paths.add(rel_path)
+        evidence.append(
+            f"film_artifact id={artifact_id} kind={kind} path={rel_path} sha256={actual_sha}"
+        )
+    artifacts_by_id = {
+        artifact.get("artifact_id", "").strip(): artifact
+        for artifact in artifacts
+        if artifact.get("artifact_id", "").strip()
+    }
+    for exchange in exchanges:
+        if exchange.get("adoption_decision", "").strip() not in {"adopt", "partial_adopt"}:
+            continue
+        adoption_rel = exchange.get("adoption_path", "").strip()
+        try:
+            adoption_path = contained_project_path(
+                project, adoption_rel, "specialist adoption"
+            )
+            if not adoption_path.is_file() or adoption_path.is_symlink():
+                raise ValueError("specialist adoption is missing or non-regular")
+            adoption_sha = file_sha256(adoption_path)
+            expected_adoption_sha = exchange.get("adoption_sha256", "").strip()
+            if not expected_adoption_sha or adoption_sha != expected_adoption_sha:
+                raise ValueError("specialist adoption hash does not match exchange index")
+            adoption = read_json_object(adoption_path, "specialist adoption")
+        except (ValueError, FileNotFoundError, json.JSONDecodeError) as exc:
+            issues.append(f"invalid adopted specialist exchange: {exc}")
+            continue
+        if adoption.get("decision") != exchange.get("adoption_decision", "").strip():
+            issues.append("invalid adopted specialist exchange: adoption decision mismatch")
+            continue
+        for output in adoption.get("adopted_outputs", []):
+            if isinstance(output, dict):
+                target_id = str(output.get("target_artifact_id") or "").strip()
+                target_path = str(output.get("target_path") or "").strip()
+                target_sha = str(output.get("sha256") or "").strip()
+                target_row = artifacts_by_id.get(target_id)
+                if not target_row:
+                    issues.append(f"adopted specialist output missing artifact_index row: {target_id}")
+                    continue
+                target_kind = target_row.get("artifact_type", "").strip()
+                if target_path != target_row.get("path", "").strip() or target_sha != target_row.get(
+                    "sha256", ""
+                ).strip():
+                    issues.append(
+                        f"adopted specialist output path/hash does not match artifact_index: {target_id}"
+                    )
+                    continue
+                if target_kind == "domain.film_qa":
+                    try:
+                        qa_path = contained_project_path(
+                            project, target_path, f"film domain QA {target_id}"
+                        )
+                    except ValueError as exc:
+                        issues.append(str(exc))
+                        continue
+                    if (
+                        not qa_path.is_file()
+                        or qa_path.is_symlink()
+                        or file_sha256(qa_path) != target_sha
+                    ):
+                        issues.append(f"film domain QA path/hash mismatch: {target_id}")
+                    else:
+                        evidence.append(
+                            f"film_domain_qa id={target_id} path={target_path} sha256={target_sha}"
+                        )
+                elif target_kind in physical_film_kinds and target_path not in scanned_paths:
+                    issues.append(
+                        f"adopted specialist output not scanned by Film Gate: {target_path}"
+                    )
+
+    creative_gate = latest_gate(project, gate_id="GATE-AUTO-CREATIVE-QUALITY-001")
+    if creative_gate and creative_gate.get("status", "").strip() == "BLOCKED":
+        issues.append("Creative Quality Gate 为 BLOCKED，Film Gate 不得推进下游。")
 
     creative_path = project / "AD-creative/creative/creative_directions.md"
     proposal_path = project / "AD-creative/proposal_architecture/proposal_structure.md"
@@ -6108,7 +6228,7 @@ checked_at: {now_iso()}
         ";".join(issues[:8]),
         ";".join(warnings[:8]) or "补齐 treatment / shot list / production constraints 后复核。",
         "",
-        "ready_for_client_pack_gate" if status != "BLOCKED" else "fix_film_quality",
+        "ready_for_internal_ppt_review" if status != "BLOCKED" else "fix_film_quality",
         "ad_creative_operator",
     )
     append_event(
@@ -10066,6 +10186,29 @@ def project_relative_path_has_symlink_component(project: Path, raw_path: str) ->
     return False
 
 
+def contained_thread_scope_baseline_path(
+    project: Path, raw_path: str, label: str
+) -> Path:
+    raw = (raw_path or "").strip()
+    candidate = Path(raw.replace("\\", "/"))
+    lexical = candidate.as_posix()
+    if project_relative_path_has_symlink_component(project, lexical):
+        raise ValueError(f"{label} contains a symlink component: {raw_path}")
+    if not raw or candidate.is_absolute() or ".." in candidate.parts:
+        raise ValueError(f"{label} must be a project-relative path: {raw_path}")
+    parent = candidate.parent.as_posix()
+    if parent not in {"", "."} and project_relative_path_has_symlink_component(
+        project, parent
+    ):
+        raise ValueError(f"{label} parent contains a symlink component: {raw_path}")
+    resolved = (project / candidate).resolve()
+    try:
+        resolved.relative_to(project.resolve())
+    except ValueError as exc:
+        raise ValueError(f"{label} escapes project scope: {raw_path}") from exc
+    return resolved
+
+
 def validate_specialist_token(value: str, label: str) -> str:
     token = value.strip()
     if (
@@ -10081,6 +10224,124 @@ def relative_path_is_within(relative_path: str, root: str) -> bool:
     path_parts = Path(relative_path).parts
     root_parts = Path(root.rstrip("/")).parts
     return len(path_parts) >= len(root_parts) and path_parts[: len(root_parts)] == root_parts
+
+
+def require_regular_control_file(path: Path, label: str) -> None:
+    if not path.is_file() or path.is_symlink() or path.stat().st_nlink != 1:
+        raise ValueError(f"{label} must be a regular non-symlink file: {path}")
+
+
+def validate_scope_manifest_path(raw_path: object, label: str) -> str:
+    if not isinstance(raw_path, str):
+        raise ValueError(f"{label} must be a string path")
+    path = raw_path.strip()
+    if not path or path != raw_path:
+        raise ValueError(f"{label} must be a non-empty canonical POSIX path")
+    if "\\" in path or re.match(r"^[A-Za-z]:", path):
+        raise ValueError(f"{label} must be a project-relative POSIX path: {raw_path}")
+    parts = path.split("/")
+    if path.startswith("/") or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError(f"{label} must be a canonical project-relative path: {raw_path}")
+    canonical = "/".join(parts)
+    if canonical != path:
+        raise ValueError(f"{label} is not canonical: {raw_path}")
+    return canonical
+
+
+def validate_scope_manifest_exclusion_roots(excluded_roots: object) -> list[str]:
+    if not isinstance(excluded_roots, list):
+        raise ValueError("thread scope baseline exclusions are invalid")
+    roots: list[str] = []
+    for raw_root in excluded_roots:
+        root = validate_scope_manifest_path(raw_root, "thread scope exclusion root")
+        if root == "AD-creative":
+            raise ValueError("thread scope exclusion root cannot cover AD-creative")
+        roots.append(root)
+    return list(dict.fromkeys(roots))
+
+
+def validate_scope_manifest_files(files: object) -> dict[str, str]:
+    if not isinstance(files, dict):
+        raise ValueError("thread scope baseline files are invalid")
+    validated: dict[str, str] = {}
+    for raw_path, raw_digest in files.items():
+        path = validate_scope_manifest_path(raw_path, "thread scope manifest key")
+        if not isinstance(raw_digest, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{64}", raw_digest
+        ):
+            raise ValueError(
+                f"thread scope manifest digest must be a 64-character SHA-256 hex value: {raw_path}"
+            )
+        validated[path] = raw_digest.lower()
+    return validated
+
+
+def filtered_scope_manifest_files(
+    files: object, *, excluded_roots: list[str]
+) -> dict[str, str]:
+    normalized_roots = validate_scope_manifest_exclusion_roots(excluded_roots)
+    validated_files = validate_scope_manifest_files(files)
+    return {
+        path: digest
+        for path, digest in validated_files.items()
+        if not any(
+            relative_path_is_within(path, root) for root in normalized_roots
+        )
+    }
+
+
+def derive_thread_scope_baseline(
+    project: Path,
+    source_path: Path,
+    source_payload: dict[str, object],
+    *,
+    suffix: str,
+    added_exclusions: list[str],
+    binding_kind: str,
+    binding_ref: str,
+) -> tuple[Path, dict[str, object]]:
+    try:
+        source_rel = source_path.relative_to(project).as_posix()
+    except ValueError:
+        source_rel = source_path.relative_to(project.resolve()).as_posix()
+    source_path = contained_thread_scope_baseline_path(
+        project, source_rel, "source thread scope baseline"
+    )
+    require_regular_control_file(source_path, "source thread scope baseline")
+    target_path = source_path.with_name(
+        f"{source_path.stem}{suffix}{source_path.suffix}"
+    )
+    target_rel = target_path.relative_to(project.resolve()).as_posix()
+    target_path = contained_thread_scope_baseline_path(
+        project, target_rel, "derived thread scope baseline"
+    )
+    if target_path.exists():
+        raise ValueError(f"derived thread scope baseline already exists: {target_path}")
+    source_sha256 = file_sha256(source_path)
+    existing_exclusions = source_payload.get("excluded_roots")
+    if not isinstance(existing_exclusions, list):
+        raise ValueError("thread scope baseline exclusions are invalid")
+    exclusions = list(
+        dict.fromkeys(
+            [str(item) for item in existing_exclusions]
+            + [str(item) for item in added_exclusions if str(item).strip()]
+        )
+    )
+    derived_payload = dict(source_payload)
+    derived_files = filtered_scope_manifest_files(
+        source_payload.get("files"), excluded_roots=exclusions
+    )
+    derived_payload["excluded_roots"] = exclusions
+    derived_payload["files"] = derived_files
+    derived_payload["manifest_sha256"] = specialist_manifest_digest(derived_files)
+    derived_payload["derived_from_baseline_path"] = safe_rel(project, source_path)
+    derived_payload["derived_from_baseline_sha256"] = source_sha256
+    derived_payload["binding_kind"] = binding_kind
+    derived_payload["binding_ref"] = binding_ref
+    derived_payload["derived_at"] = now_iso()
+    write_json_object(target_path, derived_payload)
+    require_regular_control_file(target_path, "derived thread scope baseline")
+    return target_path, derived_payload
 
 
 def canonical_project_relative(project: Path, path: Path) -> str:
@@ -10404,6 +10665,7 @@ def _create_specialist_handoff_locked(
     handoff_rel = f"AD-creative/orchestrator/specialist_exchange/handoffs/{handoff_id}.json"
     thread_id: str | None = None
     lane_run_id: str | None = None
+    dispatch_attempt = 1
     thread_control_exclusions: list[str] = []
     if execution_mode == "codex_thread":
         if not lane_id:
@@ -10437,6 +10699,7 @@ def _create_specialist_handoff_locked(
             dispatch_path.read_text(encoding="utf-8", errors="ignore")
         ) != [candidate]:
             raise ValueError("codex_thread lane lacks verified dispatch receipt")
+        dispatch_attempt = dispatch_attempt_from_receipt(dispatch_path) or 1
         write_scope_values = [
             item.strip()
             for item in row.get("write_scope", "").split(";")
@@ -10457,21 +10720,21 @@ def _create_specialist_handoff_locked(
             )
         output_root_rel = f"{lane_scope_rel}/specialist_exchange/{handoff_id}/outputs"
         receipt_rel = f"{lane_scope_rel}/specialist_exchange/{handoff_id}/receipt.json"
-        thread_baseline_path = contained_project_path(
+        thread_baseline_path = contained_thread_scope_baseline_path(
             project,
             row.get("scope_baseline_path", "").strip(),
             "codex_thread scope baseline",
         )
-        if not thread_baseline_path.is_file() or file_sha256(
-            thread_baseline_path
-        ) != row.get("scope_baseline_sha256", "").strip():
+        if (
+            not thread_baseline_path.is_file()
+            or file_sha256(thread_baseline_path)
+            != row.get("scope_baseline_sha256", "").strip()
+        ):
             raise ValueError("codex_thread scope baseline is missing or stale")
+        require_regular_control_file(thread_baseline_path, "codex_thread scope baseline")
         thread_baseline = read_json_object(
             thread_baseline_path, "codex_thread scope baseline"
         )
-        thread_excluded = thread_baseline.get("excluded_roots")
-        if not isinstance(thread_excluded, list):
-            raise ValueError("codex_thread scope baseline exclusions are invalid")
         host_control_paths = [
             "AD-creative/orchestrator/specialist_exchange",
             receipt_rel,
@@ -10483,23 +10746,17 @@ def _create_specialist_handoff_locked(
                 )
             except ValueError:
                 pass
-        thread_baseline["excluded_roots"] = list(
-            dict.fromkeys(
-                [*[str(item) for item in thread_excluded], *host_control_paths]
-            )
-        )
-        thread_baseline_files = specialist_scope_manifest(
+        thread_baseline_path, thread_baseline = derive_thread_scope_baseline(
             project,
-            excluded_roots=[
-                str(item) for item in thread_baseline["excluded_roots"]
-            ],
+            thread_baseline_path,
+            thread_baseline,
+            suffix=f"_handoff-{handoff_id}",
+            added_exclusions=host_control_paths,
+            binding_kind="specialist_handoff",
+            binding_ref=handoff_id,
         )
-        thread_baseline["files"] = thread_baseline_files
-        thread_baseline["manifest_sha256"] = specialist_manifest_digest(
-            thread_baseline_files
-        )
-        write_json_object(thread_baseline_path, thread_baseline)
         row["receipt_path"] = receipt_rel
+        row["scope_baseline_path"] = safe_rel(project, thread_baseline_path)
         row["scope_baseline_sha256"] = file_sha256(thread_baseline_path)
         write_csv_rows(registry_path, registry_fields, registry)
         update_thread_agent_run(
@@ -10508,12 +10765,16 @@ def _create_specialist_handoff_locked(
             work_id=work_id,
             updates={
                 "receipt_path": receipt_rel,
+                "scope_baseline_path": safe_rel(project, thread_baseline_path),
+                "scope_baseline_sha256": file_sha256(thread_baseline_path),
                 "proof_status": "dispatch_verified_specialist_handoff_bound",
             },
         )
         thread_control_exclusions = [
             "AD-creative/orchestrator/thread_registry.csv",
             "AD-creative/orchestrator/agent_runs.csv",
+            "AD-creative/orchestrator/thread_lane_plan.md",
+            f"AD-creative/orchestrator/thread_cleanup_{work_id}.md",
             "AD-creative/orchestrator/thread_scope_baselines",
             "AD-creative/orchestrator/thread_scope_proofs",
             f"AD-creative/orchestrator/thread_convergence_{safe_artifact_suffix(work_id)}.md",
@@ -10566,7 +10827,7 @@ def _create_specialist_handoff_locked(
         "message_type": "handoff",
         "exchange_id": exchange_id,
         "handoff_id": handoff_id,
-        "attempt": 1,
+        "attempt": dispatch_attempt,
         "supersedes_handoff_id": None,
         "work_id": work_id,
         "provider_id": provider_id,
@@ -10627,7 +10888,7 @@ def _create_specialist_handoff_locked(
         {
             "exchange_id": exchange_id,
             "handoff_id": handoff_id,
-            "attempt": "1",
+            "attempt": str(dispatch_attempt),
             "work_id": work_id,
             "provider_id": provider_id,
             "profile_id": profile_id,
@@ -11455,6 +11716,23 @@ def update_thread_agent_run(
         raise ValueError(
             f"expected exactly one agent_runs row for work_id={work_id} lane_id={lane_id}; found {len(matches)}"
         )
+    updates = dict(updates)
+    baseline_path = updates.pop("scope_baseline_path", "").strip()
+    baseline_sha256 = updates.pop("scope_baseline_sha256", "").strip()
+    if baseline_path or baseline_sha256:
+        if not baseline_path or not baseline_sha256:
+            raise ValueError("agent run scope baseline pointer requires path and hash")
+        summary = matches[0].get("summary", "")
+        summary = re.sub(
+            r"(?:^|\s*\|\s*)scope_baseline_path=[^;|]*;scope_baseline_sha256=[^;|]*",
+            "",
+            summary,
+        ).strip(" |;")
+        pointer = (
+            f"scope_baseline_path={baseline_path};"
+            f"scope_baseline_sha256={baseline_sha256}"
+        )
+        updates["summary"] = f"{summary} | {pointer}" if summary else pointer
     matches[0].update(updates)
     write_csv_rows(path, fields, rows)
 
@@ -11489,6 +11767,57 @@ def append_thread_convergence_event(
     )
     write_text(path, text)
     return path
+
+
+def refresh_threadops_projections(project: Path, work_id: str) -> None:
+    """Refresh human views from the registry; the registry remains authoritative."""
+    _, registry = read_csv_rows(project / "AD-creative/orchestrator/thread_registry.csv")
+    rows = [row for row in registry if row.get("work_id", "").strip() == work_id]
+    plan_path = project / "AD-creative/orchestrator/thread_lane_plan.md"
+    if plan_path.is_file() and rows:
+        lines = plan_path.read_text(encoding="utf-8").splitlines()
+        by_lane = {row.get("lane_id", ""): row for row in rows}
+        for heading in ("## Lane Map", "## Thread Registry"):
+            try:
+                heading_index = lines.index(heading)
+            except ValueError:
+                continue
+            header_index = next(
+                (
+                    index
+                    for index in range(heading_index + 1, len(lines))
+                    if lines[index].startswith("| lane_id |")
+                    or (heading == "## Thread Registry" and lines[index].startswith("| thread_id |"))
+                ),
+                None,
+            )
+            if header_index is None:
+                continue
+            headers = [cell.strip() for cell in lines[header_index].strip("|").split("|")]
+            for index in range(header_index + 2, len(lines)):
+                if not lines[index].startswith("|"):
+                    break
+                cells = [cell.strip() for cell in lines[index].strip("|").split("|")]
+                projected = dict(zip(headers, cells))
+                source = by_lane.get(projected.get("lane_id", ""))
+                if not source:
+                    continue
+                updates = {header: source.get(header, "") for header in headers if header in source}
+                if "lifecycle_status" in headers:
+                    updates["lifecycle_status"] = source.get("lifecycle_state", "")
+                projected.update({key: value for key, value in updates.items() if key in headers})
+                lines[index] = "| " + " | ".join(
+                    markdown_table_cell(projected.get(header, "")) for header in headers
+                ) + " |"
+        write_text(plan_path, "\n".join(lines) + "\n")
+    cleanup_path = project / f"AD-creative/orchestrator/thread_cleanup_{work_id}.md"
+    if cleanup_path.is_file() and rows:
+        state = "archived" if all(
+            row.get("archived", "").strip().lower() in {"1", "true", "yes", "y", "on"}
+            for row in rows
+        ) else "active"
+        text = re.sub(r"(?m)^status:\s*\S+", f"status: {state}", cleanup_path.read_text(encoding="utf-8"), count=1)
+        write_text(cleanup_path, text)
 
 
 def receipt_thread_ids(text: str) -> list[str]:
@@ -11548,6 +11877,75 @@ def bind_dispatch_identity_file(
     write_text(path, text)
 
 
+def dispatch_attempt_from_receipt(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    match = re.search(r"(?im)^dispatch_attempt:\s*(\d+)\s*$", path.read_text(encoding="utf-8", errors="ignore"))
+    return int(match.group(1)) if match else 1
+
+
+def dispatch_identity_paths(
+    project: Path, target: dict[str, str], *, work_id: str, lane_id: str
+) -> tuple[Path, Path]:
+    dispatch_rel = target.get("dispatch_receipt_path", "").strip()
+    if dispatch_rel:
+        dispatch_path = contained_project_path(
+            project, dispatch_rel, "current dispatch receipt"
+        )
+        if dispatch_path.is_file():
+            dispatch_text = dispatch_path.read_text(encoding="utf-8", errors="ignore")
+            prompt_match = re.search(r"(?im)^prompt_path:\s*(\S+)\s*$", dispatch_text)
+            receipt_match = re.search(
+                r"(?im)^worker_receipt_path:\s*(\S+)\s*$", dispatch_text
+            )
+            if prompt_match and receipt_match:
+                return (
+                    contained_project_path(project, prompt_match.group(1), "worker prompt"),
+                    contained_project_path(
+                        project, receipt_match.group(1), "worker receipt envelope"
+                    ),
+                )
+    prompt_rel = target.get("notes", "").partition("prompt=")[2].strip()
+    if not prompt_rel:
+        raise ValueError("registry row lacks worker prompt path")
+    worker_receipt_rel = target.get("receipt_path", "").strip()
+    if (
+        not worker_receipt_rel
+        or "/specialist_exchange/" in worker_receipt_rel
+        or worker_receipt_rel.startswith("AD-creative/workspaces/")
+    ):
+        worker_receipt_rel = (
+            f"AD-creative/agents/receipts/{work_id}/{lane_id}_receipt.md"
+        )
+    return (
+        contained_project_path(project, prompt_rel, "worker prompt"),
+        contained_project_path(project, worker_receipt_rel, "worker receipt envelope"),
+    )
+
+
+def attempt_identity_path(path: Path, attempt: int) -> Path:
+    if attempt == 1:
+        return path
+    return path.with_name(f"{path.stem}_attempt-{attempt:02d}{path.suffix}")
+
+
+def update_agent_run_path_list(value: str, old_path: str, new_path: str) -> str:
+    paths = [item.strip() for item in value.split(";") if item.strip()]
+    replaced = False
+    updated: list[str] = []
+    for item in paths:
+        if item == old_path:
+            updated.append(new_path)
+            replaced = True
+        else:
+            updated.append(item)
+    if new_path not in updated:
+        updated.append(new_path)
+    if not replaced and old_path:
+        updated = [item for item in updated if item != old_path]
+    return ";".join(dict.fromkeys(updated))
+
+
 def record_thread_dispatch(
     project: Path,
     *,
@@ -11569,13 +11967,77 @@ def record_thread_dispatch(
     registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
     fields, rows = read_csv_rows(registry_path)
     target = thread_registry_target(rows, lane_id=lane_id, work_id=work_id)
+    terminal_reasons: list[str] = []
+    if normalized_bool(target.get("archived")):
+        terminal_reasons.append("archived")
+    if target.get("lifecycle_state", "").strip().lower() in {
+        "archived", "reconciled", "adopted", "closed"
+    }:
+        terminal_reasons.append(target.get("lifecycle_state", "").strip().lower())
+    if target.get("receipt_status", "").strip().lower() in {"received", "rejected"}:
+        terminal_reasons.append(target.get("receipt_status", "").strip().lower())
+    if target.get("reconciliation_status", "").strip().lower() in {
+        "reconciled", "rejected_evidence", "adopted", "archived"
+    }:
+        terminal_reasons.append(target.get("reconciliation_status", "").strip().lower())
+    if target.get("adoption_decision", "").strip().upper() in {
+        "ADOPT", "PARTIAL_ADOPT", "REJECT"
+    }:
+        terminal_reasons.append(target.get("adoption_decision", "").strip().upper())
+    if terminal_reasons:
+        raise ValueError(
+            "cannot redispatch terminal lane; create a new work_id/lane_id "
+            f"(state={','.join(dict.fromkeys(terminal_reasons))})"
+        )
     planned_thread_id = target.get("planned_thread_id", "").strip() or target.get("thread_id", "").strip()
-    prompt_rel = target.get("notes", "").partition("prompt=")[2].strip()
-    prompt_path = project / prompt_rel if prompt_rel else None
-    worker_receipt_rel = target.get("receipt_path", "").strip()
-    worker_receipt_path = project / worker_receipt_rel if worker_receipt_rel else None
-    if not prompt_path or not worker_receipt_path:
-        raise ValueError("registry row lacks worker prompt or receipt envelope path")
+    source_prompt_path, source_worker_receipt_path = dispatch_identity_paths(
+        project, target, work_id=work_id, lane_id=lane_id
+    )
+    dispatch_dir = project / "AD-creative/orchestrator/dispatch_receipts"
+    stem = f"{safe_artifact_suffix(work_id)}_{safe_artifact_suffix(lane_id)}"
+    existing_dispatches = sorted(
+        dispatch_dir.glob(f"thread_dispatch_{stem}_attempt-*.md")
+    )
+    previous_attempt = max(
+        [dispatch_attempt_from_receipt(path) for path in existing_dispatches]
+        + ([1] if target.get("real_thread_id", "").strip() else [0])
+    )
+    if previous_attempt >= 2:
+        raise ValueError(
+            "redispatch attempt limit exceeded; create a new work_id/lane_id"
+        )
+    attempt = previous_attempt + 1 if previous_attempt else 1
+    while (dispatch_dir / f"thread_dispatch_{stem}_attempt-{attempt:02d}.md").exists():
+        attempt += 1
+    prompt_path = attempt_identity_path(source_prompt_path, attempt)
+    worker_receipt_path = attempt_identity_path(source_worker_receipt_path, attempt)
+    if attempt > 1:
+        existing_baseline_rel = target.get("scope_baseline_path", "").strip()
+        existing_baseline_sha = target.get("scope_baseline_sha256", "").strip()
+        if existing_baseline_rel:
+            existing_baseline = contained_thread_scope_baseline_path(
+                project, existing_baseline_rel, "existing thread scope baseline"
+            )
+            if not existing_baseline.is_file() or file_sha256(existing_baseline) != existing_baseline_sha:
+                raise ValueError("thread scope baseline is missing or stale before redispatch")
+        if not source_prompt_path.is_file() or not source_worker_receipt_path.is_file():
+            raise ValueError("redispatch requires the prior worker prompt and receipt envelope")
+        if prompt_path.exists() or worker_receipt_path.exists():
+            raise ValueError("attempt-specific dispatch identity already exists")
+        previous_thread_id = target.get("real_thread_id", "").strip()
+        previous_deadline = target.get("absolute_deadline_at", "").strip()
+        for source_path, copied_path in [
+            (source_prompt_path, prompt_path),
+            (source_worker_receipt_path, worker_receipt_path),
+        ]:
+            copied_text = source_path.read_text(encoding="utf-8")
+            for old_value, new_value in [
+                (previous_thread_id, real_thread_id),
+                (previous_deadline, absolute_deadline_at),
+            ]:
+                if old_value:
+                    copied_text = copied_text.replace(old_value, new_value)
+            write_text(copied_path, copied_text)
     bind_dispatch_identity_file(
         prompt_path,
         real_thread_id=real_thread_id,
@@ -11588,23 +12050,33 @@ def record_thread_dispatch(
         absolute_deadline_at=absolute_deadline_at,
         receipt_envelope=True,
     )
+    prompt_rel = safe_rel(project, prompt_path)
+    worker_receipt_rel = safe_rel(project, worker_receipt_path)
+    old_prompt_rel = safe_rel(project, source_prompt_path)
+    old_worker_receipt_rel = safe_rel(project, source_worker_receipt_path)
+    supersedes_thread_id = target.get("real_thread_id", "").strip() if attempt > 1 else ""
     lane_plan_path = project / "AD-creative/orchestrator/thread_lane_plan.md"
     if lane_plan_path.is_file() and planned_thread_id:
         write_text(
             lane_plan_path,
             lane_plan_path.read_text(encoding="utf-8").replace(planned_thread_id, real_thread_id),
         )
-    receipt_path = project / f"AD-creative/orchestrator/thread_dispatch_{work_id or lane_id}.md"
-    baseline_path = (
-        project
-        / "AD-creative/orchestrator/thread_scope_baselines"
-        / f"{safe_artifact_suffix(work_id)}_{safe_artifact_suffix(lane_id)}.json"
+    receipt_path = dispatch_dir / f"thread_dispatch_{stem}_attempt-{attempt:02d}.md"
+    baseline_rel = (
+        "AD-creative/orchestrator/thread_scope_baselines/"
+        f"{safe_artifact_suffix(work_id)}_{safe_artifact_suffix(lane_id)}"
+        f"{'_attempt-' + format(attempt, '02d') if attempt > 1 else ''}.json"
+    )
+    baseline_path = contained_thread_scope_baseline_path(
+        project, baseline_rel, "dispatch scope baseline"
     )
     baseline_exclusions = [
         "AD-creative/orchestrator/thread_scope_baselines",
         "AD-creative/orchestrator/thread_scope_proofs",
         "AD-creative/orchestrator/thread_registry.csv",
         "AD-creative/orchestrator/agent_runs.csv",
+        "AD-creative/orchestrator/thread_lane_plan.md",
+        f"AD-creative/orchestrator/thread_cleanup_{work_id}.md",
         safe_rel(project, receipt_path),
         safe_rel(project, worker_receipt_path),
         f"AD-creative/orchestrator/thread_convergence_{safe_artifact_suffix(work_id)}.md",
@@ -11613,6 +12085,8 @@ def record_thread_dispatch(
     baseline_files = specialist_scope_manifest(
         project, excluded_roots=baseline_exclusions
     )
+    if baseline_path.exists():
+        raise ValueError(f"dispatch scope baseline already exists: {baseline_path}")
     write_json_object(
         baseline_path,
         {
@@ -11628,6 +12102,8 @@ def record_thread_dispatch(
             "created_at": now_iso(),
         },
     )
+    require_regular_control_file(baseline_path, "dispatch scope baseline")
+    baseline_sha = file_sha256(baseline_path)
     target.update(
         {
             "thread_id": real_thread_id,
@@ -11639,16 +12115,19 @@ def record_thread_dispatch(
             "title_verified_at": title_verified_at,
             "dispatch_receipt_path": safe_rel(project, receipt_path),
             "dispatch_evidence": dispatch_evidence,
+            "notes": f"prompt={prompt_rel}",
+            "receipt_path": worker_receipt_rel,
             "scope_baseline_path": safe_rel(project, baseline_path),
-            "scope_baseline_sha256": file_sha256(baseline_path),
+            "scope_baseline_sha256": baseline_sha,
             "scope_proof_path": "",
             "scope_proof_sha256": "",
-            "rescue_dispatch_receipt_path": "",
-            "rescue_dispatch_evidence": "",
+            "rescue_dispatch_receipt_path": target.get("rescue_dispatch_receipt_path") or "",
+            "rescue_dispatch_evidence": target.get("rescue_dispatch_evidence") or "",
             "lifecycle_state": dispatch_status,
             "updated_at": now_iso(),
             "last_seen_at": now_iso(),
             "convergence_state": "awaiting_first_readback",
+            "reconciliation_status": "pending",
             "last_progress_at": "",
             "absolute_deadline_at": absolute_deadline_at,
             "bounded_extension_used": target.get("bounded_extension_used") or "false",
@@ -11660,9 +12139,22 @@ def record_thread_dispatch(
             "receipt_thread_id": target.get("receipt_thread_id") or "",
             "adoption_decision": target.get("adoption_decision") or "",
             "rejection_reason": target.get("rejection_reason") or "",
+            "schema_state": "current",
+            "legacy_evidence_sha256": "",
+            "legacy_quarantine_reason": "",
+            "legacy_raw_ref": "",
         }
     )
     write_csv_rows(registry_path, fields, rows)
+    agent_fields, agent_rows = read_csv_rows(
+        project / "AD-creative/orchestrator/agent_runs.csv"
+    )
+    agent_match = next(
+        row
+        for row in agent_rows
+        if row.get("lane_id", "").strip() == lane_id
+        and row.get("work_id", "").strip() == work_id
+    )
     update_thread_agent_run(
         project,
         lane_id=lane_id,
@@ -11671,6 +12163,15 @@ def record_thread_dispatch(
             "thread_id": real_thread_id,
             "status": dispatch_status,
             "started_at": title_verified_at,
+            "input_files": update_agent_run_path_list(
+                agent_match.get("input_files", ""), old_prompt_rel, prompt_rel
+            ),
+            "output_files": update_agent_run_path_list(
+                agent_match.get("output_files", ""), old_worker_receipt_rel, worker_receipt_rel
+            ),
+            "receipt_path": worker_receipt_rel,
+            "scope_baseline_path": safe_rel(project, baseline_path),
+            "scope_baseline_sha256": baseline_sha,
             "proof_status": "dispatch_verified",
             "reconciliation_status": "pending",
         },
@@ -11682,10 +12183,16 @@ def record_thread_dispatch(
 lane_id: {lane_id}
 work_id: {work_id}
 real_thread_id: {real_thread_id}
+dispatch_attempt: {attempt}
 dispatch_status: {dispatch_status}
 title_action: {title_action}
 title_verified_at: {title_verified_at}
 absolute_deadline_at: {absolute_deadline_at}
+prompt_path: {prompt_rel}
+worker_receipt_path: {worker_receipt_rel}
+supersedes_thread_id: {supersedes_thread_id}
+scope_baseline_path: {safe_rel(project, baseline_path)}
+scope_baseline_sha256: {baseline_sha}
 
 ## Evidence
 
@@ -11696,6 +12203,7 @@ absolute_deadline_at: {absolute_deadline_at}
 planned:* ids are placeholders only. This receipt records the real Codex Thread id and title readback evidence.
 """,
     )
+    refresh_threadops_projections(project, work_id)
     return {
         "lane_id": lane_id,
         "work_id": work_id,
@@ -11703,6 +12211,9 @@ planned:* ids are placeholders only. This receipt records the real Codex Thread 
         "dispatch_status": dispatch_status,
         "dispatch_receipt_path": safe_rel(project, receipt_path),
         "absolute_deadline_at": absolute_deadline_at,
+        "dispatch_attempt": str(attempt),
+        "scope_baseline_path": safe_rel(project, baseline_path),
+        "scope_baseline_sha256": baseline_sha,
     }
 
 
@@ -11804,12 +12315,8 @@ def record_thread_observation(
             raise ValueError("rescue absolute deadline must be later than observed_at")
         if not evidence.strip():
             raise ValueError("rescue dispatch requires title/readback dispatch evidence")
-        prompt_rel = target.get("notes", "").partition("prompt=")[2].strip()
-        original_prompt = contained_project_path(
-            project, prompt_rel, "rescue source prompt"
-        )
-        original_receipt = contained_project_path(
-            project, target.get("receipt_path", "").strip(), "rescue source receipt"
+        original_prompt, original_receipt = dispatch_identity_paths(
+            project, target, work_id=work_id, lane_id=lane_id
         )
         if not original_prompt.is_file() or not original_receipt.is_file():
             raise ValueError("rescue dispatch requires existing bound prompt and receipt envelope")
@@ -11842,6 +12349,30 @@ def record_thread_observation(
             / "AD-creative/orchestrator"
             / f"thread_rescue_dispatch_{safe_artifact_suffix(work_id)}_{safe_artifact_suffix(lane_id)}.md"
         )
+        source_baseline_path = contained_thread_scope_baseline_path(
+            project,
+            target.get("scope_baseline_path", "").strip(),
+            "thread scope baseline",
+        )
+        if not source_baseline_path.is_file() or file_sha256(source_baseline_path) != target.get(
+            "scope_baseline_sha256", ""
+        ).strip():
+            raise ValueError("thread scope baseline is missing or stale before rescue")
+        require_regular_control_file(source_baseline_path, "thread scope baseline")
+        baseline = read_json_object(source_baseline_path, "thread scope baseline")
+        baseline_path, baseline = derive_thread_scope_baseline(
+            project,
+            source_baseline_path,
+            baseline,
+            suffix=f"_rescue-{safe_artifact_suffix(rescue_thread_id)}",
+            added_exclusions=[
+                safe_rel(project, rescue_prompt),
+                safe_rel(project, rescue_receipt),
+                safe_rel(project, rescue_dispatch_path),
+            ],
+            binding_kind="rescue",
+            binding_ref=rescue_thread_id,
+        )
         write_text(
             rescue_dispatch_path,
             f"""# Thread Rescue Dispatch Receipt
@@ -11854,39 +12385,18 @@ dispatched_at: {observed_at}
 absolute_deadline_at: {new_deadline}
 rescue_prompt_path: {safe_rel(project, rescue_prompt)}
 rescue_receipt_path: {safe_rel(project, rescue_receipt)}
+scope_baseline_path: {safe_rel(project, baseline_path)}
+scope_baseline_sha256: {file_sha256(baseline_path)}
 
 ## Readback Evidence
 
 {evidence}
 """,
         )
-        baseline_path = contained_project_path(
-            project,
-            target.get("scope_baseline_path", "").strip(),
-            "thread scope baseline",
-        )
-        if not baseline_path.is_file() or file_sha256(baseline_path) != target.get(
-            "scope_baseline_sha256", ""
-        ).strip():
-            raise ValueError("thread scope baseline is missing or stale before rescue")
-        baseline = read_json_object(baseline_path, "thread scope baseline")
-        excluded = baseline.get("excluded_roots")
-        if not isinstance(excluded, list):
-            raise ValueError("thread scope baseline exclusions are invalid")
-        baseline["excluded_roots"] = list(
-            dict.fromkeys(
-                [
-                    *[str(item) for item in excluded],
-                    safe_rel(project, rescue_prompt),
-                    safe_rel(project, rescue_receipt),
-                    safe_rel(project, rescue_dispatch_path),
-                ]
-            )
-        )
-        write_json_object(baseline_path, baseline)
         target["rescue_count"] = "1"
         target["rescue_thread_id"] = rescue_thread_id
         target["receipt_path"] = safe_rel(project, rescue_receipt)
+        target["scope_baseline_path"] = safe_rel(project, baseline_path)
         target["scope_baseline_sha256"] = file_sha256(baseline_path)
         target["rescue_dispatch_receipt_path"] = safe_rel(
             project, rescue_dispatch_path
@@ -11907,11 +12417,14 @@ rescue_receipt_path: {safe_rel(project, rescue_receipt)}
             work_id=work_id,
             updates={
                 "receipt_path": target.get("receipt_path", ""),
+                "scope_baseline_path": target.get("scope_baseline_path", ""),
+                "scope_baseline_sha256": target.get("scope_baseline_sha256", ""),
                 "status": "rescue_dispatched",
                 "proof_status": "rescue_dispatch_verified",
                 "reconciliation_status": "rescue_dispatched",
             },
         )
+    refresh_threadops_projections(project, work_id)
     log_path = append_thread_convergence_event(
         project, target, state=state, observed_at=observed_at, evidence=evidence
     )
@@ -12011,7 +12524,7 @@ def validate_thread_receipt_scope_and_semantics(
     if re.search(r"\b(none|not[_ ]?done|did not|failed|pending|todo|tbd)\b", cleanup_action, re.IGNORECASE):
         raise ValueError("thread cleanup_action is not complete")
     baseline_rel = row.get("scope_baseline_path", "").strip()
-    baseline_path = contained_project_path(
+    baseline_path = contained_thread_scope_baseline_path(
         project, baseline_rel, "thread scope baseline"
     )
     if not baseline_path.is_file() or file_sha256(baseline_path) != row.get(
@@ -12275,9 +12788,18 @@ def reconcile_thread_receipt(
         project
         / f"AD-creative/orchestrator/thread_convergence_{safe_artifact_suffix(work_id)}.md"
     )
+    lane_plan_path = project / "AD-creative/orchestrator/thread_lane_plan.md"
+    cleanup_plan_path = project / f"AD-creative/orchestrator/thread_cleanup_{work_id}.md"
     rollback_files = {
         path: path.read_bytes() if path.is_file() else None
-        for path in [registry_path, agent_runs_path, convergence_log_path, proof_path]
+        for path in [
+            registry_path,
+            agent_runs_path,
+            convergence_log_path,
+            proof_path,
+            lane_plan_path,
+            cleanup_plan_path,
+        ]
     }
     write_json_object(proof_path, scope_proof)
 
@@ -12315,6 +12837,7 @@ def reconcile_thread_receipt(
         observed_at=reconciled_at,
         evidence=f"main_adoption_decision={decision}; cleanup_action={cleanup_action}",
     )
+    refresh_threadops_projections(project, work_id)
     post_validation_errors, _ = validate(project)
     if post_validation_errors:
         for path, content in rollback_files.items():
@@ -14729,6 +15252,10 @@ def render_thread_execution_plan(
                 "receipt_thread_id": "",
                 "adoption_decision": "",
                 "rejection_reason": "",
+                "schema_state": "current",
+                "legacy_evidence_sha256": "",
+                "legacy_quarantine_reason": "",
+                "legacy_raw_ref": "",
             }
         )
         update_or_append_csv_row(

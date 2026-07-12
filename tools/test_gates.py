@@ -1276,12 +1276,12 @@ The draft client language is too generic and must become specific, grounded, and
 
         text = (project / "AD-creative/creative/creative_directions.md").read_text(encoding="utf-8")
         assert "3-layer waterproof fabric" in text
-        assert "3 层防水面料" in text
         assert "24-36 year-old city professionals" in text
-        assert "24-36 岁城市职场人" in text
         assert "target audience: Target Audience" not in text
         assert "在24-36 year-old" not in text
         assert "缺少品牌 logo" not in text
+        assert "清晨出发前 / 山路途中" not in text
+        assert "通勤和短途路线" not in text
         assert_valid(project)
 
 

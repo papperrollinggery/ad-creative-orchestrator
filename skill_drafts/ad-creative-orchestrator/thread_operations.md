@@ -121,6 +121,35 @@ absolute deadline
 dispatch receipt
 ```
 
+New dispatch proofs are immutable per lane and attempt under
+`AD-creative/orchestrator/dispatch_receipts/`; a second lane or retry must never
+overwrite a receipt already referenced by a handoff. Human lane/cleanup views are
+host-owned projections of `thread_registry.csv` and are excluded from worker scope
+manifests; refresh them after dispatch, observation, reconciliation, and cleanup.
+
+For a same-lane redispatch, attempt-01 keeps the canonical prompt and receipt
+envelope. Only one bounded redispatch, attempt-02, may copy and rebind
+attempt-specific prompt, receipt, scope-baseline, and dispatch-proof files; the
+registry and agent run point to the current paths. Attempt-03 and later fail
+closed and require a new work/lane. Each dispatch receipt records
+`dispatch_attempt`, `prompt_path`, `worker_receipt_path`, and
+`supersedes_thread_id`. A reconciled, adopted, or archived lane is terminal and
+must fail closed; a new specialist handoff is required for the new attempt.
+
+The dispatch scope baseline and its hash are immutable and are recorded in the
+dispatch receipt. Specialist handoff and rescue binding use copy-on-write derived
+baselines (for example `_handoff-SPH-001.json` or a unique `_rescue-*` path):
+they filter only the added control exclusions from the source `files` snapshot,
+recompute the manifest digest, and move the registry and agent-run pointers (path
+and hash) to the derived path. For schema compatibility, the agent-run summary
+carries the structured `scope_baseline_path=...;scope_baseline_sha256=...` pointer.
+An existing derived target is a fail-closed collision.
+Empty, root-level, broad, non-canonical exclusion roots and malformed source
+manifest keys or digests fail closed before filtering; they never become an empty scope.
+Each derived baseline records `derived_from_baseline_path`,
+`derived_from_baseline_sha256`, `binding_kind`, `binding_ref`, and `derived_at` so
+the source-to-bound provenance is auditable.
+
 `planned:*` ids are placeholders only. Never claim execution from a placeholder, a role label, a read-only review, or a subagent result.
 
 ## Observation and convergence

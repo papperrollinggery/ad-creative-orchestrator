@@ -154,6 +154,10 @@ Freeze new dispatch on thread confusion, wrong-thread behavior, repeated root ca
 
 ## Trigger routing
 
+The route labels below are agent-level routing semantics, not additional CLI
+subcommands. Use the corresponding `adco` command mapping in
+`operator_cli_and_gates.md` when operating through the command line.
+
 Use these routes:
 
 - Start/resume/status only: read project state and report; do not create new creative work.

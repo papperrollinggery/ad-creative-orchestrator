@@ -632,10 +632,11 @@ def normalized_artifact_lifecycle(row: dict[str, str]) -> str:
         "removed": "removed",
         "deleted": "removed",
         "pending": "pending",
+        "planned": "pending",
         "draft": "pending",
         "blocked": "pending",
         "not_run": "pending",
-    }.get(status, "active" if status in {"", "active", "current", "done", "complete", "completed", "approved", "registered", "pass", "passed"} else "legacy_unknown")
+    }.get(status, "active" if status in {"", "active", "current", "done", "complete", "completed", "approved", "registered", "pass", "passed", "internal_review", "ready"} else "legacy_unknown")
 
 
 def canonical_row_sha256(row: dict[str, object]) -> str:
@@ -3370,7 +3371,45 @@ def _validate_strings(project: Path) -> tuple[list[str], dict[str, int]]:
             )
             for row in lane_rows:
                 owner = f"thread_lane_plan {row.get('lane_id', '').strip() or '<missing lane_id>'}"
-                check_threadops_lane_contract(errors, owner, row)
+                work_lane = (
+                    row.get("work_id", "").strip(),
+                    row.get("lane_id", "").strip(),
+                )
+                matching_registry_rows = [
+                    registry_row
+                    for registry_row in current_thread_rows
+                    if (
+                        registry_row.get("work_id", "").strip(),
+                        registry_row.get("lane_id", "").strip(),
+                    )
+                    == work_lane
+                ]
+                if len(matching_registry_rows) != 1:
+                    errors.append(
+                        f"{owner} expected exactly one authoritative thread_registry row; "
+                        f"found {len(matching_registry_rows)}"
+                    )
+                    continue
+                authoritative = matching_registry_rows[0]
+                projection_fields = {
+                    "thread_id": "thread_id",
+                    "lane_run_id": "lane_run_id",
+                    "mode": "mode",
+                    "environment": "environment",
+                    "write_scope": "write_scope",
+                    "receipt_path": "receipt_path",
+                    "receipt_status": "receipt_status",
+                    "reconciliation_status": "reconciliation_status",
+                    "lifecycle_status": "lifecycle_state",
+                }
+                for plan_field, registry_field in projection_fields.items():
+                    if row.get(plan_field, "").strip() != authoritative.get(
+                        registry_field, ""
+                    ).strip():
+                        errors.append(
+                            f"{owner} {plan_field} projection does not match thread_registry"
+                        )
+                check_threadops_lane_contract(errors, owner, authoritative)
 
     if profile_enabled:
         profile_files = {
