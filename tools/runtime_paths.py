@@ -34,3 +34,10 @@ def skill_draft_dir() -> Path:
     if root:
         return root / "skill_drafts/ad-creative-orchestrator"
     return packaged_assets_root() / "skill_drafts/ad-creative-orchestrator"
+
+
+def published_docs_root() -> Path:
+    root = source_root()
+    if root:
+        return root
+    return packaged_assets_root() / "published_docs"

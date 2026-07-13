@@ -22,7 +22,7 @@ evidence_needed:
 ## Candidate Search
 
 ```text
-staff_library: /Users/jinjungao/.claude/agents
+staff_library: <optional local staff-library path>
 search_terms:
 search_scope: filename and frontmatter description only unless a file is selected
 files_scanned:

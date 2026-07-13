@@ -2,7 +2,7 @@
 
 Project-specific role briefs live here.
 
-Use this folder to adapt Agent Agency staff files to the actual project. Do not edit the upstream staff files in `/Users/jinjungao/.claude/agents` for project-specific needs.
+Use this folder to adapt optional Agent Agency staff files to the actual project. Configure the staff-library path locally when one is available; do not edit upstream staff files for project-specific needs.
 
 Each role brief must name:
 

@@ -31,7 +31,7 @@ import xml.etree.ElementTree as ET
 sys.dont_write_bytecode = True
 
 from init_project import agents_policy_status, copy_template
-from runtime_paths import repo_or_module_root, skill_draft_dir, source_root, template_root
+from runtime_paths import published_docs_root, repo_or_module_root, skill_draft_dir, source_root, template_root
 from specialist_schema_validation import (
     specialist_control_plane_errors,
     specialist_generation_authorization_errors,
@@ -53,7 +53,7 @@ REPO_ROOT = repo_or_module_root()
 TEMPLATE_ROOT = template_root()
 SKILL_DRAFT_DIR = skill_draft_dir()
 PACKAGE_NAME = "ad-creative-orchestrator"
-FALLBACK_VERSION = "0.3.1"
+FALLBACK_VERSION = "0.3.2"
 CONTROL_PLANE_SCHEMA_VERSION = "2.0"
 CONTROL_PLANE_SCHEMA_REL = Path("AD-creative/orchestrator/control_plane_schema.json")
 CONTROL_PLANE_MIGRATION_MANIFEST_REL = Path(
@@ -1013,20 +1013,22 @@ def release_status_payload() -> dict[str, object]:
 
 def docs_payload() -> dict[str, object]:
     root = source_root()
+    docs_root = published_docs_root()
     docs: list[dict[str, object]] = []
-    if root:
-        for label, rel_path in [
-            ("readme", "README.md"),
-            ("install", "docs/operating/install.md"),
-            ("adoption_patterns", "docs/operating/adoption_patterns.md"),
-            ("release_plan", "docs/operating/open_source_release_plan.md"),
-            ("first_run_transcript", "docs/assets/first-run-transcript.md"),
-        ]:
-            path = root / rel_path
-            docs.append({"label": label, "path": str(path), "exists": path.exists()})
+    for label, rel_path in [
+        ("readme", "README.md"),
+        ("changelog", "CHANGELOG.md"),
+        ("install", "docs/operating/install.md"),
+        ("adoption_patterns", "docs/operating/adoption_patterns.md"),
+        ("release_plan", "docs/operating/open_source_release_plan.md"),
+        ("first_run_transcript", "docs/assets/first-run-transcript.md"),
+    ]:
+        path = docs_root / rel_path
+        docs.append({"label": label, "path": str(path), "exists": path.exists()})
     return {
         "mode": "source" if root else "installed",
         "source_root": str(root) if root else None,
+        "docs_root": str(docs_root),
         "template_root": str(TEMPLATE_ROOT),
         "skill_draft": str(SKILL_DRAFT_DIR / "SKILL.md"),
         "docs": docs,

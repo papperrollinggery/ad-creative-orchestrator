@@ -193,7 +193,7 @@ or the master explicitly owns reconciliation immediately after
 ## Standard Thread Prompt
 
 ```text
-Repo: /Users/jinjungao/work/ad-creative-orchestrator
+Repo: <repo_root>
 Mode: <execution_worker | read_only_review | research | cold_review>
 Goal: <subgoal>
 Work item: <work_id>

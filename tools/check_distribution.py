@@ -11,6 +11,18 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PUBLISHED_DOC_RELATIVE_PATHS = [
+    Path("README.md"),
+    Path("CHANGELOG.md"),
+    Path("CONTRIBUTING.md"),
+    Path("LICENSE"),
+    Path("ROADMAP.md"),
+    Path("SECURITY.md"),
+]
+for directory in [ROOT / "docs/operating", ROOT / "docs/assets"]:
+    PUBLISHED_DOC_RELATIVE_PATHS.extend(
+        path.relative_to(ROOT) for path in directory.rglob("*") if path.is_file()
+    )
 REQUIRED_PATHS = [
     "ad_creative_operator.py",
     "check_docs_commands.py",
@@ -44,6 +56,9 @@ REQUIRED_PATHS = [
     "adco_resources/contracts/specialist_exchange/v1/handoff.schema.json",
     "adco_resources/contracts/specialist_exchange/v1/receipt.schema.json",
     "adco_resources/contracts/specialist_exchange/v1/adoption.schema.json",
+] + [
+    f"adco_resources/published_docs/{path.as_posix()}"
+    for path in sorted(PUBLISHED_DOC_RELATIVE_PATHS)
 ]
 REQUIRED_ENTRY_POINTS = [
     "adco = ad_creative_operator:main",
@@ -53,7 +68,7 @@ REQUIRED_ENTRY_POINTS = [
 ]
 REQUIRED_PYPROJECT_SNIPPETS = [
     'name = "ad-creative-orchestrator"',
-    'version = "0.3.1"',
+    'version = "0.3.2"',
     'adco = "ad_creative_operator:main"',
     'adco-check = "run_checks:main"',
     'adco-init = "init_project:main"',
@@ -62,6 +77,7 @@ REQUIRED_PYPROJECT_SNIPPETS = [
     '"specialist_schema_validation",',
     '"contracts/specialist_exchange/v1/*.schema.json"',
     '"skill_drafts/ad-creative-orchestrator/**/*"',
+    '"published_docs/**/*"',
 ]
 WHEEL_BUILD_TIMEOUT_SECONDS = 120
 
@@ -159,8 +175,10 @@ def main() -> int:
                     metadata_text = archive.read(metadata_path).decode("utf-8")
                     if "Name: ad-creative-orchestrator" not in metadata_text:
                         issues.append("wheel metadata missing package name")
-                    if "Version: 0.3.1" not in metadata_text:
+                    if "Version: 0.3.2" not in metadata_text:
                         issues.append("wheel metadata missing version")
+                    if "Current Release" not in metadata_text or "v0.3.2" not in metadata_text:
+                        issues.append("wheel metadata embeds stale or incomplete README description")
 
                 if entry_points_path:
                     entry_points_text = archive.read(entry_points_path).decode("utf-8")

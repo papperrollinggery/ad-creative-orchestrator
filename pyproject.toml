@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ad-creative-orchestrator"
-version = "0.3.1"
-description = "Local-first Codex workflow for advertising creative project orchestration."
+version = "0.3.2"
+description = "Local-first Codex control plane for traceable advertising creative projects, versioned deliverables, and client-send readiness."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -14,13 +14,14 @@ authors = [
 ]
 keywords = [
   "advertising",
-  "creative-operations",
   "codex",
   "workflow",
   "local-first",
   "ppt",
-  "image-generation",
-  "quickstart"
+  "client-delivery",
+  "creative-operations",
+  "quickstart",
+  "workflow-orchestration"
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -73,5 +74,6 @@ adco_resources = [
   "templates/project/**/*",
   "skill_drafts/ad-creative-orchestrator/*",
   "skill_drafts/ad-creative-orchestrator/**/*",
+  "published_docs/**/*",
   "contracts/specialist_exchange/v1/*.schema.json"
 ]
