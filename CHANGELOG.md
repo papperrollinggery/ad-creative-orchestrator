@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Make chat-native asset review distinguish illustrative placeholders from real candidates, derive user-visible usability from source, authorization, and channel-fit status, and block misleading placeholder approval paths.
 - Fixed Codex chat delivery so generated ADCO fragments are mounted with the native `::codex-inline-vis` directive instead of being left as invisible local HTML files.
 - Aligned inline surfaces with the host Visualizations design system, added real 736/320 light/dark keyboard and follow-up browser audits, and separated host-visible acceptance from file/browser checks.
 - Added task-based routing across Mermaid, Codex inline Visualizations, Creative Production image Widgets, optional Data Analytics evidence, and fullscreen MCP Apps without turning ADCO into a dashboard.

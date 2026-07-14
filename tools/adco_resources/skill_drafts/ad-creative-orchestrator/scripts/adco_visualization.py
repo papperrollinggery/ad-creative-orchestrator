@@ -54,6 +54,23 @@ ACTION_KINDS = {
 }
 FORBIDDEN_CLAIMS = {"approval", "readiness", "send", "completion", "global-install"}
 LIFECYCLES = {"current", "candidate", "superseded", "stale", "archived", "rejected", "pending"}
+ASSET_CLASSIFICATIONS = {"real-candidate", "illustrative-placeholder"}
+ASSET_SOURCE_STATUSES = {"verified", "pending", "not-applicable"}
+ASSET_AUTHORIZATION_STATUSES = {"confirmed", "pending", "not-applicable"}
+ASSET_CHANNEL_FIT_STATUSES = {"verified", "pending", "not-applicable"}
+ASSET_VISIBLE_VALUES = {
+    "real-candidate": "真实候选素材",
+    "illustrative-placeholder": "演示占位图",
+    "source:verified": "来源已确认",
+    "source:pending": "来源待确认",
+    "source:not-applicable": "不适用",
+    "authorization:confirmed": "授权已确认",
+    "authorization:pending": "授权待确认",
+    "authorization:not-applicable": "不适用",
+    "channel:verified": "渠道适配已检查",
+    "channel:pending": "渠道适配待检查",
+    "channel:not-applicable": "不适用",
+}
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SHA_RE = re.compile(r"^[a-f0-9]{64}$")
 SOURCE_RE = re.compile(r"^([a-z0-9]+(?:-[a-z0-9]+)*)#(/.*)$")
@@ -215,6 +232,8 @@ def validate_spec(document: dict[str, Any]) -> list[str]:
             elif not _valid_source_ref(evidence.get("source_ref"), artifact_ids):
                 errors.append(f"quantitative evidence {index} requires a reviewed source binding")
     previews = presentation.get("previews", [])
+    asset_review_artifact: dict[str, Any] | None = None
+    asset_review_usable = False
     if not isinstance(previews, list) or len(previews) > 4:
         errors.append("previews must be an optional list with at most four items")
     else:
@@ -232,6 +251,90 @@ def validate_spec(document: dict[str, Any]) -> list[str]:
                 for annotation in annotations:
                     if not isinstance(annotation, dict) or not _is_nonempty(annotation.get("region")) or not _is_nonempty(annotation.get("note")):
                         errors.append(f"preview {index} annotations require region and note")
+
+    if kind == "asset-review" and context == "standalone_chat" and controller.get("user_facing") is True:
+        if len(previews) != 1:
+            errors.append("asset-review requires exactly one inspected preview")
+        artifact_by_id = {
+            item.get("artifact_id"): item for item in artifacts if isinstance(item, dict)
+        }
+        if len(previews) == 1 and isinstance(previews[0], dict):
+            candidate = artifact_by_id.get(previews[0].get("artifact_id"))
+            if isinstance(candidate, dict):
+                asset_review_artifact = candidate
+        if asset_review_artifact is not None:
+            classification = asset_review_artifact.get("review_classification")
+            source_status = asset_review_artifact.get("source_status")
+            authorization_status = asset_review_artifact.get("authorization_status")
+            channel_fit_status = asset_review_artifact.get("channel_fit_status")
+            if classification not in ASSET_CLASSIFICATIONS:
+                errors.append("asset-review artifact requires review_classification")
+            if source_status not in ASSET_SOURCE_STATUSES:
+                errors.append("asset-review artifact requires source_status")
+            if authorization_status not in ASSET_AUTHORIZATION_STATUSES:
+                errors.append("asset-review artifact requires authorization_status")
+            if channel_fit_status not in ASSET_CHANNEL_FIT_STATUSES:
+                errors.append("asset-review artifact requires channel_fit_status")
+
+            if classification == "illustrative-placeholder":
+                if any(status != "not-applicable" for status in (source_status, authorization_status, channel_fit_status)):
+                    errors.append("illustrative placeholder statuses must be not-applicable")
+            elif classification == "real-candidate" and any(
+                status == "not-applicable" for status in (source_status, authorization_status, channel_fit_status)
+            ):
+                errors.append("real candidate statuses cannot be not-applicable")
+
+            evidence_requirements = (
+                ("source_status", source_status, "verified", "source_evidence_ref"),
+                ("authorization_status", authorization_status, "confirmed", "authorization_evidence_ref"),
+                ("channel_fit_status", channel_fit_status, "verified", "channel_fit_evidence_ref"),
+            )
+            evidence_ready = True
+            for status_name, status, ready_status, ref_name in evidence_requirements:
+                ref = asset_review_artifact.get(ref_name)
+                ref_match = SOURCE_RE.fullmatch(str(ref or ""))
+                ref_artifact = artifact_by_id.get(ref_match.group(1)) if ref_match else None
+                valid_external_ref = bool(
+                    _valid_source_ref(ref, artifact_ids)
+                    and ref_match
+                    and ref_match.group(1) != asset_review_artifact.get("artifact_id")
+                    and isinstance(ref_artifact, dict)
+                    and ref_artifact.get("lifecycle") == "current"
+                    and ref_artifact.get("version") == current_version
+                )
+                if status == ready_status:
+                    if not valid_external_ref:
+                        errors.append(f"asset-review {status_name} requires external evidence binding")
+                        evidence_ready = False
+                elif ref is not None:
+                    errors.append(f"asset-review {ref_name} must be null until its status is confirmed")
+                    evidence_ready = False
+
+            field_values = {
+                item.get("id"): str(item.get("value", ""))
+                for item in fields if isinstance(item, dict)
+            }
+            expected = {
+                "asset-status": ASSET_VISIBLE_VALUES.get(str(classification)),
+                "source-status": ASSET_VISIBLE_VALUES.get(f"source:{source_status}"),
+                "authorization-status": ASSET_VISIBLE_VALUES.get(f"authorization:{authorization_status}"),
+                "channel-fit": ASSET_VISIBLE_VALUES.get(f"channel:{channel_fit_status}"),
+            }
+            for field_id, expected_value in expected.items():
+                if expected_value is not None and field_values.get(field_id) != expected_value:
+                    errors.append(f"asset-review field {field_id} must match structured asset status")
+
+            usable = (
+                classification == "real-candidate"
+                and source_status == "verified"
+                and authorization_status == "confirmed"
+                and channel_fit_status == "verified"
+                and evidence_ready
+            )
+            asset_review_usable = usable
+            expected_availability = "可进入使用确认" if usable else "暂不能确认使用"
+            if field_values.get("availability") != expected_availability:
+                errors.append("asset-review field availability must match source, authorization and channel status")
 
     interactions = document.get("interactions") if isinstance(document.get("interactions"), dict) else {}
     actions = interactions.get("actions") if isinstance(interactions.get("actions"), list) else []
@@ -251,6 +354,15 @@ def validate_spec(document: dict[str, Any]) -> list[str]:
             errors.append(f"action {index} attempts a forbidden authoritative operation")
     if kind == "blocking-decision" and not 2 <= len(options) <= 3:
         errors.append("blocking-decision requires two or three explicit options")
+    if (
+        kind == "asset-review"
+        and context == "standalone_chat"
+        and controller.get("user_facing") is True
+        and asset_review_artifact is not None
+        and not asset_review_usable
+        and any(action.get("kind") == "submit-selection" for action in actions if isinstance(action, dict))
+    ):
+        errors.append("asset without complete evidence cannot offer a use-selection action")
 
     boundary = document.get("write_boundary") if isinstance(document.get("write_boundary"), dict) else {}
     if boundary.get("component_writes_authoritative_state") is not False:
@@ -398,6 +510,7 @@ def render_previews(document: dict[str, Any], verified_artifacts: dict[str, Path
     if not previews:
         return ""
     figures = []
+    artifact_by_id = {item["artifact_id"]: item for item in document["source_truth"]["artifacts"]}
     for preview in previews:
         path = verified_artifacts.get(preview["artifact_id"])
         if path is None:
@@ -407,8 +520,15 @@ def render_previews(document: dict[str, Any], verified_artifacts: dict[str, Path
             for item in preview["annotations"]
         )
         annotation_html = '<ul class="adco-annotations">' + notes + "</ul>" if notes else ""
+        artifact = artifact_by_id[preview["artifact_id"]]
+        classification_label = ASSET_VISIBLE_VALUES.get(str(artifact.get("review_classification")))
+        classification_html = (
+            f'<span class="viz-badge adco-preview-status">{escape(classification_label)}</span>'
+            if classification_label else ""
+        )
         figures.append(
             '<figure class="adco-preview">'
+            f'{classification_html}'
             f'<img src="{image_data_uri(path)}" alt="{escape(preview["alt"])}">'
             f'<figcaption><strong>{escape(preview["label"])}</strong> · {escape(preview["caption"])}</figcaption>'
             f'{annotation_html}'
@@ -464,6 +584,22 @@ def render_fragment(document: dict[str, Any], verified_artifacts: dict[str, Path
     if recommendation:
         recommended = next(item for item in document["presentation"]["options"] if item["id"] == recommendation["option_id"])
         recommendation_text = f'{recommended["label"]}：{recommendation["reason"]}'
+    elif document["surface"]["kind"] == "asset-review":
+        preview_ids = {item["artifact_id"] for item in document["presentation"].get("previews", [])}
+        asset = next(
+            (item for item in document["source_truth"]["artifacts"] if item["artifact_id"] in preview_ids),
+            {},
+        )
+        if asset.get("review_classification") == "illustrative-placeholder":
+            recommendation_text = "先取得真实候选素材"
+        elif (
+            asset.get("source_status") == "verified"
+            and asset.get("authorization_status") == "confirmed"
+            and asset.get("channel_fit_status") == "verified"
+        ):
+            recommendation_text = "条件齐全，等待你的选择"
+        else:
+            recommendation_text = "先补齐待确认条件"
     client_payload = {
         "presentation": {
             "options": [
@@ -763,6 +899,65 @@ def self_test() -> list[str]:
     _, physical_errors = verify_physical_artifacts(physical, SKILL_ROOT)
     if not any("physical SHA-256 mismatch" in item for item in physical_errors):
         failures.append("physical artifact hash mismatch was not rejected")
+    real_candidate = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+    real_artifact = real_candidate["source_truth"]["artifacts"][0]
+    real_artifact.update({
+        "review_classification": "real-candidate",
+        "source_status": "verified",
+        "authorization_status": "confirmed",
+        "channel_fit_status": "verified",
+        "source_evidence_ref": "source-record#/row/source",
+        "authorization_evidence_ref": "authorization-record#/row/authorization",
+        "channel_fit_evidence_ref": "channel-record#/row/channel-fit",
+    })
+    support_files = (
+        ("source-record", "fixtures/chat-visualization/manifest.json"),
+        ("authorization-record", "fixtures/chat-visualization/valid-current-status.json"),
+        ("channel-record", "fixtures/chat-visualization/valid-feedback-impact.json"),
+    )
+    for artifact_id, relative_path in support_files:
+        physical_path = SKILL_ROOT / relative_path
+        real_candidate["source_truth"]["artifacts"].append({
+            "artifact_id": artifact_id,
+            "path": relative_path,
+            "version": "v12",
+            "sha256": hashlib.sha256(physical_path.read_bytes()).hexdigest(),
+            "lifecycle": "current",
+        })
+    real_values = {
+        "asset-status": "真实候选素材",
+        "source-status": "来源已确认",
+        "authorization-status": "授权已确认",
+        "channel-fit": "渠道适配已检查",
+        "availability": "可进入使用确认",
+    }
+    for field in real_candidate["presentation"]["fields"]:
+        field["value"] = real_values[field["id"]]
+    real_errors = validate_spec(real_candidate)
+    if real_errors:
+        failures.append(f"fully verified real candidate was rejected: {real_errors}")
+    optimistic_candidate = copy.deepcopy(real_candidate)
+    optimistic_asset = optimistic_candidate["source_truth"]["artifacts"][0]
+    optimistic_asset["authorization_status"] = "pending"
+    optimistic_asset["authorization_evidence_ref"] = None
+    for field in optimistic_candidate["presentation"]["fields"]:
+        if field["id"] == "authorization-status":
+            field["value"] = "授权待确认"
+        elif field["id"] == "availability":
+            field["value"] = "暂不能确认使用"
+    optimistic_candidate["interactions"]["actions"][0].update({"kind": "submit-selection", "label": "确认使用"})
+    if not any("cannot offer a use-selection action" in item for item in validate_spec(optimistic_candidate)):
+        failures.append("real candidate with pending authorization offered a use-selection action")
+    placeholder_source = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+    placeholder_asset = placeholder_source["source_truth"]["artifacts"][0]
+    placeholder_asset["source_status"] = "verified"
+    placeholder_asset["source_evidence_ref"] = "source-record#/row/source"
+    placeholder_source["source_truth"]["artifacts"].append(copy.deepcopy(real_candidate["source_truth"]["artifacts"][1]))
+    for field in placeholder_source["presentation"]["fields"]:
+        if field["id"] == "source-status":
+            field["value"] = "来源已确认"
+    if not any("placeholder statuses must be not-applicable" in item for item in validate_spec(placeholder_source)):
+        failures.append("illustrative placeholder claimed a verified formal source")
     ppt_document = load_json(FIXTURE_ROOT / "valid-ppt-slide-review.json")
     _, ppt_physical_errors = verify_physical_artifacts(ppt_document, SKILL_ROOT)
     if ppt_physical_errors:
@@ -770,6 +965,12 @@ def self_test() -> list[str]:
     schema = load_json(SCHEMA_PATH)
     if schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
         failures.append("schema is not draft 2020-12")
+    if not schema.get("allOf"):
+        failures.append("schema lacks asset-review conditional requirements")
+    artifact_schema = schema.get("$defs", {}).get("artifact", {})
+    for key in ("source_evidence_ref", "authorization_evidence_ref", "channel_fit_evidence_ref"):
+        if key not in artifact_schema.get("properties", {}):
+            failures.append(f"schema lacks asset evidence field: {key}")
     writeback_schema = load_json(WRITEBACK_SCHEMA_PATH)
     if writeback_schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
         failures.append("writeback schema is not draft 2020-12")

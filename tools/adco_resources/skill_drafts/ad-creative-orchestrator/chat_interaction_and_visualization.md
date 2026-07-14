@@ -80,6 +80,12 @@ Image review can be completed inside the conversation when the target and feedba
 4. Let local selection, zoom, compare, or draft annotation remain presentation state.
 5. Submit one readable feedback message to the conversation. ADCO revalidates the target before recording or changing anything.
 
+Before rendering `asset-review`, classify the inspected item as either `real-candidate` or `illustrative-placeholder`. This is structured source metadata, not a visual guess.
+
+- A real candidate must separately state whether its source, usage authorization, and target-channel fit are confirmed. Only a real candidate with all three confirmed may show `可进入使用确认`; the user still decides whether to use it.
+- An illustrative placeholder must be visibly labeled `演示占位图`, show `暂不能确认使用`, and offer a route to provide or locate a real candidate. It must never inherit `画面检查通过`, authorization, channel-readiness, or use-selection language merely because its local file and hash are valid.
+- Physical file verification proves which bytes were inspected. It does not turn a generated fixture, mockup, contact sheet, or placeholder into a licensed production asset.
+
 For 3-8 visual alternatives, prefer a native image carousel or Creative Production mood-board Widget instead of shrinking every image into one inline card. For a long deck, large mood board, before/after slider, pixel-level annotation canvas, or repeated revision session, use fullscreen. File preview remains useful for opening the exact source at page/slide level, but it complements rather than replaces the ADCO feedback and version loop.
 
 ## Smallest useful surface
@@ -189,6 +195,8 @@ For `asset-review` and `ppt-slide-review`:
 5. Bind every finding to slide/page plus region or object description, severity, evidence, proposed change, and affected requirement.
 6. A visual annotation is staged feedback only.
 7. On submit, register it through the normal source-event and feedback path. Material client-visible changes create a new version and invalidate stale package/Gate bindings.
+
+For `asset-review`, the preview artifact also carries `review_classification`, `source_status`, `authorization_status`, and `channel_fit_status`. A confirmed status must bind a separate current source, authorization, or channel-fit record through `source_evidence_ref`, `authorization_evidence_ref`, or `channel_fit_evidence_ref`; the preview file cannot certify itself. The visible fields `asset-status`, `source-status`, `authorization-status`, `channel-fit`, and `availability` must be derived from those structured values. Never hand-write a more optimistic frontstage status, and never offer `submit-selection` until every required status and evidence binding is complete.
 
 If the preview is missing or stale, render the missing evidence and safe next action instead of a fake placeholder image.
 

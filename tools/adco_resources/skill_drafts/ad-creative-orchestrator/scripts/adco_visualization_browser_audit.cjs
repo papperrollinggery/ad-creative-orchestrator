@@ -68,6 +68,17 @@ const cases = [
       if (!(await images.nth(index).getAttribute('alt'))) failures.push(`${item.name}: preview image ${index + 1} lacks alt text`);
     }
 
+    const previewStatus = root.locator('.adco-preview-status');
+    if (await previewStatus.count()) {
+      const statusText = (await previewStatus.first().innerText()).trim();
+      const visibleText = await root.innerText();
+      const actionLabels = await root.locator('[data-adco-action]').allInnerTexts();
+      if (statusText === '演示占位图') {
+        if (!visibleText.includes('暂不能确认使用')) failures.push(`${item.name}: placeholder lacks fail-closed availability`);
+        if (actionLabels.some((label) => label.trim() === '确认使用')) failures.push(`${item.name}: placeholder exposes a use-confirmation action`);
+      }
+    }
+
     const choices = root.locator('[data-adco-option]');
     let selectedLabel = null;
     if (await choices.count()) {

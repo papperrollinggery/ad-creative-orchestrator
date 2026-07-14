@@ -23,6 +23,7 @@
     {"file": "invalid-authoritative-write.json", "expected_error": "must not write authoritative state"},
     {"file": "invalid-source-binding.json", "expected_error": "invalid source binding"},
     {"file": "invalid-fallback-incomplete.json", "expected_error": "fallback table must be complete"},
-    {"file": "invalid-provider-visible.json", "expected_error": "provider-hidden"}
+    {"file": "invalid-provider-visible.json", "expected_error": "provider-hidden"},
+    {"file": "invalid-placeholder-usable.json", "expected_error": "availability must match"}
   ]
 }

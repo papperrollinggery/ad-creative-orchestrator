@@ -1,5 +1,5 @@
 {
-  "registry_version": "1.2",
+  "registry_version": "1.3",
   "spec_contract": "adco.chat-visualization@1.0",
   "principle": "Use the smallest chat-native review surface that makes one ADCO decision clearer; never create a dashboard.",
   "capability_routes": {
@@ -73,7 +73,7 @@
       "kind": "asset-review",
       "phases": ["P3", "P5", "P6", "P7"],
       "purpose": "Inspect asset role, source, authorization, QA and exact-current bindings.",
-      "minimum_visible_fields": ["asset", "intended-use", "can-it-be-used", "inspection-result", "what-it-affects"],
+      "minimum_visible_fields": ["asset-type", "source-state", "authorization-state", "channel-fit", "can-it-be-used", "inspection-result", "what-it-affects"],
       "renderer": "codex-inline-vis",
       "upgrade_renderer": "creative-production-moodboard-widget",
       "upgrade_when": "the user is choosing or comparing multiple real visual assets",

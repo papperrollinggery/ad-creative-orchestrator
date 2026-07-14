@@ -201,6 +201,45 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "execution_context": {"const": "standalone_chat"},
+          "controller": {"properties": {"user_facing": {"const": true}}},
+          "surface": {"properties": {"kind": {"const": "asset-review"}}}
+        }
+      },
+      "then": {
+        "properties": {
+          "source_truth": {
+            "properties": {
+              "artifacts": {
+                "contains": {
+                  "required": ["review_classification", "source_status", "authorization_status", "channel_fit_status", "source_evidence_ref", "authorization_evidence_ref", "channel_fit_evidence_ref"]
+                },
+                "minContains": 1
+              }
+            }
+          },
+          "presentation": {
+            "properties": {
+              "previews": {"minItems": 1, "maxItems": 1},
+              "fields": {
+                "allOf": [
+                  {"contains": {"properties": {"id": {"const": "asset-status"}}, "required": ["id"]}},
+                  {"contains": {"properties": {"id": {"const": "source-status"}}, "required": ["id"]}},
+                  {"contains": {"properties": {"id": {"const": "authorization-status"}}, "required": ["id"]}},
+                  {"contains": {"properties": {"id": {"const": "channel-fit"}}, "required": ["id"]}},
+                  {"contains": {"properties": {"id": {"const": "availability"}}, "required": ["id"]}}
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "artifact": {
       "type": "object",
@@ -211,7 +250,14 @@
         "path": {"type": "string", "minLength": 1},
         "version": {"type": "string", "minLength": 1},
         "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-        "lifecycle": {"enum": ["current", "candidate", "superseded", "stale", "archived", "rejected", "pending"]}
+        "lifecycle": {"enum": ["current", "candidate", "superseded", "stale", "archived", "rejected", "pending"]},
+        "review_classification": {"enum": ["real-candidate", "illustrative-placeholder"]},
+        "source_status": {"enum": ["verified", "pending", "not-applicable"]},
+        "authorization_status": {"enum": ["confirmed", "pending", "not-applicable"]},
+        "channel_fit_status": {"enum": ["verified", "pending", "not-applicable"]},
+        "source_evidence_ref": {"type": ["string", "null"]},
+        "authorization_evidence_ref": {"type": ["string", "null"]},
+        "channel_fit_evidence_ref": {"type": ["string", "null"]}
       }
     },
     "field": {

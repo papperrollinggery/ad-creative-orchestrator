@@ -1,0 +1,13 @@
+{
+  "contract": "adco.chat-visualization@1.0",
+  "view_id": "invalid-placeholder-usable",
+  "execution_context": "standalone_chat",
+  "controller": {"surface_owner": "ad-creative-orchestrator", "user_facing": true},
+  "phase": "P5",
+  "surface": {"kind": "asset-review", "title": "主视觉素材复核", "summary": "当前画面用于界面演示。", "question": "是否继续寻找真实素材？"},
+  "source_truth": {"project_id": "campaign-summer", "current_version": "v12", "artifacts": [{"artifact_id": "hero-visual", "path": "fixtures/chat-visualization/hero-asset-preview.svg", "version": "v12", "sha256": "35edc7bd46c66f1a868a7a022e1fcf42ba31bfde7b5644e32b45ee15829bcb8b", "lifecycle": "current", "review_classification": "illustrative-placeholder", "source_status": "not-applicable", "authorization_status": "not-applicable", "channel_fit_status": "not-applicable", "source_evidence_ref": null, "authorization_evidence_ref": null, "channel_fit_evidence_ref": null}]},
+  "presentation": {"fields": [{"id": "asset-status", "label": "素材类型", "value": "演示占位图", "provenance": "source-bound", "source_ref": "hero-visual#/review_classification"}, {"id": "source-status", "label": "正式来源", "value": "不适用", "provenance": "source-bound", "source_ref": "hero-visual#/source_status"}, {"id": "authorization-status", "label": "使用授权", "value": "不适用", "provenance": "source-bound", "source_ref": "hero-visual#/authorization_status"}, {"id": "channel-fit", "label": "渠道适配", "value": "不适用", "provenance": "source-bound", "source_ref": "hero-visual#/channel_fit_status"}, {"id": "availability", "label": "当前能否使用", "value": "可进入使用确认", "provenance": "source-bound", "source_ref": "hero-visual#/availability"}], "options": [], "recommendation": null, "downstream_effects": [{"phase": "P3", "effect": "取得真实候选素材后重新检查"}], "previews": [{"artifact_id": "hero-visual", "label": "界面演示画面", "alt": "蓝色渐变演示构图。", "caption": "仅用于展示审阅方式。", "annotations": []}]},
+  "interactions": {"local_state": ["focused-item"], "actions": [{"id": "find-real-asset", "label": "寻找真实素材", "kind": "request-revision", "target_gate": "asset-authorization-gate", "conversation_intent": "请寻找真实候选素材。"}]},
+  "write_boundary": {"component_writes_authoritative_state": false, "conversation_intent_only": true, "write_owner": "ad-creative-orchestrator", "revalidation_command": "adco validate <project>", "forbidden_claims": ["approval", "readiness", "send", "completion", "global-install"]},
+  "fallback": {"summary": "当前画面仅用于演示。", "table": {"headers": ["素材", "状态"], "rows": [["演示图", "待替换"]]}, "mermaid": "flowchart LR\n  A[演示图] --> B[真实候选]", "decision_prompt": "是否继续寻找真实素材？"}
+}

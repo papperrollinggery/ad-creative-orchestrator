@@ -27,6 +27,8 @@ The integration upgrades the existing Skill. It does not introduce a new product
 
 Visualizations is the default compact interaction layer. Creative Production is preferred for image-led selection/review. Data Analytics is reserved for real quantitative evidence; neither is a universal card renderer.
 
+For asset review, physical path and hash verification only prove which bytes were inspected. The visualization must also classify the item as a `real-candidate` or `illustrative-placeholder`. Placeholders are visibly labeled and cannot offer a use-confirmation action. A real candidate reaches `可进入使用确认` only after its source, usage authorization, and target-channel fit are all confirmed and each confirmed status binds a separate current evidence record; the preview cannot certify itself.
+
 ## ADCO surface ladder
 
 | Need | Use first | Escalate only when |
