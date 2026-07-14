@@ -2,7 +2,7 @@
 
 ## Supported Scope
 
-This project is a local-first advertising creative workflow. It should not require uploading client files to external systems.
+This project is a local-first advertising creative workflow. Core project state stays on disk; provider-facing generation and external uploads require explicit approval.
 
 ## Reportable Issues
 
@@ -25,4 +25,6 @@ Report issues that could cause:
 
 ## Disclosure
 
-Open an issue or contact the maintainers privately when the issue involves client confidentiality or credential exposure.
+For vulnerabilities or anything involving client confidentiality or credential exposure, use [GitHub private vulnerability reporting](https://github.com/papperrollinggery/ad-creative-orchestrator/security/advisories/new). Do not open a public issue.
+
+Use a public issue only for non-sensitive bugs that do not expose client data, credentials, private paths, or exploit details.
