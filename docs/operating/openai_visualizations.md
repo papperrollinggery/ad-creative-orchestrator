@@ -27,13 +27,23 @@ The integration upgrades the existing Skill. It does not introduce a new product
 
 Visualizations is the default compact interaction layer. Creative Production is preferred for image-led selection/review. Data Analytics is reserved for real quantitative evidence; neither is a universal card renderer.
 
-For asset review, physical path and hash verification only prove which bytes were inspected. The visualization must also classify the item as a `real-candidate` or `illustrative-placeholder`. Placeholders are visibly labeled and cannot offer a use-confirmation action. A real candidate reaches `可进入使用确认` only after its source, usage authorization, and target-channel fit are all confirmed and each confirmed status binds a separate current evidence record; the preview cannot certify itself.
+For asset review, physical path and hash verification only prove which bytes were inspected. The visualization must also classify the item as a `real-candidate` or `illustrative-placeholder`. Placeholders are visibly labeled and cannot offer a use-confirmation action. A real candidate reaches `可进入使用确认` only after its source, usage authorization, and every named target-channel fit are confirmed against the same current bytes; the preview and its companion JSON cannot certify themselves.
+
+ADCO's asset surface is deliberately advertising-specific. It starts with the image's job in the proposal, then shows customer moment, product proof, and brand memory; region findings are marked as `保留`, `调整`, or `待真实素材复查`; named target formats show whether the composition can continue, needs reframing, or must be checked on the real candidate. Source, authorization, and usability appear afterward as usage conditions. The primary action returns creative intent such as “keep this composition principle and replace the placeholder,” not a generic approve/reject click.
+
+The asset contract has two deliberately different trust paths:
+
+- `fixture-placeholder` is only for a visibly illustrative fixture. It may preserve a composition principle, but cannot preserve a person, product, emotion, packaging claim, crop, or usability claim.
+- `adco-control-plane` is required for a real candidate. The renderer must match project/version and artifact identity across `project.yml`, `current_truth.md`, `version_map.csv`, `artifact_index.csv`, `source_events.csv`, `asset_authorizations.csv`, and the exact-asset channel Gate result. Authorization confirmation IDs must resolve to matching high-trust decision rows; a `user_confirmation:` or `client_confirmation:` prefix is not sufficient. Creative lenses and placements resolve JSON Pointers and must exactly match their displayed values.
+
+Asset controls expose only three review capabilities: creative revision, creative recheck, and eligible use selection. Any action text that requests delivery, sending, sharing, publishing, uploading, release, handoff, or another external operation is rejected in either action position.
 
 ## ADCO surface ladder
 
 | Need | Use first | Escalate only when |
 | --- | --- | --- |
-| One image or slide review | inline preview with region findings and one feedback action | annotations or cross-page context no longer fit legibly |
+| One key visual | ADCO creative brief + annotated preview + target-format frames + one creative action | multiple real routes must be compared or annotations no longer fit legibly |
+| One slide | inline preview with region findings and one feedback action | cross-page context no longer fits legibly |
 | 3-8 image-led routes | Creative Production Widget or image carousel | the collection becomes large, hierarchical, or repeatedly filtered |
 | Large deck, storyboard, mood board, or annotation canvas | fullscreen MCP App / Widget | inline review cannot finish the task |
 | Real observed curve | Data Analytics chart or focused inline SVG | assumptions must be adjustable or server tools must be called repeatedly |
@@ -89,6 +99,7 @@ Selection and annotation remain presentation state until submitted as conversati
 - no external network or untrusted iframe;
 - HTML and embedded JSON escaping;
 - complete fallback with the same stage, evidence, decision, effect, and next action.
+- rendered fragment below 2 MB; oversized sources use a registered, same-version preview derivative rather than an untracked thumbnail.
 
 ## Release acceptance
 
@@ -97,7 +108,7 @@ The upgrade is releasable only when:
 1. the schema, registry, renderer, writeback validator, positive fixtures, and negative fixtures pass;
 2. a real fragment is generated in the active thread visualization directory, wrapped with the bundled official renderer, and audited at 736 px light plus 320 px dark;
 3. the current Codex conversation visibly mounts `::codex-inline-vis{file="<title>.html"}` and a primary action sends one readable follow-up back to the conversation;
-4. stale source, mismatched hash, action overflow, authority escalation, unsafe path, hostile text, and incomplete fallback are rejected;
+4. stale source, mismatched hash/value/pointer, self-signed authorization, wrong-asset channel evidence, unsafe or generic actions, action overflow, authority escalation, unsafe path, hostile text, oversized fragments, and incomplete fallback are rejected;
 5. source and packaged Skill trees match;
 6. the globally installed Skill tree matches the source tree;
 7. existing ADCO tests and distribution checks pass;

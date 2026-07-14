@@ -24,7 +24,6 @@ const cases = [
       colorScheme: item.colorScheme,
       reducedMotion: 'reduce',
     });
-    const followUps = [];
     await page.addInitScript(() => {
       window.__adcoFollowUps = [];
       window.openai = {
@@ -73,6 +72,32 @@ const cases = [
       const statusText = (await previewStatus.first().innerText()).trim();
       const visibleText = await root.innerText();
       const actionLabels = await root.locator('[data-adco-action]').allInnerTexts();
+      if (await root.locator('.adco-creative-brief').count() !== 1) {
+        failures.push(`${item.name}: asset review lacks ADCO creative brief`);
+      }
+      if (await root.locator('.adco-creative-lens').count() !== 3) {
+        failures.push(`${item.name}: asset review lacks customer/product/brand reading`);
+      }
+      if (!visibleText.includes('消费者时刻') || !visibleText.includes('产品证明') || !visibleText.includes('品牌记忆')) {
+        failures.push(`${item.name}: ADCO creative lenses are not visible`);
+      }
+      if (await root.locator('.adco-channel-card').count() < 1) {
+        failures.push(`${item.name}: asset review lacks channel placement plan`);
+      }
+      if (await root.locator('[data-adco-finding]').count() < 1) {
+        failures.push(`${item.name}: asset review lacks visible region findings`);
+      }
+      const hotspots = root.locator('[data-adco-hotspot]');
+      if (await hotspots.count()) {
+        await hotspots.first().focus();
+        await page.keyboard.press('Enter');
+        if (!(await root.locator('[data-adco-finding="1"]').evaluate((node) => node.classList.contains('is-active')))) {
+          failures.push(`${item.name}: image hotspot did not focus its creative finding`);
+        }
+        if (await hotspots.first().getAttribute('aria-pressed') !== 'true') {
+          failures.push(`${item.name}: image hotspot lacks pressed selection semantics`);
+        }
+      }
       if (statusText === '演示占位图') {
         if (!visibleText.includes('暂不能确认使用')) failures.push(`${item.name}: placeholder lacks fail-closed availability`);
         if (actionLabels.some((label) => label.trim() === '确认使用')) failures.push(`${item.name}: placeholder exposes a use-confirmation action`);
@@ -94,11 +119,26 @@ const cases = [
     }
 
     const actions = root.locator('[data-adco-action]');
-    if (await actions.count()) {
-      await actions.first().click();
-      followUps.push(...await frame.evaluate(() => window.__adcoFollowUps));
-      if (followUps.length !== 1) failures.push(`${item.name}: expected one follow-up message`);
-      if (selectedLabel && !followUps[0]?.prompt.includes(selectedLabel)) {
+    for (let actionIndex = 0; actionIndex < await actions.count(); actionIndex += 1) {
+      const actionLabel = (await actions.nth(actionIndex).innerText()).trim();
+      await actions.nth(actionIndex).click();
+      const messages = await frame.evaluate(() => window.__adcoFollowUps);
+      if (messages.length !== actionIndex + 1) {
+        failures.push(`${item.name}: action ${actionIndex + 1} did not produce exactly one follow-up`);
+        continue;
+      }
+      const message = messages[messages.length - 1];
+      if (message.title !== actionLabel) failures.push(`${item.name}: action ${actionIndex + 1} follow-up title mismatch`);
+      if (!message.prompt.includes('请先确认我看到的是最新内容')) {
+        failures.push(`${item.name}: action ${actionIndex + 1} lacks latest-state recheck`);
+      }
+      if (!message.prompt.includes('不代表对外发送或项目完成')) {
+        failures.push(`${item.name}: action ${actionIndex + 1} lacks non-authority boundary`);
+      }
+      if (await previewStatus.count() && !message.prompt.includes('本次请重点检查：')) {
+        failures.push(`${item.name}: asset action ${actionIndex + 1} lacks ADCO review focus`);
+      }
+      if (selectedLabel && !message.prompt.includes(selectedLabel)) {
         failures.push(`${item.name}: follow-up did not include the selected value`);
       }
     }

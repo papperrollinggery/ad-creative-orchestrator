@@ -86,6 +86,21 @@ Before rendering `asset-review`, classify the inspected item as either `real-can
 - An illustrative placeholder must be visibly labeled `演示占位图`, show `暂不能确认使用`, and offer a route to provide or locate a real candidate. It must never inherit `画面检查通过`, authorization, channel-readiness, or use-selection language merely because its local file and hash are valid.
 - Physical file verification proves which bytes were inspected. It does not turn a generated fixture, mockup, contact sheet, or placeholder into a licensed production asset.
 
+An ADCO `asset-review` is not a generic file-status card. Its first screen must follow the advertising judgment order:
+
+1. State the image's role in the proposal or campaign.
+2. Read the customer moment, product proof, and brand memory it must create.
+3. Mark visible regions as `保留`, `调整`, or `待真实素材复查`; verified coordinates may appear as focusable image hotspots.
+4. Show how the same creative direction lands in the named target formats, normally including the relevant horizontal, feed, and vertical placements.
+5. Keep source, direct-use authorization, channel fit, and current usability together under a later `使用前提` section.
+6. Return a creative action such as preserving a composition while replacing the candidate, not a generic approval action.
+
+The `creative_review` object binds the asset role, customer moment, product proof, brand memory, and channel plan to current project JSON records. The renderer resolves every JSON Pointer and requires the displayed value to equal the structured source value. These bindings remain backstage; the user sees the advertising intent, visual judgment, placement consequence, and next creative action. A placeholder may preserve a composition principle, but it cannot prove a person, product, emotion, packaging detail, crop, or production usability.
+
+Use `binding_mode: fixture-placeholder` only for an explicitly illustrative fixture. A real candidate must use `binding_mode: adco-control-plane` and resolve the same project/version/bytes through `project.yml`, `current_truth.md`, the unique current `version_map.csv` row, `artifact_index.csv`, `source_events.csv`, `asset_authorizations.csv`, and an exact-asset PASS row in `gate_log.csv`. A `user_confirmation:<id>` or `client_confirmation:<id>` authorization reference must resolve to a matching high-trust decision/confirmation row in `source_events.csv`; a prefix alone is never evidence. A typed JSON record is supplemental context, not authority by itself.
+
+Classify each region finding with both `scope` and `basis`. Placeholder findings may preserve only `composition-principle` from `composition-reading`; person, product, emotion, packaging, crop, and usage readiness remain revise/recheck findings with `placeholder-limitation`. Real-candidate findings use `real-file-observation`. A real candidate is usable only when every displayed channel placement is `verified-fit` from `real-candidate-check`.
+
 For 3-8 visual alternatives, prefer a native image carousel or Creative Production mood-board Widget instead of shrinking every image into one inline card. For a long deck, large mood board, before/after slider, pixel-level annotation canvas, or repeated revision session, use fullscreen. File preview remains useful for opening the exact source at page/slide level, but it complements rather than replaces the ADCO feedback and version loop.
 
 ## Smallest useful surface
@@ -119,6 +134,8 @@ Build every spec from current project files, never chat memory:
 | Feedback impact | `source_events.csv`, `feedback_map.csv`, affected requirements/artifacts, invalidated Gate/package bindings |
 
 Every source artifact in a spec needs a stable artifact ID, version, project-relative path, lifecycle state, and 64-character SHA-256. Recompute the physical hash before rendering. Reject missing files, path traversal, symlink escape, duplicate current versions, inactive artifacts presented as current, and stale preview/version bindings.
+
+Keep the complete rendered fragment below 2 MB. If the exact-current source image would exceed the limit after embedding, register a smaller preview derivative in `artifact_index.csv`, bind it to the same version/source event, and inspect that derivative; never silently substitute an unregistered thumbnail.
 
 Fields are either:
 
@@ -155,6 +172,8 @@ Use `blocking-decision` only when progress genuinely depends on the user:
 - do not bundle approval, send authorization, publishing, deletion, migration, payment, or global installation into a visual click.
 
 The component action records conversation intent only. It cannot write `decisions.csv`, close a gap, pass a Gate, approve a deck, or authorize a send.
+
+Asset actions are capability-limited to structured creative revision, creative recheck, or an eligible use selection. Reject any label or intent that asks to deliver, send, share, publish, upload, release, hand off, or otherwise operate outside review, regardless of which of the two action positions contains it.
 
 ## Option comparison
 
@@ -233,7 +252,8 @@ Validate:
 
 Render the text fallback:
 
-    python3 scripts/adco_visualization.py render-fallback <spec.json>
+    python3 scripts/adco_visualization.py render-fallback <spec.json> \
+      --project-root <project-dir>
 
 Render for the current supported conversation:
 

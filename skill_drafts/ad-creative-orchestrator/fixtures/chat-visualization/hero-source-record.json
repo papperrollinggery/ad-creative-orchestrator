@@ -1,0 +1,11 @@
+{
+  "contract": "adco.asset-source-record@1.0",
+  "project": "campaign-summer",
+  "version": "v12",
+  "source_event_id": "SRC-FIXTURE-001",
+  "asset_id": "hero-visual",
+  "asset_sha256": "35edc7bd46c66f1a868a7a022e1fcf42ba31bfde7b5644e32b45ee15829bcb8b",
+  "source_status": "verified",
+  "source_platform": "local-fixture",
+  "source_location": "fixtures/chat-visualization/hero-asset-preview.svg"
+}

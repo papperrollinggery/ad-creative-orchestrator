@@ -10,6 +10,10 @@
   box-sizing: border-box;
 }
 
+[data-adco-visual] strong {
+  font-weight: 500;
+}
+
 [data-adco-visual] .adco-phase-rail {
   display: grid;
   grid-template-columns: repeat(9, minmax(0, 1fr));
@@ -106,9 +110,73 @@
 
 [data-adco-visual] .adco-preview-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 1rem;
   margin: 0.9rem 0;
+}
+
+[data-adco-visual] .adco-asset-verdict {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+[data-adco-visual] .adco-asset-verdict div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+[data-adco-visual] .adco-asset-verdict p {
+  margin: 0.2rem 0 0;
+  color: var(--muted-foreground);
+}
+
+[data-adco-visual] .adco-creative-brief,
+[data-adco-visual] .adco-channel-plan,
+[data-adco-visual] .adco-use-conditions {
+  margin-top: 1rem;
+}
+
+[data-adco-visual] .adco-role-callout {
+  display: grid;
+  grid-template-columns: minmax(8rem, 0.45fr) minmax(0, 1.55fr);
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+[data-adco-visual] .adco-role-callout span {
+  color: var(--muted-foreground);
+}
+
+[data-adco-visual] .adco-role-copy {
+  display: grid;
+  gap: 0.2rem;
+}
+
+[data-adco-visual] .adco-creative-lenses {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-top: 0.7rem;
+}
+
+[data-adco-visual] .adco-creative-lens {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+[data-adco-visual] .adco-preview-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(14rem, 0.75fr);
+  gap: 0.9rem;
+  align-items: start;
 }
 
 [data-adco-visual] .adco-preview {
@@ -129,13 +197,154 @@
   object-fit: contain;
 }
 
+[data-adco-visual] .adco-image-stage {
+  position: relative;
+  overflow: hidden;
+}
+
+[data-adco-visual] .adco-hotspot {
+  position: absolute;
+  top: var(--adco-y);
+  left: var(--adco-x);
+  transform: translate(-50%, -50%);
+}
+
 [data-adco-visual] .adco-preview figcaption {
   margin-top: 0.45rem;
 }
 
-[data-adco-visual] .adco-annotations {
-  margin: 0.4rem 0 0;
-  padding-left: 1.2rem;
+[data-adco-visual] .adco-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
+[data-adco-visual] .adco-section-heading span {
+  font-weight: 500;
+}
+
+[data-adco-visual] .adco-section-heading .text-small {
+  color: var(--muted-foreground);
+  text-align: right;
+}
+
+[data-adco-visual] .adco-findings {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-adco-visual] .adco-finding {
+  display: grid;
+  grid-template-columns: 1.55rem minmax(0, 1fr);
+  gap: 0.55rem;
+  min-width: 0;
+  padding-left: 0.55rem;
+  border-left: 2px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+[data-adco-visual] .adco-finding.is-preserve { border-left-color: var(--viz-series-2); }
+[data-adco-visual] .adco-finding.is-revise { border-left-color: var(--viz-series-3); }
+[data-adco-visual] .adco-finding.is-recheck { border-left-color: var(--viz-series-4); }
+
+[data-adco-visual] .adco-finding.is-active {
+  border-left-width: 4px;
+}
+
+[data-adco-visual] .adco-finding-index {
+  font-weight: 500;
+}
+
+[data-adco-visual] .adco-finding-kind {
+  display: block;
+  margin-bottom: 0.12rem;
+  color: var(--muted-foreground);
+}
+
+[data-adco-visual] .adco-finding p {
+  margin: 0.18rem 0 0;
+  color: var(--muted-foreground);
+}
+
+[data-adco-visual] .adco-channel-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+[data-adco-visual] .adco-channel-card {
+  display: grid;
+  grid-template-columns: 3.3rem minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: start;
+  min-width: 0;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border);
+}
+
+[data-adco-visual] .adco-ratio-frame {
+  position: relative;
+  align-self: center;
+  justify-self: center;
+  width: 3.1rem;
+  border: 1px solid var(--muted-foreground);
+  border-radius: 0.25rem;
+  overflow: hidden;
+  background: var(--muted);
+}
+
+[data-adco-visual] .adco-ratio-frame.is-wide { aspect-ratio: 16 / 9; }
+[data-adco-visual] .adco-ratio-frame.is-portrait { width: 2.3rem; aspect-ratio: 4 / 5; }
+[data-adco-visual] .adco-ratio-frame.is-square { width: 2.6rem; aspect-ratio: 1; }
+[data-adco-visual] .adco-ratio-frame.is-vertical { width: 1.8rem; aspect-ratio: 9 / 16; }
+
+[data-adco-visual] .adco-ratio-frame span {
+  position: absolute;
+  inset: 15% 48% 15% 10%;
+  border-radius: 999px;
+  background: var(--viz-series-1);
+  opacity: 0.55;
+}
+
+[data-adco-visual] .adco-ratio-frame i {
+  position: absolute;
+  inset: 18% 10% 50% 58%;
+  border-radius: 0.15rem;
+  background: var(--foreground);
+  opacity: 0.45;
+}
+
+[data-adco-visual] .adco-channel-copy > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+[data-adco-visual] .adco-channel-copy > div span,
+[data-adco-visual] .adco-channel-status {
+  color: var(--muted-foreground);
+}
+
+[data-adco-visual] .adco-channel-status {
+  display: inline-block;
+  margin-top: 0.18rem;
+  font-weight: 500;
+}
+
+[data-adco-visual] .adco-channel-copy p {
+  margin: 0.25rem 0 0;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+[data-adco-visual] .adco-use-conditions {
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
 }
 
 [data-adco-visual] .adco-impact {
@@ -164,8 +373,29 @@
 
   [data-adco-visual] .adco-summary,
   [data-adco-visual] .adco-fields,
-  [data-adco-visual] .adco-preview-grid {
+  [data-adco-visual] .adco-preview-grid,
+  [data-adco-visual] .adco-preview-layout,
+  [data-adco-visual] .adco-creative-lenses,
+  [data-adco-visual] .adco-channel-grid {
     grid-template-columns: 1fr;
+  }
+
+  [data-adco-visual] .adco-role-callout {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+  }
+
+  [data-adco-visual] .adco-asset-verdict {
+    display: grid;
+  }
+
+  [data-adco-visual] .adco-section-heading {
+    display: grid;
+    gap: 0.1rem;
+  }
+
+  [data-adco-visual] .adco-section-heading .text-small {
+    text-align: left;
   }
 }
 

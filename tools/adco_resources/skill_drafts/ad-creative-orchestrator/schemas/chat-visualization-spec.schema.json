@@ -59,6 +59,7 @@
       "properties": {
         "project_id": {"type": "string", "minLength": 1},
         "current_version": {"type": "string", "minLength": 1},
+        "binding_mode": {"enum": ["fixture-placeholder", "adco-control-plane"]},
         "artifacts": {
           "type": "array",
           "minItems": 1,
@@ -127,6 +128,13 @@
           "type": "array",
           "maxItems": 4,
           "items": {"$ref": "#/$defs/preview"}
+        },
+        "creative_review": {
+          "description": "ADCO-specific advertising role, creative reading and channel placement for one reviewed visual.",
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/creativeReview"}
+          ]
         }
       }
     },
@@ -213,6 +221,7 @@
       "then": {
         "properties": {
           "source_truth": {
+            "required": ["binding_mode"],
             "properties": {
               "artifacts": {
                 "contains": {
@@ -223,8 +232,19 @@
             }
           },
           "presentation": {
+            "required": ["creative_review"],
             "properties": {
-              "previews": {"minItems": 1, "maxItems": 1},
+              "previews": {
+                "minItems": 1,
+                "maxItems": 1,
+                "items": {
+                  "properties": {
+                    "annotations": {
+                      "items": {"required": ["kind", "scope", "basis"]}
+                    }
+                  }
+                }
+              },
               "fields": {
                 "allOf": [
                   {"contains": {"properties": {"id": {"const": "asset-status"}}, "required": ["id"]}},
@@ -233,6 +253,13 @@
                   {"contains": {"properties": {"id": {"const": "channel-fit"}}, "required": ["id"]}},
                   {"contains": {"properties": {"id": {"const": "availability"}}, "required": ["id"]}}
                 ]
+              }
+            }
+          },
+          "interactions": {
+            "properties": {
+              "actions": {
+                "items": {"required": ["review_scope", "review_focus"]}
               }
             }
           }
@@ -290,7 +317,60 @@
             "required": ["region", "note"],
             "properties": {
               "region": {"type": "string", "minLength": 1},
-              "note": {"type": "string", "minLength": 1}
+              "note": {"type": "string", "minLength": 1},
+              "kind": {"enum": ["preserve", "revise", "recheck"]},
+              "scope": {"enum": ["composition-principle", "person", "product", "emotion", "packaging", "crop", "usage-readiness"]},
+              "basis": {"enum": ["composition-reading", "placeholder-limitation", "real-file-observation"]},
+              "anchor": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["x", "y"],
+                "properties": {
+                  "x": {"type": "number", "minimum": 0, "maximum": 100},
+                  "y": {"type": "number", "minimum": 0, "maximum": 100}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "reviewLens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "value", "provenance", "source_ref"],
+      "properties": {
+        "label": {"type": "string", "minLength": 1},
+        "value": {"type": "string", "minLength": 1},
+        "provenance": {"enum": ["source-bound", "presentation-only"]},
+        "source_ref": {"type": ["string", "null"]}
+      }
+    },
+    "creativeReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset_role", "reference_boundary", "customer_moment", "product_proof", "brand_memory", "channel_plan"],
+      "properties": {
+        "asset_role": {"$ref": "#/$defs/reviewLens"},
+        "reference_boundary": {"$ref": "#/$defs/reviewLens"},
+        "customer_moment": {"$ref": "#/$defs/reviewLens"},
+        "product_proof": {"$ref": "#/$defs/reviewLens"},
+        "brand_memory": {"$ref": "#/$defs/reviewLens"},
+        "channel_plan": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["channel", "format", "status", "assessment_basis", "note", "source_ref"],
+            "properties": {
+              "channel": {"type": "string", "minLength": 1},
+              "format": {"enum": ["16:9", "4:5", "1:1", "9:16"]},
+              "status": {"enum": ["verified-fit", "preserve-direction", "reframe", "recheck"]},
+              "assessment_basis": {"enum": ["creative-direction-only", "real-candidate-check"]},
+              "note": {"type": "string", "minLength": 1},
+              "source_ref": {"type": "string", "minLength": 1}
             }
           }
         }
@@ -317,7 +397,14 @@
         "label": {"type": "string", "minLength": 1},
         "kind": {"enum": ["submit-selection", "request-revision", "register-feedback", "request-recheck", "inspect-detail"]},
         "target_gate": {"type": "string", "minLength": 1},
-        "conversation_intent": {"type": "string", "minLength": 1}
+        "conversation_intent": {"type": "string", "minLength": 1},
+        "review_scope": {"enum": ["creative-revision", "creative-recheck", "asset-use-selection"]},
+        "review_focus": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {"enum": ["asset-role", "reference-boundary", "customer-moment", "product-proof", "brand-memory", "region-findings", "channel-placement", "source-and-authorization"]}
+        }
       }
     }
   }

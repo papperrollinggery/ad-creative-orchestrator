@@ -1,0 +1,17 @@
+{
+  "project": "campaign-summer",
+  "version": "v12",
+  "asset_role": "提案封面与活动主画面",
+  "customer_moment": "户外场景中的即时满足",
+  "product_proof": "真实包装与真实使用动作必须入画",
+  "brand_memory": "示例品牌蓝与“一刻成真”的识别锚点",
+  "reference_role": "只延续构图逻辑，不复制具体人物或产品",
+  "asset_slot": "主视觉",
+  "use_case": "提案封面、社交信息流与竖版传播",
+  "client_visibility": "客户审阅",
+  "channel_plan": [
+    {"channel": "提案封面", "format": "16:9", "status": "verified-fit", "assessment_basis": "real-candidate-check", "note": "已在当前真实候选画面上检查横版信息路径。"},
+    {"channel": "社交信息流", "format": "4:5", "status": "verified-fit", "assessment_basis": "real-candidate-check", "note": "已在当前真实候选画面上检查信息流裁切。"},
+    {"channel": "竖版传播", "format": "9:16", "status": "verified-fit", "assessment_basis": "real-candidate-check", "note": "已在当前真实候选画面上检查竖版重排。"}
+  ]
+}

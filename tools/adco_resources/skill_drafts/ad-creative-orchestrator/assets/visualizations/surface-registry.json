@@ -1,5 +1,5 @@
 {
-  "registry_version": "1.3",
+  "registry_version": "1.4",
   "spec_contract": "adco.chat-visualization@1.0",
   "principle": "Use the smallest chat-native review surface that makes one ADCO decision clearer; never create a dashboard.",
   "capability_routes": {
@@ -72,12 +72,12 @@
     {
       "kind": "asset-review",
       "phases": ["P3", "P5", "P6", "P7"],
-      "purpose": "Inspect asset role, source, authorization, QA and exact-current bindings.",
-      "minimum_visible_fields": ["asset-type", "source-state", "authorization-state", "channel-fit", "can-it-be-used", "inspection-result", "what-it-affects"],
+      "purpose": "Review one key visual as advertising work: its job in the proposal, customer moment, product proof, brand memory, region-level creative judgment, channel placement, and only then usage conditions.",
+      "minimum_visible_fields": ["asset-role", "customer-moment", "product-proof", "brand-memory", "preserve-revise-recheck", "channel-placement", "source-state", "authorization-state", "can-it-be-used"],
       "renderer": "codex-inline-vis",
       "upgrade_renderer": "creative-production-moodboard-widget",
       "upgrade_when": "the user is choosing or comparing multiple real visual assets",
-      "preferred_visual": "single-preview-with-region-findings",
+      "preferred_visual": "creative-brief-plus-annotated-preview-and-channel-frames",
       "fallback": "table"
     },
     {

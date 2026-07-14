@@ -1,10 +1,119 @@
 {
-  "contract": "adco.chat-visualization@1.0", "view_id": "hero-asset-review", "execution_context": "standalone_chat",
-  "controller": {"surface_owner": "ad-creative-orchestrator", "user_facing": true}, "phase": "P3",
-  "surface": {"kind": "asset-review", "title": "主视觉素材复核", "summary": "当前画面仅用于演示审阅界面，尚未绑定正式候选素材。", "question": "接下来提供真实候选素材，还是先查看正式素材需要满足的条件？"},
-  "source_truth": {"project_id": "campaign-summer", "current_version": "v12", "artifacts": [{"artifact_id": "hero-visual", "path": "fixtures/chat-visualization/hero-asset-preview.svg", "version": "v12", "sha256": "35edc7bd46c66f1a868a7a022e1fcf42ba31bfde7b5644e32b45ee15829bcb8b", "lifecycle": "current", "review_classification": "illustrative-placeholder", "source_status": "not-applicable", "authorization_status": "not-applicable", "channel_fit_status": "not-applicable", "source_evidence_ref": null, "authorization_evidence_ref": null, "channel_fit_evidence_ref": null}]},
-  "presentation": {"fields": [{"id": "asset-status", "label": "素材类型", "value": "演示占位图", "provenance": "source-bound", "source_ref": "hero-visual#/review_classification"}, {"id": "source-status", "label": "正式来源", "value": "不适用", "provenance": "source-bound", "source_ref": "hero-visual#/source_status"}, {"id": "authorization-status", "label": "使用授权", "value": "不适用", "provenance": "source-bound", "source_ref": "hero-visual#/authorization_status"}, {"id": "channel-fit", "label": "渠道适配", "value": "不适用", "provenance": "source-bound", "source_ref": "hero-visual#/channel_fit_status"}, {"id": "availability", "label": "当前能否使用", "value": "暂不能确认使用", "provenance": "source-bound", "source_ref": "hero-visual#/availability"}], "options": [], "recommendation": null, "downstream_effects": [{"phase": "P3", "effect": "取得真实候选素材后重新检查来源、授权和渠道适配"}], "previews": [{"artifact_id": "hero-visual", "label": "界面演示画面", "alt": "蓝色渐变的演示构图，包含消费者、标题和产品占位。", "caption": "这不是正式候选素材，仅用于展示主视觉审阅方式。", "annotations": [{"region": "右侧内容区", "note": "可保留标题与产品留白的构图方向。"}]}]},
-  "interactions": {"local_state": ["focused-item"], "actions": [{"id": "provide-real-candidate", "label": "提供真实素材", "kind": "request-revision", "target_gate": "asset-authorization-gate", "conversation_intent": "我将提供真实候选主视觉，请先确认文件和版本，再检查来源、授权与渠道适配。"}, {"id": "inspect-use-conditions", "label": "查看正式条件", "kind": "request-recheck", "target_gate": "asset-authorization-gate", "conversation_intent": "请说明真实主视觉需要满足哪些条件才能进入使用确认。"}]},
-  "write_boundary": {"component_writes_authoritative_state": false, "conversation_intent_only": true, "write_owner": "ad-creative-orchestrator", "revalidation_command": "adco validate <project>", "forbidden_claims": ["approval", "readiness", "send", "completion", "global-install"]},
-  "fallback": {"summary": "当前画面是演示占位图，不能作为正式主视觉使用。", "table": {"headers": ["当前画面", "正式来源", "使用授权", "渠道适配", "当前结论"], "rows": [["演示占位图", "不适用", "不适用", "不适用", "暂不能确认使用"]]}, "mermaid": "flowchart LR\n  A[演示占位图] --> B[取得真实候选素材]\n  B --> C[检查来源授权与渠道适配]", "decision_prompt": "接下来提供真实候选素材，还是先查看正式素材需要满足的条件？"}
+  "contract": "adco.chat-visualization@1.0",
+  "view_id": "hero-asset-review",
+  "execution_context": "standalone_chat",
+  "controller": {"surface_owner": "ad-creative-orchestrator", "user_facing": true},
+  "phase": "P3",
+  "surface": {
+    "kind": "asset-review",
+    "title": "主视觉创意复核",
+    "summary": "这张图只证明审阅方式；构图方向可以讨论，但人物、产品和渠道裁切都必须在真实候选素材上重新判断。",
+    "question": "沿用当前构图方向并换入真实素材，还是先查看 ADCO 的主视觉验收条件？"
+  },
+  "source_truth": {
+    "project_id": "campaign-summer",
+    "current_version": "v12",
+    "binding_mode": "fixture-placeholder",
+    "artifacts": [
+      {
+        "artifact_id": "hero-visual",
+        "path": "fixtures/chat-visualization/hero-asset-preview.svg",
+        "version": "v12",
+        "sha256": "35edc7bd46c66f1a868a7a022e1fcf42ba31bfde7b5644e32b45ee15829bcb8b",
+        "lifecycle": "current",
+        "review_classification": "illustrative-placeholder",
+        "source_status": "not-applicable",
+        "authorization_status": "not-applicable",
+        "channel_fit_status": "not-applicable",
+        "source_evidence_ref": null,
+        "authorization_evidence_ref": null,
+        "channel_fit_evidence_ref": null
+      },
+      {
+        "artifact_id": "hero-review-brief",
+        "path": "fixtures/chat-visualization/hero-review-brief.json",
+        "version": "v12",
+        "sha256": "03e5b37b36045560849d4a7b4e0c74015bba809c0892b85950938b3b3d7e0363",
+        "lifecycle": "current"
+      }
+    ]
+  },
+  "presentation": {
+    "fields": [
+      {"id": "asset-status", "label": "素材身份", "value": "演示占位图", "provenance": "source-bound", "source_ref": "hero-visual#/review_classification"},
+      {"id": "source-status", "label": "正式来源", "value": "不适用", "provenance": "source-bound", "source_ref": "hero-visual#/source_status"},
+      {"id": "authorization-status", "label": "直接使用授权", "value": "不适用", "provenance": "source-bound", "source_ref": "hero-visual#/authorization_status"},
+      {"id": "channel-fit", "label": "真实渠道适配", "value": "不适用", "provenance": "source-bound", "source_ref": "hero-visual#/channel_fit_status"},
+      {"id": "availability", "label": "当前结论", "value": "暂不能确认使用", "provenance": "source-bound", "source_ref": "hero-visual#/availability"}
+    ],
+    "options": [],
+    "recommendation": null,
+    "downstream_effects": [
+      {"phase": "P3", "effect": "换入真实候选后，重新检查消费者时刻、产品证明、品牌记忆和三种渠道裁切"}
+    ],
+    "creative_review": {
+      "asset_role": {"label": "画面任务", "value": "提案封面与活动主画面", "provenance": "source-bound", "source_ref": "hero-review-brief#/asset_role"},
+      "reference_boundary": {"label": "参考边界", "value": "只延续构图逻辑，不复制具体人物或产品", "provenance": "source-bound", "source_ref": "hero-review-brief#/reference_role"},
+      "customer_moment": {"label": "消费者时刻", "value": "户外场景中的即时满足", "provenance": "source-bound", "source_ref": "hero-review-brief#/customer_moment"},
+      "product_proof": {"label": "产品证明", "value": "真实包装与真实使用动作必须入画", "provenance": "source-bound", "source_ref": "hero-review-brief#/product_proof"},
+      "brand_memory": {"label": "品牌记忆", "value": "示例品牌蓝与“一刻成真”的识别锚点", "provenance": "source-bound", "source_ref": "hero-review-brief#/brand_memory"},
+      "channel_plan": [
+        {"channel": "提案封面", "format": "16:9", "status": "preserve-direction", "assessment_basis": "creative-direction-only", "note": "人物与文案分区可以延续，但必须换入真实人物和产品。", "source_ref": "hero-review-brief#/channel_plan/0"},
+        {"channel": "社交信息流", "format": "4:5", "status": "reframe", "assessment_basis": "creative-direction-only", "note": "右侧文案区需上移，避免产品和标题在窄画幅中互相挤压。", "source_ref": "hero-review-brief#/channel_plan/1"},
+        {"channel": "竖版传播", "format": "9:16", "status": "recheck", "assessment_basis": "creative-direction-only", "note": "当前横向留白不能直接沿用，要在真实素材上重新安排人物、产品和标题。", "source_ref": "hero-review-brief#/channel_plan/2"}
+      ]
+    },
+    "previews": [
+      {
+        "artifact_id": "hero-visual",
+        "label": "主视觉审阅演示",
+        "alt": "蓝色渐变的演示构图，左侧是消费者占位轮廓，右侧是标题与产品占位。",
+        "caption": "仅用于演示 ADCO 如何从广告任务、画面判断和渠道落位审阅主视觉。",
+        "annotations": [
+          {"region": "标题与产品信息区", "note": "标题和产品同侧，第一眼的信息路径清楚，可以保留这一构图逻辑。", "kind": "preserve", "scope": "composition-principle", "basis": "composition-reading", "anchor": {"x": 72, "y": 34}},
+          {"region": "消费者主体", "note": "当前只是演示轮廓，无法判断真实情绪、动作和产品使用关系，必须替换。", "kind": "revise", "scope": "person", "basis": "placeholder-limitation", "anchor": {"x": 31, "y": 48}},
+          {"region": "产品露出区", "note": "需要在真实包装规范和真实比例下复查露出大小、角度与安全留白。", "kind": "recheck", "scope": "packaging", "basis": "placeholder-limitation", "anchor": {"x": 68, "y": 70}}
+        ]
+      }
+    ]
+  },
+  "interactions": {
+    "local_state": ["focused-item"],
+    "actions": [
+      {
+        "id": "keep-layout-replace-asset",
+        "label": "沿用构图，换真实图",
+        "kind": "request-revision",
+        "review_scope": "creative-revision",
+        "review_focus": ["region-findings", "customer-moment", "product-proof", "brand-memory", "channel-placement"],
+        "target_gate": "asset-authorization-gate",
+        "conversation_intent": "我希望保留当前标题与产品留白的构图方向，并换入真实候选主视觉。请先核对最新创意任务、真实文件和版本，再按消费者时刻、产品证明、品牌记忆及横版、4:5、9:16 的落位重新审阅。"
+      },
+      {
+        "id": "inspect-adco-conditions",
+        "label": "查看 ADCO 验收条件",
+        "kind": "request-recheck",
+        "review_scope": "creative-recheck",
+        "review_focus": ["asset-role", "reference-boundary", "source-and-authorization", "channel-placement"],
+        "target_gate": "asset-authorization-gate",
+        "conversation_intent": "请按 ADCO 的广告创意流程说明真实主视觉要满足哪些条件：它在方案里的任务、消费者时刻、产品证明、品牌记忆、画面问题、渠道裁切、来源与使用授权。"
+      }
+    ]
+  },
+  "write_boundary": {
+    "component_writes_authoritative_state": false,
+    "conversation_intent_only": true,
+    "write_owner": "ad-creative-orchestrator",
+    "revalidation_command": "adco validate <project>",
+    "forbidden_claims": ["approval", "readiness", "send", "completion", "global-install"]
+  },
+  "fallback": {
+    "summary": "当前画面是演示占位图；可讨论构图方向，但不能作为正式主视觉使用。",
+    "table": {
+      "headers": ["广告任务", "可以保留", "必须替换", "渠道动作", "当前结论"],
+      "rows": [["提案封面与活动主画面", "标题与产品同侧的信息路径", "消费者与产品占位", "16:9 可延续；4:5 重构；9:16 复查", "暂不能确认使用"]]
+    },
+    "mermaid": "flowchart LR\n  A[明确广告任务] --> B[保留构图方向]\n  B --> C[换入真实人物和产品]\n  C --> D[复查三种渠道落位]\n  D --> E[确认来源与使用授权]",
+    "decision_prompt": "沿用当前构图方向并换入真实素材，还是先查看 ADCO 的主视觉验收条件？"
+  }
 }

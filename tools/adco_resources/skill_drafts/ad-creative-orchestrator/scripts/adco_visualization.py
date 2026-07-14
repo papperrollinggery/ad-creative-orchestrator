@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import copy
+import csv
 import hashlib
 import html
 import json
@@ -71,6 +72,45 @@ ASSET_VISIBLE_VALUES = {
     "channel:pending": "渠道适配待检查",
     "channel:not-applicable": "不适用",
 }
+CREATIVE_REVIEW_KINDS = {
+    "preserve": "保留",
+    "revise": "调整",
+    "recheck": "待真实素材复查",
+}
+CHANNEL_REVIEW_STATUSES = {
+    "verified-fit": "已适配",
+    "preserve-direction": "构图可延续",
+    "reframe": "需要重构",
+    "recheck": "待真实素材复查",
+}
+CREATIVE_REVIEW_SCOPES = {
+    "composition-principle", "person", "product", "emotion", "packaging", "crop", "usage-readiness",
+}
+CREATIVE_REVIEW_BASES = {"composition-reading", "placeholder-limitation", "real-file-observation"}
+CHANNEL_ASSESSMENT_BASES = {"creative-direction-only", "real-candidate-check"}
+CURRENT_VERSION_STATUSES = {"draft", "internal_review", "ready", "active", "current"}
+PLACEHOLDER_FORBIDDEN_CLAIMS = (
+    "可直接使用", "可以直接使用", "可确认使用", "已获授权", "授权已确认", "渠道适配已检查",
+    "已经证明", "已证明", "ready to use", "approved for use", "licensed for use",
+)
+ASSET_ACTION_SCOPE_KINDS = {
+    "creative-revision": {"request-revision", "register-feedback"},
+    "creative-recheck": {"request-recheck"},
+    "asset-use-selection": {"submit-selection"},
+}
+ASSET_REVIEW_FOCUS = {
+    "asset-role": "画面任务", "reference-boundary": "参考边界", "customer-moment": "消费者时刻",
+    "product-proof": "产品证明", "brand-memory": "品牌记忆", "region-findings": "画面区域判断",
+    "channel-placement": "渠道落位", "source-and-authorization": "来源与使用授权",
+}
+ASSET_ACTION_FORBIDDEN = (
+    "approve", "mark complete", "complete project", "批准", "标记完成", "完成项目", "全局安装",
+)
+ASSET_EXTERNAL_OPERATION_RE = re.compile(
+    r"(?ix)(?:\b(?:send|deliver|delivery|publish|upload|release|distribute|share|handoff|hand[ -]?over|ship)\b"
+    r"|交付|发送|发给|提交给|递交|移交|分享|发布|上线|投放|上传|寄给|传给)"
+)
+ASSET_GENERIC_ACTION_LABELS = {"继续", "确认", "下一步", "continue", "confirm", "next"}
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SHA_RE = re.compile(r"^[a-f0-9]{64}$")
 SOURCE_RE = re.compile(r"^([a-z0-9]+(?:-[a-z0-9]+)*)#(/.*)$")
@@ -81,6 +121,7 @@ FRONTSTAGE_FORBIDDEN = (
     "artifact_index.csv", "回执", "控制面", "证据绑定", "证据锁", "哈希",
     "校验", "写入", "重读", "p0", "p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8",
 )
+UNRESOLVED = object()
 
 
 class VisualizationError(Exception):
@@ -144,6 +185,7 @@ def validate_spec(document: dict[str, Any]) -> list[str]:
 
     truth = document.get("source_truth") if isinstance(document.get("source_truth"), dict) else {}
     current_version = truth.get("current_version")
+    binding_mode = truth.get("binding_mode")
     if not _is_nonempty(truth.get("project_id")) or not _is_nonempty(current_version):
         errors.append("source_truth requires project_id and current_version")
     artifacts = truth.get("artifacts") if isinstance(truth.get("artifacts"), list) else []
@@ -175,6 +217,9 @@ def validate_spec(document: dict[str, Any]) -> list[str]:
             current_count += 1
     if artifacts and current_count < 1:
         errors.append("at least one artifact must bind current_version with lifecycle current")
+    artifact_by_id = {
+        item.get("artifact_id"): item for item in artifacts if isinstance(item, dict)
+    }
 
     presentation = document.get("presentation") if isinstance(document.get("presentation"), dict) else {}
     fields = presentation.get("fields") if isinstance(presentation.get("fields"), list) else []
@@ -232,6 +277,7 @@ def validate_spec(document: dict[str, Any]) -> list[str]:
             elif not _valid_source_ref(evidence.get("source_ref"), artifact_ids):
                 errors.append(f"quantitative evidence {index} requires a reviewed source binding")
     previews = presentation.get("previews", [])
+    creative_review = presentation.get("creative_review")
     asset_review_artifact: dict[str, Any] | None = None
     asset_review_usable = False
     if not isinstance(previews, list) or len(previews) > 4:
@@ -251,13 +297,77 @@ def validate_spec(document: dict[str, Any]) -> list[str]:
                 for annotation in annotations:
                     if not isinstance(annotation, dict) or not _is_nonempty(annotation.get("region")) or not _is_nonempty(annotation.get("note")):
                         errors.append(f"preview {index} annotations require region and note")
+                        continue
+                    annotation_kind = annotation.get("kind")
+                    if annotation_kind is not None and annotation_kind not in CREATIVE_REVIEW_KINDS:
+                        errors.append(f"preview {index} annotation has invalid creative review kind")
+                    if annotation.get("scope") is not None and annotation.get("scope") not in CREATIVE_REVIEW_SCOPES:
+                        errors.append(f"preview {index} annotation has invalid creative review scope")
+                    if annotation.get("basis") is not None and annotation.get("basis") not in CREATIVE_REVIEW_BASES:
+                        errors.append(f"preview {index} annotation has invalid creative review basis")
+                    anchor = annotation.get("anchor")
+                    if anchor is not None:
+                        valid_anchor = (
+                            isinstance(anchor, dict)
+                            and isinstance(anchor.get("x"), (int, float))
+                            and isinstance(anchor.get("y"), (int, float))
+                            and not isinstance(anchor.get("x"), bool)
+                            and not isinstance(anchor.get("y"), bool)
+                            and 0 <= anchor["x"] <= 100
+                            and 0 <= anchor["y"] <= 100
+                        )
+                        if not valid_anchor:
+                            errors.append(f"preview {index} annotation anchor must use 0-100 x/y coordinates")
 
     if kind == "asset-review" and context == "standalone_chat" and controller.get("user_facing") is True:
+        if not isinstance(creative_review, dict):
+            errors.append("asset-review requires ADCO creative_review context")
+        else:
+            for lens_name in ("asset_role", "reference_boundary", "customer_moment", "product_proof", "brand_memory"):
+                lens = creative_review.get(lens_name)
+                if not isinstance(lens, dict) or not _is_nonempty(lens.get("label")) or not _is_nonempty(lens.get("value")):
+                    errors.append(f"creative_review {lens_name} requires a visible label and value")
+                    continue
+                provenance = lens.get("provenance")
+                source_ref = lens.get("source_ref")
+                if provenance != "source-bound":
+                    errors.append(f"creative_review {lens_name} must be source-bound")
+                elif not _valid_current_source_ref(source_ref, artifact_by_id, current_version):
+                    errors.append(f"creative_review {lens_name} requires a current-version source binding")
+            channel_plan = creative_review.get("channel_plan")
+            if not isinstance(channel_plan, list) or not 1 <= len(channel_plan) <= 4:
+                errors.append("creative_review channel_plan requires one to four target placements")
+            else:
+                for index, placement in enumerate(channel_plan):
+                    if not isinstance(placement, dict):
+                        errors.append(f"creative_review channel placement {index} must be an object")
+                        continue
+                    if not all(_is_nonempty(placement.get(key)) for key in ("channel", "format", "note")):
+                        errors.append(f"creative_review channel placement {index} is incomplete")
+                    if placement.get("format") not in {"16:9", "4:5", "1:1", "9:16"}:
+                        errors.append(f"creative_review channel placement {index} has unsupported format")
+                    if placement.get("status") not in CHANNEL_REVIEW_STATUSES:
+                        errors.append(f"creative_review channel placement {index} has invalid status")
+                    if placement.get("assessment_basis") not in CHANNEL_ASSESSMENT_BASES:
+                        errors.append(f"creative_review channel placement {index} has invalid assessment basis")
+                    if not _valid_current_source_ref(placement.get("source_ref"), artifact_by_id, current_version):
+                        errors.append(f"creative_review channel placement {index} requires a current-version source binding")
         if len(previews) != 1:
             errors.append("asset-review requires exactly one inspected preview")
-        artifact_by_id = {
-            item.get("artifact_id"): item for item in artifacts if isinstance(item, dict)
-        }
+        elif isinstance(previews[0], dict):
+            annotations = previews[0].get("annotations")
+            if not isinstance(annotations, list) or not annotations:
+                errors.append("asset-review requires at least one region-level creative judgment")
+            else:
+                for annotation in annotations:
+                    if not isinstance(annotation, dict):
+                        continue
+                    if annotation.get("kind") not in CREATIVE_REVIEW_KINDS:
+                        errors.append("asset-review annotations must classify preserve, revise, or recheck")
+                    if annotation.get("scope") not in CREATIVE_REVIEW_SCOPES:
+                        errors.append("asset-review annotations require a structured review scope")
+                    if annotation.get("basis") not in CREATIVE_REVIEW_BASES:
+                        errors.append("asset-review annotations require a structured evidence basis")
         if len(previews) == 1 and isinstance(previews[0], dict):
             candidate = artifact_by_id.get(previews[0].get("artifact_id"))
             if isinstance(candidate, dict):
@@ -277,12 +387,47 @@ def validate_spec(document: dict[str, Any]) -> list[str]:
                 errors.append("asset-review artifact requires channel_fit_status")
 
             if classification == "illustrative-placeholder":
+                if binding_mode != "fixture-placeholder":
+                    errors.append("illustrative placeholder requires fixture-placeholder truth binding")
                 if any(status != "not-applicable" for status in (source_status, authorization_status, channel_fit_status)):
                     errors.append("illustrative placeholder statuses must be not-applicable")
             elif classification == "real-candidate" and any(
                 status == "not-applicable" for status in (source_status, authorization_status, channel_fit_status)
             ):
                 errors.append("real candidate statuses cannot be not-applicable")
+            elif classification == "real-candidate" and binding_mode != "adco-control-plane":
+                errors.append("real candidate requires ADCO control-plane truth binding")
+
+            if len(previews) == 1 and isinstance(previews[0], dict):
+                for annotation in previews[0].get("annotations", []):
+                    if not isinstance(annotation, dict):
+                        continue
+                    if classification == "illustrative-placeholder":
+                        if annotation.get("kind") == "preserve" and (
+                            annotation.get("scope") != "composition-principle"
+                            or annotation.get("basis") != "composition-reading"
+                        ):
+                            errors.append("placeholder can preserve only a composition principle")
+                        if annotation.get("scope") != "composition-principle" and annotation.get("kind") == "preserve":
+                            errors.append("placeholder cannot preserve person, product, emotion, packaging, crop, or readiness")
+                        if annotation.get("kind") in {"revise", "recheck"} and annotation.get("basis") != "placeholder-limitation":
+                            errors.append("placeholder revise/recheck findings must state their placeholder limitation")
+                        claim_text = f'{annotation.get("region", "")} {annotation.get("note", "")}'.lower()
+                        if any(token in claim_text for token in PLACEHOLDER_FORBIDDEN_CLAIMS):
+                            errors.append("placeholder finding makes a forbidden production-use claim")
+                    elif classification == "real-candidate" and annotation.get("basis") != "real-file-observation":
+                        errors.append("real candidate findings must be based on the inspected real file")
+            channel_plan = creative_review.get("channel_plan", []) if isinstance(creative_review, dict) else []
+            if classification == "illustrative-placeholder" and any(
+                item.get("assessment_basis") != "creative-direction-only" or item.get("status") == "verified-fit"
+                for item in channel_plan if isinstance(item, dict)
+            ):
+                errors.append("placeholder channel plan can describe direction only, not verified fit")
+            if classification == "real-candidate" and any(
+                item.get("assessment_basis") != "real-candidate-check"
+                for item in channel_plan if isinstance(item, dict)
+            ):
+                errors.append("real candidate channel plan must be based on the inspected real file")
 
             evidence_requirements = (
                 ("source_status", source_status, "verified", "source_evidence_ref"),
@@ -330,6 +475,8 @@ def validate_spec(document: dict[str, Any]) -> list[str]:
                 and authorization_status == "confirmed"
                 and channel_fit_status == "verified"
                 and evidence_ready
+                and bool(channel_plan)
+                and all(item.get("status") == "verified-fit" for item in channel_plan if isinstance(item, dict))
             )
             asset_review_usable = usable
             expected_availability = "可进入使用确认" if usable else "暂不能确认使用"
@@ -352,6 +499,25 @@ def validate_spec(document: dict[str, Any]) -> list[str]:
         intent = str(action.get("conversation_intent", "")).lower()
         if any(token in intent for token in ("直接批准", "直接发送", "标记完成", "全局安装")):
             errors.append(f"action {index} attempts a forbidden authoritative operation")
+        if kind == "asset-review" and context == "standalone_chat" and controller.get("user_facing") is True:
+            review_scope = action.get("review_scope")
+            review_focus = action.get("review_focus")
+            if review_scope not in ASSET_ACTION_SCOPE_KINDS or action.get("kind") not in ASSET_ACTION_SCOPE_KINDS.get(review_scope, set()):
+                errors.append(f"asset-review action {index} has an invalid creative review scope")
+            if (
+                not isinstance(review_focus, list) or len(review_focus) < 2
+                or len(set(review_focus)) != len(review_focus)
+                or any(item not in ASSET_REVIEW_FOCUS for item in review_focus)
+            ):
+                errors.append(f"asset-review action {index} requires two or more ADCO review focuses")
+            label = str(action.get("label", "")).strip().lower()
+            action_text = f'{label} {action.get("conversation_intent", "")}'.lower()
+            if label in ASSET_GENERIC_ACTION_LABELS:
+                errors.append(f"asset-review action {index} label is too generic")
+            if any(token in action_text for token in ASSET_ACTION_FORBIDDEN):
+                errors.append(f"asset-review action {index} attempts approval, external send, publish, upload, completion, or install")
+            if ASSET_EXTERNAL_OPERATION_RE.search(action_text):
+                errors.append(f"asset-review action {index} requests an external delivery or publication outside the review capability")
     if kind == "blocking-decision" and not 2 <= len(options) <= 3:
         errors.append("blocking-decision requires two or three explicit options")
     if (
@@ -412,6 +578,14 @@ def validate_spec(document: dict[str, Any]) -> list[str]:
             for annotation in preview.get("annotations", []):
                 if isinstance(annotation, dict):
                     visible_values.extend((str(annotation.get("region", "")), str(annotation.get("note", ""))))
+    if isinstance(creative_review, dict):
+        for lens_name in ("asset_role", "reference_boundary", "customer_moment", "product_proof", "brand_memory"):
+            lens = creative_review.get(lens_name)
+            if isinstance(lens, dict):
+                visible_values.extend((str(lens.get("label", "")), str(lens.get("value", ""))))
+        for placement in creative_review.get("channel_plan", []):
+            if isinstance(placement, dict):
+                visible_values.extend((str(placement.get("channel", "")), str(placement.get("format", "")), str(placement.get("note", ""))))
     if context == "standalone_chat" and controller.get("user_facing") is True:
         errors.extend(frontstage_term_errors(visible_values))
     return errors
@@ -424,6 +598,20 @@ def _valid_source_ref(value: Any, artifact_ids: set[str]) -> bool:
     return bool(match and match.group(1) in artifact_ids)
 
 
+def _valid_current_source_ref(
+    value: Any, artifact_by_id: dict[str, dict[str, Any]], current_version: Any
+) -> bool:
+    if not isinstance(value, str):
+        return False
+    match = SOURCE_RE.fullmatch(value)
+    artifact = artifact_by_id.get(match.group(1)) if match else None
+    return bool(
+        isinstance(artifact, dict)
+        and artifact.get("lifecycle") == "current"
+        and artifact.get("version") == current_version
+    )
+
+
 def escape(value: Any) -> str:
     if isinstance(value, (dict, list)):
         value = json.dumps(value, ensure_ascii=False, sort_keys=True)
@@ -434,6 +622,11 @@ def safe_inline_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")).replace(
         "&", "\\u0026"
     ).replace("<", "\\u003c").replace(">", "\\u003e")
+
+
+def mermaid_label(value: Any) -> str:
+    """Keep derived customer-facing labels inert inside Mermaid node syntax."""
+    return re.sub(r'[\[\]{}()"<>`|]', " ", str(value)).replace("\n", " ").strip()
 
 
 def verify_physical_artifacts(
@@ -461,6 +654,323 @@ def verify_physical_artifacts(
             continue
         verified[artifact_id] = candidate
     return verified, errors
+
+
+def _resolve_json_pointer(root: Any, pointer: str) -> tuple[bool, Any]:
+    if not pointer.startswith("/"):
+        return False, None
+    current = root
+    for raw_token in pointer[1:].split("/"):
+        if re.search(r"~(?![01])", raw_token):
+            return False, None
+        token = raw_token.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, dict):
+            if token not in current:
+                return False, None
+            current = current[token]
+        elif isinstance(current, list):
+            if not re.fullmatch(r"0|[1-9][0-9]*", token):
+                return False, None
+            index = int(token)
+            if index >= len(current):
+                return False, None
+            current = current[index]
+        else:
+            return False, None
+    return True, current
+
+
+def _read_csv_records(path: Path) -> tuple[list[dict[str, str]], str | None]:
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            return list(csv.DictReader(handle)), None
+    except OSError as exc:
+        return [], str(exc)
+
+
+def _current_version_truth_values(text: str) -> dict[str, str] | None:
+    matches = list(re.finditer(
+        r"(?ims)^##[ \t]+Current Version Truth[ \t]*\n(.*?)(?=^##[ \t]+|\Z)", text
+    ))
+    if len(matches) != 1:
+        return None
+    return {
+        key: value.strip()
+        for key, value in re.findall(r"(?m)^[ \t]*([a-z0-9_]+)[ \t]*:[ \t]*(.*)$", matches[0].group(1))
+    }
+
+
+def validate_adco_control_plane_binding(
+    document: dict[str, Any], project_root: Path | None, verified_artifacts: dict[str, Path],
+    json_records: dict[str, dict[str, Any]],
+) -> list[str]:
+    if document["source_truth"].get("binding_mode") != "adco-control-plane":
+        return []
+    if project_root is None:
+        return ["real-candidate review requires a project root for ADCO control-plane binding"]
+    root = project_root.expanduser().resolve()
+    control = root / "AD-creative/orchestrator"
+    errors: list[str] = []
+    required_paths = {
+        "project": control / "project.yml",
+        "truth": control / "current_truth.md",
+        "versions": control / "version_map.csv",
+        "artifacts": control / "artifact_index.csv",
+        "sources": control / "source_events.csv",
+        "gates": control / "gate_log.csv",
+        "authorizations": root / "AD-creative/visual_assets/asset_authorizations.csv",
+    }
+    for label, path in required_paths.items():
+        if not path.is_file():
+            errors.append(f"ADCO control-plane binding is missing {label}")
+    if errors:
+        return errors
+
+    project_text = required_paths["project"].read_text(encoding="utf-8")
+    name_match = re.search(r"(?m)^[ \t]+name:[ \t]*(.*)$", project_text)
+    project_name = (name_match.group(1).strip().strip('"\'') if name_match else "")
+    if not project_name or project_name != document["source_truth"]["project_id"]:
+        errors.append("ADCO project name does not match visualization project_id")
+
+    truth_values = _current_version_truth_values(required_paths["truth"].read_text(encoding="utf-8"))
+    current_version = document["source_truth"]["current_version"]
+    if truth_values is None or truth_values.get("current_version_id") != current_version:
+        errors.append("ADCO current_truth does not match visualization current_version")
+
+    versions, version_error = _read_csv_records(required_paths["versions"])
+    artifacts, artifact_error = _read_csv_records(required_paths["artifacts"])
+    sources, source_error = _read_csv_records(required_paths["sources"])
+    gates, gate_error = _read_csv_records(required_paths["gates"])
+    authorizations, authorization_error = _read_csv_records(required_paths["authorizations"])
+    for label, issue in (
+        ("version_map", version_error), ("artifact_index", artifact_error), ("source_events", source_error),
+        ("gate_log", gate_error), ("asset_authorizations", authorization_error),
+    ):
+        if issue:
+            errors.append(f"ADCO {label} cannot be read")
+    if errors:
+        return errors
+
+    version_matches = [row for row in versions if row.get("version_id", "").strip() == current_version]
+    if len(version_matches) != 1 or version_matches[0].get("status", "").strip().lower() not in CURRENT_VERSION_STATUSES:
+        errors.append("ADCO version_map lacks one current-view row for visualization current_version")
+    elif truth_values and truth_values.get("version_map_status") and (
+        truth_values["version_map_status"].lower() != version_matches[0].get("status", "").strip().lower()
+    ):
+        errors.append("ADCO current_truth and version_map status disagree")
+
+    for spec_artifact in document["source_truth"]["artifacts"]:
+        matches = [row for row in artifacts if row.get("artifact_id", "").strip() == spec_artifact["artifact_id"]]
+        if len(matches) != 1:
+            errors.append(f"ADCO artifact_index does not uniquely register {spec_artifact['artifact_id']}")
+            continue
+        row = matches[0]
+        lifecycle = (row.get("lifecycle_state") or row.get("status") or "").strip().lower()
+        if (
+            row.get("path", "").strip() != spec_artifact["path"]
+            or row.get("version", "").strip() != spec_artifact["version"]
+            or row.get("sha256", "").strip() != spec_artifact["sha256"]
+            or lifecycle not in {"active", "current", "registered", "ready"}
+        ):
+            errors.append(f"ADCO artifact_index binding is stale or mismatched for {spec_artifact['artifact_id']}")
+
+    preview_id = document["presentation"]["previews"][0]["artifact_id"]
+    preview = next(item for item in document["source_truth"]["artifacts"] if item["artifact_id"] == preview_id)
+    source_record = next((record for record in json_records.values() if record.get("contract") == "adco.asset-source-record@1.0"), None)
+    if isinstance(source_record, dict):
+        source_event_id = source_record.get("source_event_id")
+        matches = [row for row in sources if row.get("source_event_id", "").strip() == source_event_id]
+        if len(matches) != 1 or (
+            preview_id not in matches[0].get("affects_artifacts", "")
+            and preview["path"] not in matches[0].get("file_paths", "")
+        ):
+            errors.append("asset source record is not backed by a registered source event")
+
+    authorization_record = next((record for record in json_records.values() if record.get("contract") == "adco.asset-authorization-record@1.0"), None)
+    if isinstance(authorization_record, dict):
+        authorization_id = authorization_record.get("authorization_id")
+        matches = [row for row in authorizations if row.get("authorization_id", "").strip() == authorization_id]
+        valid = False
+        if len(matches) == 1:
+            row = matches[0]
+            evidence_ref = row.get("evidence_ref", "").strip()
+            evidence_ok = False
+            confirmation_match = re.fullmatch(
+                r"(?:user_confirmation|client_confirmation):([A-Za-z0-9._-]+)", evidence_ref
+            )
+            if confirmation_match:
+                confirmation_id = confirmation_match.group(1)
+                confirmation_rows = [
+                    item for item in sources if item.get("source_event_id", "").strip() == confirmation_id
+                ]
+                if len(confirmation_rows) == 1:
+                    confirmation = confirmation_rows[0]
+                    confirmation_type = confirmation.get("source_type", "").strip().lower()
+                    semantics = confirmation.get("declared_semantics", "").strip().lower()
+                    trust = confirmation.get("trust_level", "").strip().lower()
+                    owner = confirmation.get("source_owner", "").strip().lower()
+                    evidence_ok = (
+                        confirmation_type in {"decision", "user_confirmation", "client_confirmation"}
+                        and semantics in {"approval", "authorization", "direct_use_authorization"}
+                        and trust in {"high", "user_confirmed", "client_confirmed"}
+                        and bool(confirmation.get("received_at", "").strip())
+                        and owner in {"user", "client", row.get("approved_by", "").strip().lower()}
+                        and (
+                            preview_id in confirmation.get("affects_artifacts", "")
+                            or preview["path"] in confirmation.get("file_paths", "")
+                        )
+                    )
+            elif evidence_ref:
+                evidence_path = (root / evidence_ref).resolve()
+                try:
+                    evidence_path.relative_to(root)
+                    evidence_ok = (
+                        evidence_path.is_file()
+                        and row.get("evidence_sha256", "").strip() == hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+                    )
+                except ValueError:
+                    evidence_ok = False
+            valid = (
+                row.get("asset_id", "").strip() == preview_id
+                and row.get("asset_sha256", "").strip() == preview["sha256"]
+                and row.get("approval_scope", "").strip().lower() in {"client_review", "client_delivery", "client_visible"}
+                and row.get("status", "").strip().lower() == "approved"
+                and not row.get("revoked_at", "").strip()
+                and row.get("approved_by", "").strip().lower() not in {"", "automation", "worker", "main controller", "ad_creative_operator"}
+                and bool(row.get("approved_at", "").strip())
+                and evidence_ok
+            )
+        if not valid:
+            errors.append("asset authorization record is not backed by current registered human/client authorization")
+
+    channel_record = next((record for record in json_records.values() if record.get("contract") == "adco.asset-channel-fit-record@1.0"), None)
+    if isinstance(channel_record, dict):
+        gate_run_id = channel_record.get("gate_run_id")
+        matches = [row for row in gates if row.get("gate_run_id", "").strip() == gate_run_id]
+        if len(matches) != 1 or (
+            matches[0].get("status", "").strip().upper() not in {"PASS", "PASSED"}
+            or matches[0].get("target_sha256", "").strip() != preview["sha256"]
+            or preview_id not in matches[0].get("checked_artifacts", "")
+        ):
+            errors.append("asset channel-fit record is not backed by a current exact-asset Gate run")
+    return errors
+
+
+def validate_asset_physical_bindings(
+    document: dict[str, Any], verified_artifacts: dict[str, Path], project_root: Path | None = None,
+) -> list[str]:
+    if document.get("surface", {}).get("kind") != "asset-review":
+        return []
+    errors: list[str] = []
+    truth = document["source_truth"]
+    current_version = truth["current_version"]
+    artifacts = {item["artifact_id"]: item for item in truth["artifacts"]}
+    preview_id = document["presentation"]["previews"][0]["artifact_id"]
+    preview_artifact = artifacts[preview_id]
+    json_cache: dict[str, dict[str, Any]] = {}
+
+    def resolve(ref: Any, context: str) -> tuple[dict[str, Any] | None, Any]:
+        match = SOURCE_RE.fullmatch(str(ref or ""))
+        if not match:
+            errors.append(f"{context} has an invalid source reference")
+            return None, UNRESOLVED
+        artifact_id, pointer = match.groups()
+        artifact = artifacts.get(artifact_id)
+        if not isinstance(artifact, dict) or artifact.get("lifecycle") != "current" or artifact.get("version") != current_version:
+            errors.append(f"{context} must reference a current-version artifact")
+            return None, UNRESOLVED
+        path = verified_artifacts.get(artifact_id)
+        if path is None:
+            errors.append(f"{context} source artifact was not physically verified")
+            return None, UNRESOLVED
+        if path.suffix.lower() != ".json":
+            errors.append(f"{context} must reference a structured JSON record")
+            return None, UNRESOLVED
+        if artifact_id not in json_cache:
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                errors.append(f"{context} structured source cannot be read")
+                return None, UNRESOLVED
+            if not isinstance(record, dict):
+                errors.append(f"{context} structured source must be an object")
+                return None, UNRESOLVED
+            json_cache[artifact_id] = record
+        record = json_cache[artifact_id]
+        if record.get("project") != truth.get("project_id") or record.get("version") != current_version:
+            errors.append(f"{context} structured source does not match the declared project and version")
+        found, value = _resolve_json_pointer(record, pointer)
+        if not found:
+            errors.append(f"{context} source pointer does not exist")
+            return record, UNRESOLVED
+        return record, value
+
+    review = document["presentation"].get("creative_review")
+    if isinstance(review, dict):
+        for lens_name in ("asset_role", "reference_boundary", "customer_moment", "product_proof", "brand_memory"):
+            lens = review.get(lens_name)
+            if not isinstance(lens, dict):
+                continue
+            _, bound_value = resolve(lens.get("source_ref"), f"creative_review {lens_name}")
+            if bound_value is not UNRESOLVED and bound_value != lens.get("value"):
+                errors.append(f"creative_review {lens_name} visible value does not match its source")
+        for index, placement in enumerate(review.get("channel_plan", [])):
+            if not isinstance(placement, dict):
+                continue
+            _, bound_value = resolve(placement.get("source_ref"), f"creative_review channel placement {index}")
+            if bound_value is not UNRESOLVED:
+                expected = {key: placement.get(key) for key in ("channel", "format", "status", "assessment_basis", "note")}
+                if not isinstance(bound_value, dict) or any(bound_value.get(key) != value for key, value in expected.items()):
+                    errors.append(f"creative_review channel placement {index} does not match its source")
+
+    evidence_contracts = (
+        ("source_status", "verified", "source_evidence_ref", "adco.asset-source-record@1.0"),
+        ("authorization_status", "confirmed", "authorization_evidence_ref", "adco.asset-authorization-record@1.0"),
+        ("channel_fit_status", "verified", "channel_fit_evidence_ref", "adco.asset-channel-fit-record@1.0"),
+    )
+    for status_name, ready_status, ref_name, contract in evidence_contracts:
+        if preview_artifact.get(status_name) != ready_status:
+            continue
+        record, bound_value = resolve(preview_artifact.get(ref_name), f"asset-review {status_name}")
+        if record is None:
+            continue
+        if record.get("contract") != contract:
+            errors.append(f"asset-review {status_name} references the wrong evidence contract")
+        if record.get("asset_id") != preview_id or record.get("asset_sha256") != preview_artifact.get("sha256"):
+            errors.append(f"asset-review {status_name} evidence does not bind the inspected asset")
+        if bound_value != ready_status:
+            errors.append(f"asset-review {status_name} evidence does not confirm the claimed status")
+        if status_name == "source_status":
+            if not all(_is_nonempty(record.get(key)) for key in ("source_platform", "source_location")):
+                errors.append("asset-review source evidence lacks provenance details")
+        elif status_name == "authorization_status":
+            if record.get("scope") != "direct-client-use" or not all(
+                _is_nonempty(record.get(key)) for key in ("authorized_by", "authorized_at")
+            ):
+                errors.append("asset-review authorization evidence lacks direct-use scope and authorization details")
+        else:
+            targets = record.get("targets")
+            if not isinstance(targets, list) or not targets or any(
+                not isinstance(item, dict)
+                or not _is_nonempty(item.get("channel"))
+                or item.get("format") not in {"16:9", "4:5", "1:1", "9:16"}
+                or item.get("fit_status") != "verified"
+                for item in targets
+            ):
+                errors.append("asset-review channel evidence lacks verified named targets")
+            elif isinstance(review, dict):
+                covered = {(item["channel"], item["format"]) for item in targets}
+                required = {(item["channel"], item["format"]) for item in review.get("channel_plan", [])}
+                if not required.issubset(covered):
+                    errors.append("asset-review channel evidence does not cover every displayed target placement")
+    if truth.get("binding_mode") == "fixture-placeholder":
+        if any(
+            record.get("project") != truth.get("project_id") or record.get("version") != current_version
+            for record in json_cache.values()
+        ):
+            errors.append("fixture placeholder records do not match declared project and version")
+    errors.extend(validate_adco_control_plane_binding(document, project_root, verified_artifacts, json_cache))
+    return errors
 
 
 def image_data_uri(path: Path) -> str:
@@ -515,11 +1025,33 @@ def render_previews(document: dict[str, Any], verified_artifacts: dict[str, Path
         path = verified_artifacts.get(preview["artifact_id"])
         if path is None:
             raise VisualizationError(f"preview artifact is not physically verified: {preview['artifact_id']}")
-        notes = "".join(
-            f'<li><strong>{escape(item["region"])}</strong>：{escape(item["note"])}</li>'
-            for item in preview["annotations"]
+        findings = []
+        hotspots = []
+        for index, item in enumerate(preview["annotations"], start=1):
+            kind = item.get("kind", "recheck")
+            kind_label = CREATIVE_REVIEW_KINDS.get(kind, "复查")
+            finding_id = f'adco-{preview["artifact_id"]}-finding-{index}'
+            findings.append(
+                f'<li id="{finding_id}" class="adco-finding is-{escape(kind)}" data-adco-finding="{index}">'
+                f'<span class="adco-finding-index text-small" aria-hidden="true">{index}</span>'
+                f'<div><span class="text-small adco-finding-kind">{escape(kind_label)}</span>'
+                f'<strong>{escape(item["region"])}</strong><p>{escape(item["note"])}</p></div></li>'
+            )
+            anchor = item.get("anchor")
+            if isinstance(anchor, dict):
+                hotspots.append(
+                    f'<button type="button" class="btn adco-hotspot" aria-pressed="false" '
+                    f'data-adco-hotspot="{index}" aria-controls="{finding_id}" '
+                    f'aria-label="查看画面判断 {index}：{escape(kind_label)}，{escape(item["region"])}" '
+                    f'style="--adco-x:{float(anchor["x"]):g}%;--adco-y:{float(anchor["y"]):g}%">{index}</button>'
+                )
+        location_hint = "点击画面标记定位" if hotspots else "按画面区域阅读"
+        annotation_html = (
+            '<section class="adco-review-findings" aria-label="画面判断">'
+            f'<div class="adco-section-heading"><span>画面判断</span><span class="text-small text-muted">{location_hint}</span></div>'
+            '<ol class="adco-findings">' + "".join(findings) + "</ol></section>"
+            if findings else ""
         )
-        annotation_html = '<ul class="adco-annotations">' + notes + "</ul>" if notes else ""
         artifact = artifact_by_id[preview["artifact_id"]]
         classification_label = ASSET_VISIBLE_VALUES.get(str(artifact.get("review_classification")))
         classification_html = (
@@ -527,14 +1059,61 @@ def render_previews(document: dict[str, Any], verified_artifacts: dict[str, Path
             if classification_label else ""
         )
         figures.append(
-            '<figure class="adco-preview">'
-            f'{classification_html}'
+            '<div class="adco-preview-layout"><figure class="adco-preview">'
+            f'{classification_html}<div class="adco-image-stage">'
             f'<img src="{image_data_uri(path)}" alt="{escape(preview["alt"])}">'
+            f'{"".join(hotspots)}</div>'
             f'<figcaption><strong>{escape(preview["label"])}</strong> · {escape(preview["caption"])}</figcaption>'
-            f'{annotation_html}'
-            '</figure>'
+            f'</figure>{annotation_html}</div>'
         )
     return '<div class="adco-preview-grid">' + "".join(figures) + "</div>"
+
+
+def render_creative_review(document: dict[str, Any]) -> str:
+    review = document["presentation"].get("creative_review")
+    if not isinstance(review, dict):
+        return ""
+    role = review["asset_role"]
+    reference_boundary = review["reference_boundary"]
+    lenses = [review["customer_moment"], review["product_proof"], review["brand_memory"]]
+    lens_html = "".join(
+        '<div class="adco-creative-lens">'
+        f'<span class="text-small text-muted">{escape(item["label"])}</span>'
+        f'<strong>{escape(item["value"])}</strong></div>'
+        for item in lenses
+    )
+    return (
+        '<section class="adco-creative-brief" aria-label="广告创意任务">'
+        '<div class="adco-role-callout"><span class="text-small">这张图在方案里的任务</span>'
+        '<div class="adco-role-copy">'
+        f'<strong>{escape(role["value"])}</strong>'
+        f'<span class="text-small text-muted">参考边界：{escape(reference_boundary["value"])}</span></div></div>'
+        f'<div class="adco-creative-lenses">{lens_html}</div></section>'
+    )
+
+
+def render_channel_plan(document: dict[str, Any]) -> str:
+    review = document["presentation"].get("creative_review")
+    if not isinstance(review, dict):
+        return ""
+    ratio_classes = {"16:9": "is-wide", "4:5": "is-portrait", "1:1": "is-square", "9:16": "is-vertical"}
+    cards = []
+    for item in review["channel_plan"]:
+        status = item["status"]
+        cards.append(
+            '<article class="adco-channel-card">'
+            f'<div class="adco-ratio-frame {ratio_classes[item["format"]]}" aria-hidden="true">'
+            '<span></span><i></i></div>'
+            '<div class="adco-channel-copy">'
+            f'<div><strong>{escape(item["channel"])}</strong><span>{escape(item["format"])}</span></div>'
+            f'<span class="adco-channel-status text-small">{escape(CHANNEL_REVIEW_STATUSES[status])}</span>'
+            f'<p class="text-small">{escape(item["note"])}</p></div></article>'
+        )
+    return (
+        '<section class="adco-channel-plan" aria-label="渠道落位">'
+        '<div class="adco-section-heading"><span>渠道落位</span><span class="text-small text-muted">同一创意方向，不等于同一裁切</span></div>'
+        f'<div class="adco-channel-grid">{"".join(cards)}</div></section>'
+    )
 
 
 def render_options(document: dict[str, Any]) -> str:
@@ -558,13 +1137,19 @@ def render_options(document: dict[str, Any]) -> str:
     )
 
 
-def render_fragment(document: dict[str, Any], verified_artifacts: dict[str, Path] | None = None) -> str:
+def render_fragment(
+    document: dict[str, Any], verified_artifacts: dict[str, Path] | None = None,
+    project_root: Path | None = None,
+) -> str:
     errors = validate_spec(document)
     if errors:
         raise VisualizationError("invalid spec: " + "; ".join(errors))
     if document["execution_context"] != "standalone_chat" or not document["controller"]["user_facing"]:
         raise VisualizationError("orchestrated_provider specs are provider-hidden and cannot render directly")
     verified_artifacts = verified_artifacts or {}
+    binding_errors = validate_asset_physical_bindings(document, verified_artifacts, project_root)
+    if binding_errors:
+        raise VisualizationError("invalid physical bindings: " + "; ".join(binding_errors))
     digest = hashlib.sha256(json.dumps(document, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:12]
     root_id = f"adco-view-{digest}"
     data_id = f"adco-data-{digest}"
@@ -591,7 +1176,15 @@ def render_fragment(document: dict[str, Any], verified_artifacts: dict[str, Path
             {},
         )
         if asset.get("review_classification") == "illustrative-placeholder":
-            recommendation_text = "先取得真实候选素材"
+            annotations = document["presentation"].get("previews", [{}])[0].get("annotations", [])
+            preserves_composition = any(
+                item.get("kind") == "preserve" and item.get("scope") == "composition-principle"
+                for item in annotations if isinstance(item, dict)
+            )
+            recommendation_text = (
+                "保留构图方向，替换演示素材" if preserves_composition
+                else "重新建立创意方向，并替换演示素材"
+            )
         elif (
             asset.get("source_status") == "verified"
             and asset.get("authorization_status") == "confirmed"
@@ -610,26 +1203,42 @@ def render_fragment(document: dict[str, Any], verified_artifacts: dict[str, Path
         },
         "interactions": {
             "actions": [
-                {key: action[key] for key in ("id", "label", "conversation_intent")}
+                {key: action[key] for key in ("id", "label", "conversation_intent", "review_focus") if key in action}
                 for action in document["interactions"]["actions"]
             ]
         },
     }
     phase_visual = render_phase_rail(document["phase"]) if document["surface"]["kind"] in {"current-status", "phase-logic"} else ""
+    if document["surface"]["kind"] == "asset-review":
+        body = (
+            '<section class="adco-asset-verdict" aria-label="当前创意判断">'
+            '<div><span class="text-small">当前创意判断</span>'
+            f'<strong>{escape(recommendation_text)}</strong></div>'
+            f'<span class="viz-badge">{escape(PHASE_LABELS[document["phase"]])}</span></section>\n'
+            f'{render_creative_review(document)}\n'
+            f'{render_previews(document, verified_artifacts)}\n'
+            f'{render_channel_plan(document)}\n'
+            '<section class="adco-use-conditions" aria-label="使用前提">'
+            '<div class="adco-section-heading"><span>使用前提</span><span class="text-small text-muted">创意判断与素材可用性分开看</span></div>'
+            f'{render_fields(document)}</section>\n'
+        )
+    else:
+        body = (
+            f'{phase_visual}\n'
+            '<dl class="adco-summary">'
+            f'<div class="adco-field"><dt class="text-small text-muted">当前阶段</dt><dd>{escape(PHASE_LABELS[document["phase"]])}</dd></div>'
+            f'<div class="adco-field"><dt class="text-small text-muted">专业建议</dt><dd>{escape(recommendation_text)}</dd></div>'
+            '</dl>\n'
+            f'{render_previews(document, verified_artifacts)}\n'
+            f'{render_fields(document)}\n'
+        )
     return (
         f'<div id="{root_id}" data-adco-visual="1">\n<style>\n{css}\n</style>\n'
-        f'{phase_visual}\n'
-        '<dl class="adco-summary">'
-        f'<div class="adco-field"><dt class="text-small text-muted">当前阶段</dt><dd>{escape(PHASE_LABELS[document["phase"]])}</dd></div>'
-        f'<div class="adco-field"><dt class="text-small text-muted">专业建议</dt><dd>{escape(recommendation_text)}</dd></div>'
-        '</dl>\n'
-        f'{render_previews(document, verified_artifacts)}\n'
-        f'{render_fields(document)}\n'
-        f'<p class="adco-question"><strong>需要你决定：</strong>{escape(document["surface"]["question"])}</p>\n'
+        f'{body}'
         f'{render_options(document)}\n<div class="adco-impact"><span class="text-small text-muted">接下来</span>{effects}</div>\n'
         f'<div class="viz-row adco-actions">{actions}</div>\n'
         '<div class="adco-status text-small" data-adco-status role="status">'
-        '提交后我会先确认这是最新内容，再告诉你已记录什么和下一步。</div>\n'
+        '尚未提交任何选择。</div>\n'
         f'<script type="application/json" id="{data_id}">{safe_inline_json(client_payload)}</script>\n'
         f'<script>\n{script}\n</script>\n</div>\n'
     )
@@ -655,18 +1264,50 @@ def write_fragment(
         raise VisualizationError("production render requires --project-root for physical source verification")
     verified: dict[str, Path] = {}
     if project_root is not None:
-        required_ids = None if not test_output else {item["artifact_id"] for item in previews}
+        required_ids = None if (not test_output or document["surface"]["kind"] == "asset-review") else {
+            item["artifact_id"] for item in previews
+        }
         verified, physical_errors = verify_physical_artifacts(document, project_root, required_ids)
         if physical_errors:
             raise VisualizationError("; ".join(physical_errors))
     elif previews:
         raise VisualizationError("preview render requires --project-root")
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(render_fragment(document, verified), encoding="utf-8")
+    fragment = render_fragment(document, verified, project_root)
+    if len(fragment.encode("utf-8")) >= 2_000_000:
+        raise VisualizationError("rendered fragment exceeds the 2 MB OpenAI Visualization limit; use a registered preview derivative")
+    output.write_text(fragment, encoding="utf-8")
 
 
 def render_fallback(document: dict[str, Any]) -> str:
-    fallback = document["fallback"]
+    if document["surface"]["kind"] == "asset-review":
+        review = document["presentation"]["creative_review"]
+        preview_id = document["presentation"]["previews"][0]["artifact_id"]
+        artifact = next(item for item in document["source_truth"]["artifacts"] if item["artifact_id"] == preview_id)
+        fields = {item["id"]: item["value"] for item in document["presentation"]["fields"]}
+        summary = (
+            "当前画面是演示占位图；只能讨论构图原则，人物、产品、情绪、包装和裁切必须在真实候选素材上复查。"
+            if artifact.get("review_classification") == "illustrative-placeholder"
+            else f"当前真实候选素材的使用结论：{fields['availability']}。"
+        )
+        headers = ["画面任务", "消费者时刻", "产品证明", "品牌记忆", "当前结论"]
+        rows = [[
+            review["asset_role"]["value"], review["customer_moment"]["value"],
+            review["product_proof"]["value"], review["brand_memory"]["value"], fields["availability"],
+        ]]
+        channel_nodes = "\n".join(
+            f'  A --> C{index}["{mermaid_label(item["channel"])} {mermaid_label(item["format"])}: '
+            f'{mermaid_label(CHANNEL_REVIEW_STATUSES[item["status"]])}"]'
+            for index, item in enumerate(review["channel_plan"], start=1)
+        )
+        fallback = {
+            "summary": summary,
+            "table": {"headers": headers, "rows": rows},
+            "mermaid": "flowchart LR\n  A[广告创意任务] --> B[画面判断]\n" + channel_nodes,
+            "decision_prompt": document["surface"]["question"],
+        }
+    else:
+        fallback = document["fallback"]
     headers = fallback["table"]["headers"]
     rows = fallback["table"]["rows"]
     divider = ["---"] * len(headers)
@@ -764,8 +1405,10 @@ def validate_writeback(
     errors.extend(frontstage_term_errors(list(confirmation.values()), "customer-visible confirmation"))
     if project_root is not None:
         if source_document is not None:
-            _, physical_errors = verify_physical_artifacts(source_document, project_root)
+            verified_sources, physical_errors = verify_physical_artifacts(source_document, project_root)
             errors.extend(physical_errors)
+            if not physical_errors:
+                errors.extend(validate_asset_physical_bindings(source_document, verified_sources, project_root))
         root = project_root.expanduser().resolve()
         for index, artifact in enumerate(artifact_results):
             candidate = (root / str(artifact.get("path", ""))).resolve()
@@ -859,7 +1502,7 @@ def self_test() -> list[str]:
             for forbidden in ("<!doctype", "<html", "<head", "<body") + NETWORK_TOKENS:
                 if forbidden in text:
                     failures.append(f"{filename}: rendered forbidden token {forbidden}")
-            if "sendFollowUpMessage" not in text or "确认这是最新内容" not in text:
+            if "sendFollowUpMessage" not in text or "请先确认我看到的是最新内容" not in text:
                 failures.append(f"{filename}: missing follow-up/revalidation boundary")
             visible = re.sub(r"<script[\s\S]*?</script>", "", text, flags=re.IGNORECASE)
             visible = re.sub(r"<style[\s\S]*?</style>", "", visible, flags=re.IGNORECASE).lower()
@@ -888,6 +1531,24 @@ def self_test() -> list[str]:
     backstage_action["interactions"]["actions"][0]["label"] = "写入 Gate 回执"
     if not any("customer-visible content contains backstage term" in item for item in validate_spec(backstage_action)):
         failures.append("action label backstage terminology was not rejected")
+    unsafe_second_action = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+    unsafe_second_action["interactions"]["actions"][1].update({
+        "label": "Send now", "conversation_intent": "Send now to the client",
+    })
+    if not any("action 1 requests an external delivery" in item for item in validate_spec(unsafe_second_action)):
+        failures.append("second asset-review action bypassed the external-send policy")
+    for label, intent in (
+        ("立刻交付客户", "请把这张图立刻交付给客户"),
+        ("Deliver to customer", "Deliver this visual to the customer immediately"),
+    ):
+        delivery_action = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+        delivery_action["interactions"]["actions"][1].update({"label": label, "conversation_intent": intent})
+        if not any("requests an external delivery" in item for item in validate_spec(delivery_action)):
+            failures.append(f"external delivery intent bypassed review-only action capability: {label}")
+    generic_action = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+    generic_action["interactions"]["actions"][1]["label"] = "继续"
+    if not any("label is too generic" in item for item in validate_spec(generic_action)):
+        failures.append("generic asset-review action label was accepted")
     physical = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-current-status.json"))
     physical["source_truth"]["artifacts"] = [{
         "artifact_id": "physical-fixture",
@@ -900,20 +1561,41 @@ def self_test() -> list[str]:
     if not any("physical SHA-256 mismatch" in item for item in physical_errors):
         failures.append("physical artifact hash mismatch was not rejected")
     real_candidate = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+    real_candidate["source_truth"]["binding_mode"] = "adco-control-plane"
     real_artifact = real_candidate["source_truth"]["artifacts"][0]
     real_artifact.update({
         "review_classification": "real-candidate",
         "source_status": "verified",
         "authorization_status": "confirmed",
         "channel_fit_status": "verified",
-        "source_evidence_ref": "source-record#/row/source",
-        "authorization_evidence_ref": "authorization-record#/row/authorization",
-        "channel_fit_evidence_ref": "channel-record#/row/channel-fit",
+        "source_evidence_ref": "source-record#/source_status",
+        "authorization_evidence_ref": "authorization-record#/authorization_status",
+        "channel_fit_evidence_ref": "channel-record#/channel_fit_status",
     })
+    real_brief_path = "fixtures/chat-visualization/hero-real-review-brief.json"
+    real_brief = load_json(SKILL_ROOT / real_brief_path)
+    brief_artifact = real_candidate["source_truth"]["artifacts"][1]
+    brief_artifact.update({
+        "path": real_brief_path,
+        "sha256": hashlib.sha256((SKILL_ROOT / real_brief_path).read_bytes()).hexdigest(),
+    })
+    for lens_name, source_key in (
+        ("asset_role", "asset_role"), ("reference_boundary", "reference_role"),
+        ("customer_moment", "customer_moment"), ("product_proof", "product_proof"),
+        ("brand_memory", "brand_memory"),
+    ):
+        lens = real_candidate["presentation"]["creative_review"][lens_name]
+        lens.update({"value": real_brief[source_key], "source_ref": f"hero-review-brief#/{source_key}"})
+    real_candidate["presentation"]["creative_review"]["channel_plan"] = [
+        {**placement, "source_ref": f"hero-review-brief#/channel_plan/{index}"}
+        for index, placement in enumerate(real_brief["channel_plan"])
+    ]
+    for annotation in real_candidate["presentation"]["previews"][0]["annotations"]:
+        annotation["basis"] = "real-file-observation"
     support_files = (
-        ("source-record", "fixtures/chat-visualization/manifest.json"),
-        ("authorization-record", "fixtures/chat-visualization/valid-current-status.json"),
-        ("channel-record", "fixtures/chat-visualization/valid-feedback-impact.json"),
+        ("source-record", "fixtures/chat-visualization/hero-source-record.json"),
+        ("authorization-record", "fixtures/chat-visualization/hero-authorization-record.json"),
+        ("channel-record", "fixtures/chat-visualization/hero-channel-fit-record.json"),
     )
     for artifact_id, relative_path in support_files:
         physical_path = SKILL_ROOT / relative_path
@@ -933,9 +1615,125 @@ def self_test() -> list[str]:
     }
     for field in real_candidate["presentation"]["fields"]:
         field["value"] = real_values[field["id"]]
-    real_errors = validate_spec(real_candidate)
-    if real_errors:
-        failures.append(f"fully verified real candidate was rejected: {real_errors}")
+    with tempfile.TemporaryDirectory(prefix="adco-real-candidate-") as real_temp:
+        project_root = Path(real_temp)
+        for artifact in real_candidate["source_truth"]["artifacts"]:
+            source = SKILL_ROOT / artifact["path"]
+            destination = project_root / artifact["path"]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes())
+        control = project_root / "AD-creative/orchestrator"
+        visual_assets = project_root / "AD-creative/visual_assets"
+        control.mkdir(parents=True, exist_ok=True)
+        visual_assets.mkdir(parents=True, exist_ok=True)
+        (control / "project.yml").write_text("project:\n  name: campaign-summer\n", encoding="utf-8")
+        (control / "current_truth.md").write_text(
+            "## Current Version Truth\ncurrent_version_id: v12\nversion_map_status: current\n", encoding="utf-8"
+        )
+        (control / "version_map.csv").write_text("version_id,status\nv12,current\n", encoding="utf-8")
+        artifact_rows = ["artifact_id,path,version,sha256,lifecycle_state"] + [
+            f'{item["artifact_id"]},{item["path"]},{item["version"]},{item["sha256"]},active'
+            for item in real_candidate["source_truth"]["artifacts"]
+        ]
+        (control / "artifact_index.csv").write_text("\n".join(artifact_rows) + "\n", encoding="utf-8")
+        (control / "source_events.csv").write_text(
+            "source_event_id,received_at,source_owner,source_type,declared_semantics,file_paths,trust_level,affects_artifacts\n"
+            "SRC-FIXTURE-001,2026-07-14T00:00:00Z,fixture-human,asset_source,registration,"
+            "fixtures/chat-visualization/hero-asset-preview.svg,high,hero-visual\n"
+            "CONF-FIXTURE-001,2026-07-14T00:00:00Z,fixture-human,decision,approval,"
+            "fixtures/chat-visualization/hero-asset-preview.svg,user_confirmed,hero-visual\n",
+            encoding="utf-8",
+        )
+        (control / "gate_log.csv").write_text(
+            "gate_run_id,status,target_sha256,checked_artifacts\n"
+            f'GATE-FIXTURE-001,PASS,{real_artifact["sha256"]},hero-visual\n', encoding="utf-8",
+        )
+        (visual_assets / "asset_authorizations.csv").write_text(
+            "authorization_id,asset_id,asset_sha256,approval_scope,status,approved_by,approved_at,evidence_ref,revoked_at\n"
+            f'AUTH-FIXTURE-001,hero-visual,{real_artifact["sha256"]},client_visible,approved,fixture-human,'
+            "2026-07-14T00:00:00Z,user_confirmation:CONF-FIXTURE-001,\n",
+            encoding="utf-8",
+        )
+        real_verified, real_physical_errors = verify_physical_artifacts(real_candidate, project_root)
+        real_errors = validate_spec(real_candidate) + real_physical_errors
+        if not real_physical_errors:
+            real_errors.extend(validate_asset_physical_bindings(real_candidate, real_verified, project_root))
+        if real_errors:
+            failures.append(f"fully verified real candidate was rejected: {real_errors}")
+        incomplete_channel = copy.deepcopy(real_candidate)
+        incomplete_channel["presentation"]["creative_review"]["channel_plan"][1]["status"] = "reframe"
+        incomplete_channel["presentation"]["creative_review"]["channel_plan"][1]["note"] = "需要重新构图。"
+        if not any("availability must match" in item for item in validate_spec(incomplete_channel)):
+            failures.append("real candidate with an unresolved channel placement remained usable")
+        stale_current = copy.deepcopy(real_candidate)
+        (control / "current_truth.md").write_text(
+            "## Current Version Truth\ncurrent_version_id: v11\nversion_map_status: current\n", encoding="utf-8"
+        )
+        if not any(
+            "current_truth does not match" in item
+            for item in validate_asset_physical_bindings(stale_current, real_verified, project_root)
+        ):
+            failures.append("real candidate accepted a mismatched ADCO current truth")
+        (control / "current_truth.md").write_text(
+            "## Current Version Truth\ncurrent_version_id: v12\nversion_map_status: current\n", encoding="utf-8"
+        )
+        authorization_path = visual_assets / "asset_authorizations.csv"
+        valid_authorization_csv = authorization_path.read_text(encoding="utf-8")
+        authorization_path.write_text(valid_authorization_csv.replace("fixture-human", "automation"), encoding="utf-8")
+        if not any(
+            "human/client authorization" in item
+            for item in validate_asset_physical_bindings(real_candidate, real_verified, project_root)
+        ):
+            failures.append("self-signed automation authorization was accepted")
+        authorization_path.write_text(valid_authorization_csv, encoding="utf-8")
+        authorization_path.write_text(
+            valid_authorization_csv.replace("user_confirmation:CONF-FIXTURE-001", "user_confirmation:not-registered"),
+            encoding="utf-8",
+        )
+        if not any(
+            "human/client authorization" in item
+            for item in validate_asset_physical_bindings(real_candidate, real_verified, project_root)
+        ):
+            failures.append("unregistered user_confirmation prefix was accepted as authorization")
+        authorization_path.write_text(valid_authorization_csv, encoding="utf-8")
+        gate_path = control / "gate_log.csv"
+        valid_gate_csv = gate_path.read_text(encoding="utf-8")
+        gate_path.write_text(valid_gate_csv.replace(real_artifact["sha256"], "0" * 64), encoding="utf-8")
+        if not any(
+            "current exact-asset Gate run" in item
+            for item in validate_asset_physical_bindings(real_candidate, real_verified, project_root)
+        ):
+            failures.append("channel fit accepted a Gate run for another asset")
+        gate_path.write_text(valid_gate_csv, encoding="utf-8")
+        irrelevant_evidence = copy.deepcopy(real_candidate)
+        irrelevant_evidence["source_truth"]["artifacts"][0]["source_evidence_ref"] = "hero-review-brief#/asset_role"
+        if not any("wrong evidence contract" in item for item in validate_asset_physical_bindings(irrelevant_evidence, real_verified, project_root)):
+            failures.append("unrelated current artifact was accepted as source evidence")
+        missing_evidence_pointer = copy.deepcopy(real_candidate)
+        missing_evidence_pointer["source_truth"]["artifacts"][0]["source_evidence_ref"] = "source-record#/missing"
+        if not any("source pointer does not exist" in item for item in validate_asset_physical_bindings(missing_evidence_pointer, real_verified, project_root)):
+            failures.append("nonexistent source evidence pointer was accepted")
+        null_evidence = copy.deepcopy(real_candidate)
+        null_evidence["source_truth"]["artifacts"][0]["source_evidence_ref"] = "source-record#/optional_null"
+        source_path = project_root / "fixtures/chat-visualization/hero-source-record.json"
+        null_record = load_json(source_path)
+        null_record["optional_null"] = None
+        source_path.write_text(json.dumps(null_record, ensure_ascii=False), encoding="utf-8")
+        null_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        source_artifact = next(item for item in null_evidence["source_truth"]["artifacts"] if item["artifact_id"] == "source-record")
+        source_artifact["sha256"] = null_hash
+        artifact_index_path = control / "artifact_index.csv"
+        artifact_index_path.write_text(
+            artifact_index_path.read_text(encoding="utf-8").replace(
+                next(item for item in real_candidate["source_truth"]["artifacts"] if item["artifact_id"] == "source-record")["sha256"],
+                null_hash,
+            ),
+            encoding="utf-8",
+        )
+        null_verified, null_physical = verify_physical_artifacts(null_evidence, project_root)
+        null_errors = null_physical or validate_asset_physical_bindings(null_evidence, null_verified, project_root)
+        if not any("does not confirm the claimed status" in item for item in null_errors):
+            failures.append("JSON null evidence bypassed exact status comparison")
     optimistic_candidate = copy.deepcopy(real_candidate)
     optimistic_asset = optimistic_candidate["source_truth"]["artifacts"][0]
     optimistic_asset["authorization_status"] = "pending"
@@ -951,13 +1749,108 @@ def self_test() -> list[str]:
     placeholder_source = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
     placeholder_asset = placeholder_source["source_truth"]["artifacts"][0]
     placeholder_asset["source_status"] = "verified"
-    placeholder_asset["source_evidence_ref"] = "source-record#/row/source"
-    placeholder_source["source_truth"]["artifacts"].append(copy.deepcopy(real_candidate["source_truth"]["artifacts"][1]))
+    placeholder_asset["source_evidence_ref"] = "source-record#/source_status"
+    source_support = next(
+        item for item in real_candidate["source_truth"]["artifacts"] if item["artifact_id"] == "source-record"
+    )
+    placeholder_source["source_truth"]["artifacts"].append(copy.deepcopy(source_support))
     for field in placeholder_source["presentation"]["fields"]:
         if field["id"] == "source-status":
             field["value"] = "来源已确认"
     if not any("placeholder statuses must be not-applicable" in item for item in validate_spec(placeholder_source)):
         failures.append("illustrative placeholder claimed a verified formal source")
+    false_preserve = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+    false_preserve["presentation"]["previews"][0]["annotations"][0].update({
+        "scope": "product", "basis": "composition-reading",
+    })
+    if not any("placeholder can preserve only a composition principle" in item for item in validate_spec(false_preserve)):
+        failures.append("placeholder preserved a product claim from illustrative content")
+    missing_creative_review = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+    missing_creative_review["presentation"].pop("creative_review")
+    if not any("requires ADCO creative_review context" in item for item in validate_spec(missing_creative_review)):
+        failures.append("generic asset status card passed without ADCO creative review context")
+    presentation_only_lens = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+    presentation_only_lens["presentation"]["creative_review"]["customer_moment"].update({
+        "provenance": "presentation-only", "source_ref": None,
+    })
+    if not any("customer_moment must be source-bound" in item for item in validate_spec(presentation_only_lens)):
+        failures.append("core ADCO creative lens accepted presentation-only provenance")
+    stale_creative_source = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+    stale_creative_source["source_truth"]["artifacts"][1]["lifecycle"] = "stale"
+    if not any("requires a current-version source binding" in item for item in validate_spec(stale_creative_source)):
+        failures.append("ADCO creative review accepted a stale source artifact")
+    wrong_version_creative_source = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+    wrong_version_creative_source["source_truth"]["artifacts"][1]["version"] = "v11"
+    if not any("requires a current-version source binding" in item for item in validate_spec(wrong_version_creative_source)):
+        failures.append("ADCO creative review accepted a wrong-version source artifact")
+    invalid_channel_binding = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+    invalid_channel_binding["presentation"]["creative_review"]["channel_plan"][0]["source_ref"] = "missing-brief#/channel"
+    if not any("channel placement 0 requires a current-version source binding" in item for item in validate_spec(invalid_channel_binding)):
+        failures.append("ADCO channel plan passed without current project binding")
+    creative_base = load_json(FIXTURE_ROOT / "valid-asset-review.json")
+    creative_verified, creative_physical_errors = verify_physical_artifacts(creative_base, SKILL_ROOT)
+    if creative_physical_errors:
+        failures.append(f"ADCO creative fixture physical verification failed: {creative_physical_errors}")
+    else:
+        nonexistent_pointer = copy.deepcopy(creative_base)
+        nonexistent_pointer["presentation"]["creative_review"]["customer_moment"]["source_ref"] = "hero-review-brief#/not/present"
+        if not any("source pointer does not exist" in item for item in validate_asset_physical_bindings(nonexistent_pointer, creative_verified)):
+            failures.append("ADCO creative review accepted a nonexistent JSON pointer")
+        mismatched_value = copy.deepcopy(creative_base)
+        mismatched_value["presentation"]["creative_review"]["customer_moment"]["value"] = "fabricated moment"
+        if not any("visible value does not match its source" in item for item in validate_asset_physical_bindings(mismatched_value, creative_verified)):
+            failures.append("ADCO creative review accepted a fabricated visible value")
+        no_anchor = copy.deepcopy(creative_base)
+        for annotation in no_anchor["presentation"]["previews"][0]["annotations"]:
+            annotation.pop("anchor", None)
+        try:
+            no_anchor_html = render_fragment(no_anchor, creative_verified, SKILL_ROOT)
+        except VisualizationError as exc:
+            failures.append(f"valid region-list review without hotspots failed to render: {exc}")
+        else:
+            if "按画面区域阅读" not in no_anchor_html or 'class="btn adco-hotspot"' in no_anchor_html:
+                failures.append("no-anchor review did not provide the accessible region-list mode")
+        fragment_html = render_fragment(creative_base, creative_verified, SKILL_ROOT)
+        visible_fragment = re.sub(r"<script[\s\S]*?</script>", "", fragment_html, flags=re.IGNORECASE)
+        visible_fragment = re.sub(r"<style[\s\S]*?</style>", "", visible_fragment, flags=re.IGNORECASE)
+        if creative_base["surface"]["summary"] in visible_fragment or creative_base["surface"]["question"] in visible_fragment:
+            failures.append("asset fragment duplicates the response summary or decision question")
+        with tempfile.TemporaryDirectory(prefix="adco-large-preview-") as large_temp:
+            large_root = Path(large_temp)
+            oversized = copy.deepcopy(creative_base)
+            large_relative = "fixtures/chat-visualization/oversized-preview.svg"
+            large_path = large_root / large_relative
+            large_path.parent.mkdir(parents=True, exist_ok=True)
+            large_path.write_bytes(
+                b'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="9"><rect width="16" height="9"/>'
+                + b" " * 1_600_000 + b"</svg>"
+            )
+            oversized_artifact = oversized["source_truth"]["artifacts"][0]
+            oversized_artifact.update({
+                "path": large_relative,
+                "sha256": hashlib.sha256(large_path.read_bytes()).hexdigest(),
+            })
+            brief_source = SKILL_ROOT / oversized["source_truth"]["artifacts"][1]["path"]
+            brief_destination = large_root / oversized["source_truth"]["artifacts"][1]["path"]
+            brief_destination.parent.mkdir(parents=True, exist_ok=True)
+            brief_destination.write_bytes(brief_source.read_bytes())
+            try:
+                write_fragment(
+                    oversized, large_root / "oversized-preview.html", test_output=True,
+                    force=False, project_root=large_root,
+                )
+                failures.append("oversized OpenAI Visualization fragment was written")
+            except VisualizationError as exc:
+                if "exceeds the 2 MB" not in str(exc):
+                    failures.append(f"oversized fragment failed for the wrong reason: {exc}")
+    unclassified_finding = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+    unclassified_finding["presentation"]["previews"][0]["annotations"][0].pop("kind")
+    if not any("annotations must classify" in item for item in validate_spec(unclassified_finding)):
+        failures.append("asset review finding passed without preserve/revise/recheck classification")
+    boolean_anchor = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
+    boolean_anchor["presentation"]["previews"][0]["annotations"][0]["anchor"]["x"] = True
+    if not any("anchor must use 0-100" in item for item in validate_spec(boolean_anchor)):
+        failures.append("asset review hotspot accepted a boolean coordinate")
     ppt_document = load_json(FIXTURE_ROOT / "valid-ppt-slide-review.json")
     _, ppt_physical_errors = verify_physical_artifacts(ppt_document, SKILL_ROOT)
     if ppt_physical_errors:
@@ -971,6 +1864,8 @@ def self_test() -> list[str]:
     for key in ("source_evidence_ref", "authorization_evidence_ref", "channel_fit_evidence_ref"):
         if key not in artifact_schema.get("properties", {}):
             failures.append(f"schema lacks asset evidence field: {key}")
+    if "creativeReview" not in schema.get("$defs", {}):
+        failures.append("schema lacks ADCO creative review contract")
     writeback_schema = load_json(WRITEBACK_SCHEMA_PATH)
     if writeback_schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
         failures.append("writeback schema is not draft 2020-12")
@@ -1015,6 +1910,7 @@ def main() -> int:
     validate_parser.add_argument("--project-root")
     fallback_parser = subparsers.add_parser("render-fallback")
     fallback_parser.add_argument("spec")
+    fallback_parser.add_argument("--project-root")
     render_parser = subparsers.add_parser("render-html")
     render_parser.add_argument("spec")
     render_parser.add_argument("--output", required=True)
@@ -1080,13 +1976,27 @@ def main() -> int:
             raise VisualizationError("; ".join(errors))
         if args.command == "validate":
             if args.project_root:
-                _, physical_errors = verify_physical_artifacts(document, Path(args.project_root))
+                verified_sources, physical_errors = verify_physical_artifacts(document, Path(args.project_root))
                 if physical_errors:
                     raise VisualizationError("; ".join(physical_errors))
+                binding_errors = validate_asset_physical_bindings(document, verified_sources, Path(args.project_root))
+                if binding_errors:
+                    raise VisualizationError("; ".join(binding_errors))
             print("ADCO_CHAT_VISUALIZATION_SPEC: PASS")
             print(f"view_id: {document['view_id']}")
             print(f"physical_sources: {'VERIFIED' if args.project_root else 'NOT_CHECKED'}")
         elif args.command == "render-fallback":
+            if document["surface"]["kind"] == "asset-review":
+                if not args.project_root:
+                    raise VisualizationError("asset-review fallback requires --project-root for current physical bindings")
+                fallback_verified, fallback_physical_errors = verify_physical_artifacts(document, Path(args.project_root))
+                if fallback_physical_errors:
+                    raise VisualizationError("; ".join(fallback_physical_errors))
+                fallback_binding_errors = validate_asset_physical_bindings(
+                    document, fallback_verified, Path(args.project_root)
+                )
+                if fallback_binding_errors:
+                    raise VisualizationError("; ".join(fallback_binding_errors))
             print(render_fallback(document))
         else:
             output = Path(args.output).expanduser()
