@@ -1364,12 +1364,14 @@ def validate_writeback(
     if source_document:
         if source.get("view_id") != source_document.get("view_id"):
             errors.append("writeback view_id does not match source spec")
-        source_gate = source_document["interactions"]["actions"][0]["target_gate"]
-        if source.get("current_gate") != source_gate or result.get("current_gate") != source_gate:
-            errors.append("writeback current gate does not match source spec")
-        action_ids = {item["id"] for item in source_document["interactions"]["actions"]}
-        if intent.get("action_id") not in action_ids:
+        actions = source_document["interactions"]["actions"]
+        action_matches = [item for item in actions if item["id"] == intent.get("action_id")]
+        if len(action_matches) != 1:
             errors.append("writeback action_id does not match source spec")
+        else:
+            action_gate = action_matches[0]["target_gate"]
+            if source.get("current_gate") != action_gate or result.get("current_gate") != action_gate:
+                errors.append("writeback current gate does not match selected source action")
         option_ids = {item["id"] for item in source_document["presentation"].get("options", [])}
         selected = intent.get("selected_option_id")
         if selected is not None and selected not in option_ids:
@@ -1436,7 +1438,7 @@ def render_confirmation(
     rows = []
     labels = {
         "decision": "已记录你的选择",
-        "artifact_status": "内容更新",
+        "artifact_status": "将保留",
         "downstream_effect": "需要重新检查",
         "next_visible_stage": "下一步",
     }
@@ -1881,10 +1883,43 @@ def self_test() -> list[str]:
                 failures.append(f"confirmation echo contains action token {forbidden}")
         if "<style>" not in echo or ".adco-fields" not in echo:
             failures.append("confirmation echo is missing self-contained visualization styles")
+        for label in ("已记录你的选择", "将保留", "需要重新检查", "下一步"):
+            if label not in echo:
+                failures.append(f"confirmation echo is missing required user-facing section: {label}")
         hostile_receipt = copy.deepcopy(valid_receipt)
         hostile_receipt["confirmation"]["decision"] = "Gate P4 回执 hash"
         if not any("customer-visible confirmation contains backstage term" in item for item in validate_writeback(hostile_receipt, valid_receipt_path)):
             failures.append("confirmation backstage terminology was not rejected")
+        with tempfile.TemporaryDirectory(prefix="adco-writeback-action-") as action_temp:
+            action_root = Path(action_temp)
+            action_spec = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-option-comparison.json"))
+            action_spec["interactions"]["actions"][1]["target_gate"] = "creative-revision-gate"
+            action_spec_path = action_root / "source.json"
+            action_spec_path.write_text(json.dumps(action_spec, ensure_ascii=False), encoding="utf-8")
+            second_action_receipt = copy.deepcopy(valid_receipt)
+            second_action_receipt["source_spec"].update({
+                "path": "source.json",
+                "sha256": canonical_sha256(action_spec),
+                "current_gate": "creative-revision-gate",
+            })
+            second_action_receipt["intent"].update({
+                "action_id": "request-revision",
+                "selected_option_id": None,
+                "human_readable_intent": "用户要求修改创意路线。",
+            })
+            second_action_receipt["controller_result"]["current_gate"] = "creative-revision-gate"
+            receipt_path = action_root / "receipt.json"
+            receipt_path.write_text(json.dumps(second_action_receipt, ensure_ascii=False), encoding="utf-8")
+            second_action_errors = validate_writeback(second_action_receipt, receipt_path)
+            if second_action_errors:
+                failures.append(f"second action writeback was rejected: {second_action_errors}")
+            wrong_gate_receipt = copy.deepcopy(second_action_receipt)
+            wrong_gate_receipt["source_spec"]["current_gate"] = "creative-route-gate"
+            if not any(
+                "current gate does not match selected source action" in item
+                for item in validate_writeback(wrong_gate_receipt, receipt_path)
+            ):
+                failures.append("second action writeback accepted the first action's Gate")
     stale_path = FIXTURE_ROOT / "invalid-writeback-stale-source.json"
     stale_errors = validate_writeback(load_json(stale_path), stale_path)
     if "source spec hash is stale" not in "\n".join(stale_errors):

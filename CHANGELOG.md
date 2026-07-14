@@ -4,6 +4,7 @@
 
 - Reworked chat-native key-visual review around ADCO's own advertising craft: proposal role, customer moment, product proof, brand memory, focusable region judgments, target-format placement, and creative revision intent instead of a generic status-card flow.
 - Bound real-candidate review to ADCO's current project/version, artifact registry, source event, human/client authorization, and exact-asset channel checks; illustrative fixtures now use a separate fail-closed path and cannot certify production claims.
+- Fixed confirmation echoes to show recorded choice, preserved content, required rechecks, and next step explicitly, and bound writeback validation to the action actually selected instead of the first action in the surface.
 - Make chat-native asset review distinguish illustrative placeholders from real candidates, derive user-visible usability from source, authorization, and channel-fit status, and block misleading placeholder approval paths.
 - Fixed Codex chat delivery so generated ADCO fragments are mounted with the native `::codex-inline-vis` directive instead of being left as invisible local HTML files.
 - Aligned inline surfaces with the host Visualizations design system, added real 736/320 light/dark keyboard and follow-up browser audits, and separated host-visible acceptance from file/browser checks.

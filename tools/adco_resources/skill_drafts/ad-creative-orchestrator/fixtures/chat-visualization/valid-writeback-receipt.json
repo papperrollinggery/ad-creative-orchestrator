@@ -5,5 +5,5 @@
   "controller_result": {"current_gate": "creative-route-gate", "validation_status": "PASS", "recorded_change": "ADCO 将选择记录到当前 v06 决策日志；组件本身未写入。"},
   "authority": {"visual_action_wrote_state": false, "controller_revalidated_source": true, "artifact_hashes_verified": true},
   "artifact_results": [{"artifact_id": "proposal", "path": "AD-creative/handoff/proposal-v06.md", "version": "v06", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "result": "preserved"}, {"artifact_id": "decision-log", "path": "AD-creative/orchestrator/decision_log.csv", "version": "v06", "sha256": "6666666666666666666666666666666666666666666666666666666666666666", "result": "updated"}],
-  "confirmation": {"decision": "已记录路线 A：一刻成真", "artifact_status": "v06 提案保留，相关内容已重新检查", "downstream_effect": "下一版将以路线 A 构建提案骨架；旧草稿不再作为当前版本", "next_visible_stage": "规划下一版提案"}
+  "confirmation": {"decision": "已记录路线 A：一刻成真", "artifact_status": "v06 提案骨架与路线 A", "downstream_effect": "产品证明密度与情绪节奏", "next_visible_stage": "规划下一版提案"}
 }
