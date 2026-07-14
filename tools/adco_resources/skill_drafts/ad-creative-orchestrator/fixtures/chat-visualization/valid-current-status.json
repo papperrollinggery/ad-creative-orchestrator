@@ -1,0 +1,25 @@
+{
+  "contract": "adco.chat-visualization@1.0",
+  "view_id": "current-status-v12",
+  "execution_context": "standalone_chat",
+  "controller": {"surface_owner": "ad-creative-orchestrator", "user_facing": true},
+  "phase": "P5",
+  "surface": {"kind": "current-status", "title": "当前项目状态", "summary": "v12 已进入内容与视觉检查，当前只有一个待确认事项。", "question": "是否先确认主视觉的使用授权，再继续整理交付包？"},
+  "source_truth": {
+    "project_id": "campaign-summer",
+    "current_version": "v12",
+    "artifacts": [{"artifact_id": "current-truth", "path": "AD-creative/orchestrator/current_truth.md", "version": "v12", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "lifecycle": "current"}]
+  },
+  "presentation": {
+    "fields": [
+      {"id": "current-phase", "label": "当前进度", "value": "内容、视觉与可编辑性检查", "provenance": "source-bound", "source_ref": "current-truth#/phase"},
+      {"id": "blocker", "label": "待确认事项", "value": "主视觉的使用授权尚未确认", "provenance": "source-bound", "source_ref": "current-truth#/blockers/0"}
+    ],
+    "options": [], "recommendation": null,
+    "downstream_effects": [{"phase": "P6", "effect": "交付包将在确认后继续整理"}],
+    "quantitative_evidence": [{"label": "已核对授权槽位", "value": 7, "unit": "项", "source_ref": "current-truth#/asset-authorization/count"}]
+  },
+  "interactions": {"local_state": ["expanded-detail"], "actions": [{"id": "request-recheck", "label": "查看需要确认什么", "kind": "request-recheck", "target_gate": "asset-authorization-gate", "conversation_intent": "请说明主视觉的使用授权还需要确认哪些信息。"}]},
+  "write_boundary": {"component_writes_authoritative_state": false, "conversation_intent_only": true, "write_owner": "ad-creative-orchestrator", "revalidation_command": "adco validate <project>", "forbidden_claims": ["approval", "readiness", "send", "completion", "global-install"]},
+  "fallback": {"summary": "当前状态：主视觉的使用授权是唯一待确认事项。", "table": {"headers": ["项目", "状态"], "rows": [["当前版本", "v12"], ["待确认", "主视觉使用授权"]]}, "mermaid": "flowchart LR\n  A[内容与视觉检查] -->|确认主视觉使用授权| B[整理交付包]", "decision_prompt": "是否先确认主视觉的使用授权，再继续整理交付包？"}
+}

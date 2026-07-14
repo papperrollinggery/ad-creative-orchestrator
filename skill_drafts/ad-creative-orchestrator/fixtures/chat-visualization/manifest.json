@@ -1,0 +1,28 @@
+{
+  "valid": [
+    "valid-current-status.json",
+    "valid-phase-logic.json",
+    "valid-blocking-decision.json",
+    "valid-option-comparison.json",
+    "valid-asset-review.json",
+    "valid-ppt-slide-review.json",
+    "valid-feedback-impact.json",
+    "valid-orchestrated-provider.json"
+  ],
+  "render": [
+    "valid-current-status.json",
+    "valid-phase-logic.json",
+    "valid-blocking-decision.json",
+    "valid-option-comparison.json",
+    "valid-asset-review.json",
+    "valid-ppt-slide-review.json",
+    "valid-feedback-impact.json"
+  ],
+  "invalid": [
+    {"file": "invalid-action-overflow.json", "expected_error": "one or two actions"},
+    {"file": "invalid-authoritative-write.json", "expected_error": "must not write authoritative state"},
+    {"file": "invalid-source-binding.json", "expected_error": "invalid source binding"},
+    {"file": "invalid-fallback-incomplete.json", "expected_error": "fallback table must be complete"},
+    {"file": "invalid-provider-visible.json", "expected_error": "provider-hidden"}
+  ]
+}

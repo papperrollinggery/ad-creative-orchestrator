@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">提案封面主视觉样例</title>
+  <desc id="desc">蓝色渐变背景中，一位消费者在户外使用产品，右下角留有产品与标题位置。</desc>
+  <defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#1d4ed8"/><stop offset="1" stop-color="#60a5fa"/></linearGradient></defs>
+  <rect width="960" height="540" rx="24" fill="url(#g)"/>
+  <circle cx="310" cy="204" r="92" fill="#bfdbfe" opacity=".9"/>
+  <rect x="190" y="306" width="240" height="124" rx="62" fill="#dbeafe" opacity=".9"/>
+  <rect x="550" y="90" width="326" height="360" rx="24" fill="#ffffff" opacity=".16"/>
+  <text x="592" y="180" font-family="system-ui,sans-serif" font-size="46" font-weight="700" fill="#ffffff">一刻成真</text>
+  <text x="592" y="228" font-family="system-ui,sans-serif" font-size="22" fill="#eff6ff">真实消费者时刻</text>
+  <rect x="592" y="316" width="122" height="84" rx="18" fill="#ffffff" opacity=".86"/>
+  <text x="614" y="366" font-family="system-ui,sans-serif" font-size="20" font-weight="700" fill="#1d4ed8">产品位</text>
+</svg>

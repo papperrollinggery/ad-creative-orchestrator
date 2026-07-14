@@ -1,0 +1,10 @@
+{
+  "contract": "adco.chat-visualization@1.0", "view_id": "provider-asset-review", "execution_context": "orchestrated_provider",
+  "controller": {"surface_owner": "ad-creative-orchestrator", "user_facing": false}, "phase": "P3",
+  "surface": {"kind": "asset-review", "title": "Provider 素材检查", "summary": "Provider 只返回中性、哈希绑定的审阅数据。", "question": "由 ADCO 决定是否向用户展示这项检查。"},
+  "source_truth": {"project_id": "campaign-summer", "current_version": "v06", "artifacts": [{"artifact_id": "provider-output", "path": "AD-creative/handoff/provider-output.json", "version": "v06", "sha256": "5555555555555555555555555555555555555555555555555555555555555555", "lifecycle": "current"}]},
+  "presentation": {"fields": [{"id": "provider-fact", "label": "Provider 事实", "value": "参考图与槽位绑定", "provenance": "source-bound", "source_ref": "provider-output#/binding"}, {"id": "provider-risk", "label": "风险", "value": "授权状态由 ADCO 复核", "provenance": "source-bound", "source_ref": "provider-output#/risk"}], "options": [], "recommendation": null, "downstream_effects": []},
+  "interactions": {"local_state": [], "actions": [{"id": "adco-inspect", "label": "交由 ADCO 检查", "kind": "inspect-detail", "target_gate": "provider-adoption-gate", "conversation_intent": "请 ADCO 检查 provider 输出后决定是否展示。"}]},
+  "write_boundary": {"component_writes_authoritative_state": false, "conversation_intent_only": true, "write_owner": "ad-creative-orchestrator", "revalidation_command": "adco validate <project>", "forbidden_claims": ["approval", "readiness", "send", "completion", "global-install"]},
+  "fallback": {"summary": "Provider 输出不直接面向用户。", "table": {"headers": ["内容", "边界"], "rows": [["素材绑定", "ADCO 复核"]]}, "mermaid": "flowchart LR\n  Provider --> ADCO --> User", "decision_prompt": "由 ADCO 决定是否向用户展示这项检查。"}
+}

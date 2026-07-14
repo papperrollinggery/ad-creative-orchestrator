@@ -1,6 +1,6 @@
 ---
 name: ad-creative-orchestrator
-description: "Use for Codex-first advertising creative project orchestration: intake, current truth, creative proposals, references, visual assets, controlled specialist work, PPT review, FinalDelivery protection, and client-send readiness."
+description: "Use for Codex-first advertising creative project orchestration: intake, current truth, OpenAI Visualizations decision views, creative proposals, references, visual assets, controlled specialist work, PPT review, feedback, FinalDelivery protection, and client-send readiness."
 ---
 
 # Ad Creative Orchestrator
@@ -24,6 +24,7 @@ Read only the directly relevant one-level reference before acting:
 - Read [migration_and_lifecycle.md](migration_and_lifecycle.md) before touching legacy projects, artifact tombstones, Human Workspace indexes, schema migration, validator diagnostics, or FinalDelivery reconciliation.
 - Read [thread_operations.md](thread_operations.md) before planning, dispatching, observing, reconciling, or cleaning Codex Threads or Agency-backed roles.
 - Read [specialist_exchange_and_craft.md](specialist_exchange_and_craft.md) before specialist exchange, profile analysis, research, image/visual work, PPT export, client package review, or feedback-driven revisions.
+- Read [chat_interaction_and_visualization.md](chat_interaction_and_visualization.md) before using OpenAI Visualizations / `@Visualize` for status, phase logic, blocking decisions, option comparison, asset/PPT review, or feedback return.
 
 Do not load all references by default. The safety rules below always apply.
 
@@ -177,6 +178,12 @@ Before accepting visual assets, bind requirement, reference role, asset slot, us
 
 Feedback must be registered and mapped to affected requirements/artifacts. Material client-visible change creates a new version and invalidates stale package binding; never reuse the old version filename.
 
+## Codex chat surface
+
+Chat is ADCO's primary communication and decision surface; project files remain source truth. On a supported Codex/ChatGPT conversation, use OpenAI Visualizations / `@Visualize` as progressive enhancement: build one validated `adco.chat-visualization@1.0` view from exact artifact/version/hash evidence, render one current decision or inspection surface in the thread visualization directory, and preserve a complete Markdown/table/Mermaid fallback. Data Analytics may provide a separate reviewed numeric evidence view only for a genuine quantitative question; it never replaces the Visualizations interaction or decision loop. Do not redesign the local dashboard or place a multi-stage Workbench inside one reply.
+
+Component selection, expansion, comparison, and draft annotation are presentation-only. A visual action may send one human-readable follow-up message, but ADCO must re-read current truth and validate the active Gate before registering a decision or feedback, creating a new version, invalidating evidence, or advancing state. A click never proves approval, readiness, acceptance, send authorization, or completion.
+
 ## Required final behavior
 
-After major stages run `adco validate <project>`. Before final status, verify exact-current facts, FinalDelivery integrity, package freshness, unresolved confirmations, and Thread cleanup when applicable. Report result, key files, validation status, and any blocker. Never send, publish, upload, install globally, delete, or overwrite without the required explicit authority.
+After major stages run `adco validate <project>`. Before final status, verify exact-current facts, FinalDelivery integrity, package freshness, unresolved confirmations, Thread cleanup when applicable, and every chat-linked or previewed artifact. Report result, key files, validation status, and any blocker. Never send, publish, upload, install globally, delete, or overwrite without the required explicit authority.

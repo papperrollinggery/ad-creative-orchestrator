@@ -1,0 +1,9 @@
+{
+  "contract": "adco.chat-visualization-writeback@1.0",
+  "source_spec": {"path": "valid-option-comparison.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "view_id": "creative-route-comparison", "current_gate": "creative-route-gate"},
+  "intent": {"action_id": "choose-route", "selected_option_id": "route-a", "human_readable_intent": "用户选择路线 A。"},
+  "controller_result": {"current_gate": "creative-route-gate", "validation_status": "PASS", "recorded_change": "不应接受陈旧来源。"},
+  "authority": {"visual_action_wrote_state": false, "controller_revalidated_source": true, "artifact_hashes_verified": true},
+  "artifact_results": [{"artifact_id": "proposal", "path": "AD-creative/handoff/proposal-v06.md", "version": "v06", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "result": "preserved"}],
+  "confirmation": {"decision": "不应显示", "artifact_status": "未写入", "downstream_effect": "无", "next_visible_stage": "停留"}
+}

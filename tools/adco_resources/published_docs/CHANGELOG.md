@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added an OpenAI Visualizations-first chat interaction contract for ADCO status, P0-P8 logic, blocking decisions, option comparison, exact asset/PPT review, feedback impact, and confirmation echo.
+- Added a versioned, hash-bound visualization spec/writeback harness with thread-scoped fragments, human-readable follow-up actions, complete Markdown/table/Mermaid fallback, responsive accessibility checks, and fail-closed source/authority validation.
+- Documented how optional Data Analytics evidence and file preview/annotations complement Visualizations without expanding or duplicating the existing local dashboard.
+
 ## 0.3.2 - 2026-07-13
 
 - Refreshed README, install, roadmap, security, runbook, and operating descriptions to the current v0.3.x control-plane semantics and removed retired colon-prefixed pseudo-command guidance from current onboarding docs.
