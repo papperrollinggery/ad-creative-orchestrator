@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed Codex chat delivery so generated ADCO fragments are mounted with the native `::codex-inline-vis` directive instead of being left as invisible local HTML files.
+- Aligned inline surfaces with the host Visualizations design system, added real 736/320 light/dark keyboard and follow-up browser audits, and separated host-visible acceptance from file/browser checks.
+- Added task-based routing across Mermaid, Codex inline Visualizations, Creative Production image Widgets, optional Data Analytics evidence, and fullscreen MCP Apps without turning ADCO into a dashboard.
 - Added an OpenAI Visualizations-first chat interaction contract for ADCO status, P0-P8 logic, blocking decisions, option comparison, exact asset/PPT review, feedback impact, and confirmation echo.
 - Added a versioned, hash-bound visualization spec/writeback harness with thread-scoped fragments, human-readable follow-up actions, complete Markdown/table/Mermaid fallback, responsive accessibility checks, and fail-closed source/authority validation.
 - Documented how optional Data Analytics evidence and file preview/annotations complement Visualizations without expanding or duplicating the existing local dashboard.

@@ -383,14 +383,14 @@ def render_phase_rail(current_phase: str) -> str:
 
 
 def render_fields(document: dict[str, Any]) -> str:
-    cards = []
+    fields = []
     for field in document["presentation"]["fields"]:
-        cards.append(
-            '<div class="card adco-field">'
-            f'<div class="text-small adco-label">{escape(field["label"])}</div>'
-            f'<div>{escape(field.get("value", ""))}</div></div>'
+        fields.append(
+            '<div class="adco-field">'
+            f'<dt class="text-small text-muted">{escape(field["label"])}</dt>'
+            f'<dd>{escape(field.get("value", ""))}</dd></div>'
         )
-    return '<div class="adco-grid">' + "".join(cards) + "</div>"
+    return '<dl class="adco-fields">' + "".join(fields) + "</dl>"
 
 
 def render_previews(document: dict[str, Any], verified_artifacts: dict[str, Path]) -> str:
@@ -408,10 +408,9 @@ def render_previews(document: dict[str, Any], verified_artifacts: dict[str, Path
         )
         annotation_html = '<ul class="adco-annotations">' + notes + "</ul>" if notes else ""
         figures.append(
-            '<figure class="card adco-preview">'
-            f'<div class="text-small adco-label">{escape(preview["label"])}</div>'
+            '<figure class="adco-preview">'
             f'<img src="{image_data_uri(path)}" alt="{escape(preview["alt"])}">'
-            f'<figcaption>{escape(preview["caption"])}</figcaption>'
+            f'<figcaption><strong>{escape(preview["label"])}</strong> · {escape(preview["caption"])}</figcaption>'
             f'{annotation_html}'
             '</figure>'
         )
@@ -428,13 +427,13 @@ def render_options(document: dict[str, Any]) -> str:
     buttons = []
     for option in options:
         buttons.append(
-            f'<button type="button" class="btn adco-option" data-adco-option="{escape(option["id"])}" '
+            f'<button type="button" class="btn viz-tile" data-adco-option="{escape(option["id"])}" '
             f'aria-pressed="{str(option["id"] == selected_id).lower()}">'
-            f'<strong>{escape(option["label"])}</strong><br><span>{escape(option["summary"])}</span></button>'
+            f'{escape(option["label"])}</button>'
         )
     return (
-        '<div class="adco-option-grid" role="group">' + "".join(buttons) + "</div>"
-        f'<div class="card adco-detail" data-adco-detail aria-live="polite">{escape(selected["label"])}：'
+        '<div class="viz-grid adco-choice-grid" role="group">' + "".join(buttons) + "</div>"
+        f'<div class="card adco-choice-detail" data-adco-detail aria-live="polite">{escape(selected["label"])}：'
         f'{escape(selected["summary"])}；权衡：{escape(selected["tradeoff"])}</div>'
     )
 
@@ -461,13 +460,10 @@ def render_fragment(document: dict[str, Any], verified_artifacts: dict[str, Path
         for index, action in enumerate(document["interactions"]["actions"])
     )
     recommendation = document["presentation"].get("recommendation")
+    recommendation_text = "暂不预选"
     if recommendation:
         recommended = next(item for item in document["presentation"]["options"] if item["id"] == recommendation["option_id"])
-        recommendation_text = f'{recommended["label"]}；{recommendation["reason"]}；权衡：{recommended["tradeoff"]}'
-    else:
-        recommendation_text = "当前没有预设选择，请按页面中的一个问题决定下一步。"
-    effects_text = "；".join(item["effect"] for item in document["presentation"].get("downstream_effects", [])) or "不改变后续内容"
-    next_step = document["interactions"]["actions"][0]["label"]
+        recommendation_text = f'{recommended["label"]}：{recommendation["reason"]}'
     client_payload = {
         "presentation": {
             "options": [
@@ -483,23 +479,19 @@ def render_fragment(document: dict[str, Any], verified_artifacts: dict[str, Path
             ]
         },
     }
+    phase_visual = render_phase_rail(document["phase"]) if document["surface"]["kind"] in {"current-status", "phase-logic"} else ""
     return (
         f'<div id="{root_id}" data-adco-visual="1">\n<style>\n{css}\n</style>\n'
-        f'{render_phase_rail(document["phase"])}\n'
-        '<div class="adco-header"><div><span class="viz-badge">可视化协作</span> '
-        f'<strong>{escape(document["surface"]["title"])}</strong></div>'
-        '<span class="text-small text-muted">你的选择尚未提交</span></div>\n'
-        '<div class="adco-grid">'
-        f'<div class="card adco-field"><div class="text-small adco-label">当前阶段</div><div>{escape(PHASE_LABELS[document["phase"]])}</div></div>'
-        f'<div class="card adco-field"><div class="text-small adco-label">正在查看</div><div>{escape(document["surface"]["summary"])}</div></div>'
-        f'<div class="card adco-field"><div class="text-small adco-label">需要你决定</div><div>{escape(document["surface"]["question"])}</div></div>'
-        f'<div class="card adco-field"><div class="text-small adco-label">建议与权衡</div><div>{escape(recommendation_text)}</div></div>'
-        f'<div class="card adco-field"><div class="text-small adco-label">后续影响</div><div>{escape(effects_text)}</div></div>'
-        f'<div class="card adco-field"><div class="text-small adco-label">下一步</div><div>{escape(next_step)}</div></div></div>\n'
+        f'{phase_visual}\n'
+        '<dl class="adco-summary">'
+        f'<div class="adco-field"><dt class="text-small text-muted">当前阶段</dt><dd>{escape(PHASE_LABELS[document["phase"]])}</dd></div>'
+        f'<div class="adco-field"><dt class="text-small text-muted">专业建议</dt><dd>{escape(recommendation_text)}</dd></div>'
+        '</dl>\n'
         f'{render_previews(document, verified_artifacts)}\n'
         f'{render_fields(document)}\n'
-        f'{render_options(document)}\n<div class="adco-effects">{effects}</div>\n'
-        f'<div class="adco-action-row">{actions}</div>\n'
+        f'<p class="adco-question"><strong>需要你决定：</strong>{escape(document["surface"]["question"])}</p>\n'
+        f'{render_options(document)}\n<div class="adco-impact"><span class="text-small text-muted">接下来</span>{effects}</div>\n'
+        f'<div class="viz-row adco-actions">{actions}</div>\n'
         '<div class="adco-status text-small" data-adco-status role="status">'
         '提交后我会先确认这是最新内容，再告诉你已记录什么和下一步。</div>\n'
         f'<script type="application/json" id="{data_id}">{safe_inline_json(client_payload)}</script>\n'
@@ -671,15 +663,13 @@ def render_confirmation(
     }
     for key, label in labels.items():
         rows.append(
-            '<div class="adco-field"><span class="text-small adco-label">'
-            f'{escape(label)}</span><div>{escape(confirmation[key])}</div></div>'
+            '<div class="adco-field"><dt class="text-small text-muted">'
+            f'{escape(label)}</dt><dd>{escape(confirmation[key])}</dd></div>'
         )
     return (
         '<div data-adco-visual="confirmation" aria-label="选择记录结果">'
         f'<style>\n{css}\n</style>'
-        '<div class="adco-header"><strong>已记录并更新</strong>'
-        '<span class="text-small text-muted">这里只展示结果，不需要再次操作</span></div>'
-        '<div class="adco-grid">' + "".join(rows) + "</div></div>\n"
+        '<dl class="adco-fields">' + "".join(rows) + "</dl></div>\n"
     )
 
 
@@ -793,7 +783,7 @@ def self_test() -> list[str]:
         for forbidden in ("<button", "sendFollowUpMessage", "data-adco-action", "<script"):
             if forbidden in echo:
                 failures.append(f"confirmation echo contains action token {forbidden}")
-        if "<style>" not in echo or ".adco-grid" not in echo:
+        if "<style>" not in echo or ".adco-fields" not in echo:
             failures.append("confirmation echo is missing self-contained visualization styles")
         hostile_receipt = copy.deepcopy(valid_receipt)
         hostile_receipt["confirmation"]["decision"] = "Gate P4 回执 hash"
@@ -803,6 +793,16 @@ def self_test() -> list[str]:
     stale_errors = validate_writeback(load_json(stale_path), stale_path)
     if "source spec hash is stale" not in "\n".join(stale_errors):
         failures.append("stale writeback source was not rejected")
+    css = CSS_PATH.read_text(encoding="utf-8")
+    for forbidden_css in (".card {", ".btn {", ".btn-primary {", "#fff", "#ffffff", "font-family:", "border-radius: 0.9rem"):
+        if forbidden_css in css:
+            failures.append(f"visual CSS overrides host-owned styling: {forbidden_css}")
+    representative = render_fragment(load_json(FIXTURE_ROOT / "valid-option-comparison.json"))
+    if document_title := load_json(FIXTURE_ROOT / "valid-option-comparison.json")["surface"]["title"]:
+        visible = re.sub(r"<script[\s\S]*?</script>", "", representative, flags=re.IGNORECASE)
+        visible = re.sub(r"<style[\s\S]*?</style>", "", visible, flags=re.IGNORECASE)
+        if document_title in visible:
+            failures.append("fragment repeats the response title inside the visualization")
     return failures
 
 
@@ -863,6 +863,7 @@ def main() -> int:
                 output.write_text(render_confirmation(receipt, receipt_path, project_root), encoding="utf-8")
                 print("ADCO_CHAT_VISUALIZATION_CONFIRMATION: PASS")
                 print(output.resolve())
+                print(f'::codex-inline-vis{{file="{output.name}"}}')
         except VisualizationError as exc:
             print(f"ADCO_CHAT_VISUALIZATION_WRITEBACK: FAIL\n- {exc}")
             return 1
@@ -892,6 +893,7 @@ def main() -> int:
             write_fragment(document, output, args.test_output, args.force, project_root)
             print("ADCO_CHAT_VISUALIZATION_RENDER: PASS")
             print(output.resolve())
+            print(f'::codex-inline-vis{{file="{output.name}"}}')
     except VisualizationError as exc:
         print(f"ADCO_CHAT_VISUALIZATION: FAIL\n- {exc}")
         return 1

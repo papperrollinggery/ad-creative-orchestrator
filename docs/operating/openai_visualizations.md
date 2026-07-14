@@ -18,13 +18,27 @@ The integration upgrades the existing Skill. It does not introduce a new product
 
 | Layer | Primary job | Use when | Do not use for |
 | --- | --- | --- | --- |
-| OpenAI Visualizations / `@Visualize` | stage, logic, choices, inspection context, feedback impact, confirmation echo | a compact interactive view makes the current ADCO decision clearer | source truth, approval, Gate passage, send authorization |
+| OpenAI Visualizations | stage, logic, choices, inspection context, feedback impact, confirmation echo | a compact interactive view makes the current ADCO decision clearer | source truth, approval, Gate passage, send authorization |
+| Creative Production native Widgets | image-led style, shot, route, and mood-board intake/review | the installed Widget matches the exact visual decision and real images exist | generic workflow state, authority, or replacing project files |
 | Data Analytics | reviewed numeric evidence | a real trend, distribution, ranking, correlation, composition, coverage, or repeated-row audit supports the decision | generic workflow state, invented scores, UI controls, authority |
 | File preview and annotations | exact page/slide/file inspection | a document, deck, PDF, image, code, or Markdown artifact needs region-specific review | silently changing the current version or treating a comment as approval |
 | Markdown/table/Mermaid | universal fallback | Visualizations is unsupported, unavailable, failed, or unnecessary | hiding required decision fields |
 | Existing local dashboard | durable local fallback and file browser | the user wants a persistent local operational view | duplicating inline controls or receiving authoritative clicks |
 
-Visualizations is the primary interaction layer. Data Analytics and file preview provide evidence to it when appropriate.
+Visualizations is the default compact interaction layer. Creative Production is preferred for image-led selection/review. Data Analytics is reserved for real quantitative evidence; neither is a universal card renderer.
+
+## ADCO surface ladder
+
+| Need | Use first | Escalate only when |
+| --- | --- | --- |
+| One image or slide review | inline preview with region findings and one feedback action | annotations or cross-page context no longer fit legibly |
+| 3-8 image-led routes | Creative Production Widget or image carousel | the collection becomes large, hierarchical, or repeatedly filtered |
+| Large deck, storyboard, mood board, or annotation canvas | fullscreen MCP App / Widget | inline review cannot finish the task |
+| Real observed curve | Data Analytics chart or focused inline SVG | assumptions must be adjustable or server tools must be called repeatedly |
+| Adjustable scenario curves | stateful MCP App / Widget | the user needs bounded controls and recomputation |
+| Static dependency or impact | Mermaid | state must change interactively |
+
+The Skill may also encounter maps, calculators, simulations, audio/video, 3D, modals, file selection, and picture-in-picture. These remain optional specialist surfaces, not default ADCO chrome. Use them only when the user's task inherently needs geography, adjustable modeling, playback, spatial inspection, file input, or a live parallel session.
 
 ## Product model
 
@@ -34,13 +48,14 @@ Each conversation turn may show one small stage-specific surface:
     -> versioned visualization spec
     -> validation
     -> thread-scoped HTML fragment
+    -> exact ::codex-inline-vis directive in the response
     -> local inspect/select/annotate state
     -> human-readable follow-up
     -> controller stale/hash/Gate/authority validation
     -> authoritative write through existing ADCO paths
     -> read-only confirmation echo
 
-No component action directly edits the control plane.
+No component action directly edits the control plane. Writing the fragment is not delivery: the current conversation must visibly mount the directive. A Markdown file link, browser screenshot, and renderer success are test evidence, not the user interface.
 
 ## First-release surfaces
 
@@ -78,15 +93,19 @@ Selection and annotation remain presentation state until submitted as conversati
 The upgrade is releasable only when:
 
 1. the schema, registry, renderer, writeback validator, positive fixtures, and negative fixtures pass;
-2. a real fragment is generated in the active thread visualization directory and visually audited;
-3. stale source, mismatched hash, action overflow, authority escalation, unsafe path, hostile text, and incomplete fallback are rejected;
-4. source and packaged Skill trees match;
-5. the globally installed Skill tree matches the source tree;
-6. existing ADCO tests and distribution checks pass;
-7. an independent forward test and cold review return no blocking findings.
+2. a real fragment is generated in the active thread visualization directory, wrapped with the bundled official renderer, and audited at 736 px light plus 320 px dark;
+3. the current Codex conversation visibly mounts `::codex-inline-vis{file="<title>.html"}` and a primary action sends one readable follow-up back to the conversation;
+4. stale source, mismatched hash, action overflow, authority escalation, unsafe path, hostile text, and incomplete fallback are rejected;
+5. source and packaged Skill trees match;
+6. the globally installed Skill tree matches the source tree;
+7. existing ADCO tests and distribution checks pass;
+8. an independent forward test and cold review return no blocking findings.
 
 ## Sources
 
 - OpenAI Visualizations: https://learn.chatgpt.com/docs/visualizations
+- OpenAI Apps SDK UI principles: https://developers.openai.com/apps-sdk/concepts/ui-guidelines
+- OpenAI Apps SDK examples: https://github.com/openai/openai-apps-sdk-examples
+- MCP Apps examples and host lifecycle: https://github.com/modelcontextprotocol/ext-apps
 - OpenAI file preview and annotations: https://learn.chatgpt.com/docs/artifacts-viewer
 - ChatGPT data analysis: https://help.openai.com/en/articles/8437071-advanced-data-analysis-chatgpt

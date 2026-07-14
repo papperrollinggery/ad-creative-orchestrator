@@ -24,11 +24,63 @@ Translate internal P0-P8 phases into readable labels such as `资料与目标`, 
 
 ## Availability
 
-Visualizations availability depends on the active product surface, account, workspace, rollout, and whether `@Visualize` is selected or exposed. A thread-scoped visualization directory is a positive host signal; its absence is not an error.
+Visualizations availability depends on the active product surface, account, workspace, rollout, and whether `@Visualize` is selected or exposed. A thread-scoped visualization directory is only a host signal; writing a file there does not display it.
 
-- Supported conversation: build and validate `adco.chat-visualization@1.0`, render one fragment inside the current thread's `.codex/visualizations` directory, and show it with the normal chat explanation.
+- Supported Codex conversation: build and validate `adco.chat-visualization@1.0`, render one fragment inside the current thread's `.codex/visualizations` directory, then emit `::codex-inline-vis{file="<title>.html"}` on its own line exactly where the visual should appear. Never substitute a Markdown file link.
 - Unsupported Codex CLI, IDE, account, or failed render: use the spec's complete Markdown, table, or Mermaid fallback without asking the user to change clients.
-- Do not replace this path with raw HTML in the answer, an unrelated plugin card, or a Data Analytics widget that does not answer a genuine quantitative question.
+- A generated HTML file, browser screenshot, Playwright pass, or successful tool result is not user-visible delivery. Do not claim the visual was shown until the host actually renders the inline surface in the conversation.
+- Do not replace this path with raw HTML in the answer, a file link, an unrelated plugin card, or a Data Analytics widget that does not answer a genuine quantitative question.
+
+## Host-native surface routing
+
+Choose the surface by the user's current job, not by which renderer is easiest to call.
+
+| User job | First choice | Use when | Do not use when |
+| --- | --- | --- | --- |
+| Understand a static relationship | Mermaid | labeled nodes and edges fully explain it | adjustable state, image inspection, or direct choice is needed |
+| Make one decision or inspect one bounded state | Codex inline Visualizations | a compact choice, phase rail, impact path, timeline, or review surface materially reduces ambiguity | the result is merely decorative or repeats the reply |
+| Choose visual language, shots, or mood-board routes | Creative Production native Widget | the installed tool matches the exact intake/review job and can return a readable conversation selection | generic project status, approvals, or control-plane evidence |
+| Examine a real numeric trend, composition, ranking, or distribution | Data Analytics native chart/table/artifact | reviewed structured data and reproducible definitions exist | invented scores, ordinary creative comparison, or status reporting |
+| Explore a dense graph, large slide set, or long-lived editor | Fullscreen MCP App / Widget | the task genuinely needs persistent state, repeated tool calls, or deep spatial exploration | a single inline decision can finish the job |
+
+Creative Production and Data Analytics are optional host capabilities. Feature-detect or inspect the callable tool surface; preserve the same user question in the fallback. Never make plugin availability a project blocker.
+
+## Capability router for ADCO
+
+OpenAI's conversation UI can support more than cards: charts and curves, maps, diagrams, calculators, simulations, image-rich carousels, audio/video players, 3D views, file selection, modals, fullscreen workspaces, and picture-in-picture sessions. Availability does not make each form appropriate for ADCO. Route by the user's decision and the amount of state that must remain visible:
+
+| ADCO job | Default surface | Upgrade when | User-visible result |
+| --- | --- | --- | --- |
+| Review one current image or one slide | inline `asset-review` or `ppt-slide-review` | multiple views must stay comparable or annotations become dense | exact inspected preview, plain-language region findings, one feedback action |
+| Compare 3-8 image-led routes | Creative Production mood-board/style/shot Widget or image carousel | the set is larger, hierarchical, or repeatedly filtered | consistent thumbnails, title, at most two lines of relevant metadata, one choice per item |
+| Review a large image set, long deck, storyboard, or spatial annotation set | fullscreen MCP App / Widget | only when one bounded inline review is no longer legible | visual canvas or gallery plus the native conversation composer |
+| Show a real numeric trend | Data Analytics chart or a focused inline SVG plot | adjustable assumptions or repeated server calls are required | labeled axes, units, source definition, visible values, text alternative |
+| Compare adjustable scenarios | stateful MCP App / Widget | the user must change inputs and see curves recompute | bounded controls, overlaid scenario curves, assumptions, readable selected state |
+| Explain schedule, dependencies, or feedback effects | Mermaid for static logic; inline timeline/lanes for interactive emphasis | a dense graph needs repeated exploration | labeled relationships, current point, preserved and affected work |
+| Continue a live playback, teaching, or review session while chatting | picture-in-picture App | the activity genuinely continues in parallel with conversation | persistent compact player/session that responds to chat |
+
+Do not use maps, 3D, PiP, animation, or charts as decoration. Do not manufacture numeric scores, time series, confidence curves, or progress percentages from qualitative project state. The first render must already answer the user's current question; interaction deepens it rather than revealing the basic answer.
+
+### Curve and chart rule
+
+Use a curve only when named numeric observations or an explicitly labeled simulation exist.
+
+- For exact reviewed observations, show the plot first. Label axes, units, important points, missing values, denominator, and source definition. Use a native Data Analytics line/scatter view when available and reproducible.
+- For a small exact dataset already bound to the visualization spec, a focused inline SVG is acceptable. Keep one plot, directly label important values, expose a keyboard-readable selected value, and provide a text/table fallback.
+- For adjustable assumptions, use a calculator or scenario-modeler App with bounded native controls and overlaid curves. Mark simulated values as scenarios, not facts, and keep input state separate from authoritative project records.
+- For schedules and production timing, use aligned lanes on one time axis rather than a decorative smooth curve.
+
+### Image-review rule
+
+Image review can be completed inside the conversation when the target and feedback remain bounded:
+
+1. Resolve and inspect the exact-current image or slide; verify path, version, and hash.
+2. Show the preview at a useful size with alt text and a caption naming what is under review.
+3. Bind each finding to a visible region or object description. Use coordinate overlays only when their geometry is verified against that exact preview; otherwise use a clear region label beside the image.
+4. Let local selection, zoom, compare, or draft annotation remain presentation state.
+5. Submit one readable feedback message to the conversation. ADCO revalidates the target before recording or changing anything.
+
+For 3-8 visual alternatives, prefer a native image carousel or Creative Production mood-board Widget instead of shrinking every image into one inline card. For a long deck, large mood board, before/after slider, pixel-level annotation canvas, or repeated revision session, use fullscreen. File preview remains useful for opening the exact source at page/slide level, but it complements rather than replaces the ADCO feedback and version loop.
 
 ## Smallest useful surface
 
@@ -76,11 +128,12 @@ Never put secrets, private account data, internal prompts, raw capability eviden
 3. Build the versioned spec with exact source bindings and a complete fallback.
 4. Validate the spec before rendering.
 5. Render a new lowercase-hyphenated HTML fragment inside the current thread visualization directory. Never overwrite an earlier fragment.
-6. Show the result, one production judgment, and one decision question. Translate every internal status into customer language.
-7. Local selection, compare, expand, focus, or draft annotation remains component-only state.
-8. A primary action sends a human-readable follow-up through `window.openai.sendFollowUpMessage`.
-9. ADCO re-reads current truth, checks the target Gate and authority, and rejects stale or conflicting input.
-10. Only then register the source event/decision/feedback, create a new client-visible version when required, invalidate affected evidence, and show `confirmation-echo`.
+6. Put the concise title and production judgment in normal Markdown, then emit the exact `::codex-inline-vis` directive. The fragment itself must not repeat the title or prompt.
+7. Confirm that the current conversation visibly mounted the surface. If it did not, use the fallback and report rendering as `验证失败` or `未验证`; never point at the file as if it were the interface.
+8. Local selection, compare, expand, focus, or draft annotation remains component-only state.
+9. A primary action sends a human-readable follow-up through `window.openai.sendFollowUpMessage`.
+10. ADCO re-reads current truth, checks the active decision and authority, and rejects stale or conflicting input.
+11. Only then register the source event/decision/feedback, create a new client-visible version when required, invalidate affected evidence, and show `confirmation-echo`.
 
 If the host bridge is unavailable, the component must display the exact plain-language message the user can send in chat.
 
@@ -163,6 +216,7 @@ The installed Skill carries:
     assets/visualizations/decision-surface.css
     assets/visualizations/decision-surface.js
     scripts/adco_visualization.py
+    scripts/adco_visualization_browser_audit.cjs
     fixtures/chat-visualization/
 
 Validate:
@@ -179,9 +233,19 @@ Render for the current supported conversation:
       --project-root <project-dir> \
       --output <current-thread-visualization-dir>/<lowercase-title>.html
 
+The successful render command prints the exact inline directive. Copy that directive into the response without a code fence or Markdown link:
+
+    ::codex-inline-vis{file="<lowercase-title>.html"}
+
 Run the contract and hostile-input suite:
 
     python3 scripts/adco_visualization.py self-test
+
+Wrap a generated fragment with the bundled official Visualizations `scripts/render.py`, then run the browser interaction audit against that standalone wrapper:
+
+    node scripts/adco_visualization_browser_audit.cjs <officially-wrapped-standalone.html> [screenshot-dir]
+
+The browser audit checks 736 px light and 320 px dark layouts, reduced motion, horizontal overflow, nested scrolling, preview loading and alt text, keyboard option changes, and one follow-up message. It does not prove that the current conversation mounted the directive; host-visible delivery remains a separate check.
 
 Resolve these paths relative to this installed Skill root. Do not assume the source repository is present after global installation.
 
@@ -201,8 +265,11 @@ Before showing a fragment, verify:
 - keyboard selection and action submission work;
 - SVG/image/diagram content has an accessible text summary;
 - reduced-motion preferences are respected.
+- the response contains the exact inline directive and the host visibly mounts it;
+- the user can see the first useful state without clicking, change the primary selection with mouse and keyboard, and submit one readable follow-up;
+- the visual does not repeat the response title, recreate host `.card` / `.btn` styling, or expose controller evidence.
 
-If the fragment cannot be read back or visually inspected, report visualization rendering as `未验证`.
+If the fragment cannot be read back or visually inspected, report visualization rendering as `未验证`. If it passes browser checks but is not visibly mounted in the current conversation, report user-visible delivery as `验证失败`; browser validation and host delivery are separate gates.
 
 ## Local dashboard boundary
 

@@ -50,6 +50,7 @@ REQUIRED_PATHS = [
     "adco_resources/skill_drafts/ad-creative-orchestrator/SKILL.md",
     "adco_resources/skill_drafts/ad-creative-orchestrator/chat_interaction_and_visualization.md",
     "adco_resources/skill_drafts/ad-creative-orchestrator/scripts/adco_visualization.py",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/scripts/adco_visualization_browser_audit.cjs",
     "adco_resources/skill_drafts/ad-creative-orchestrator/schemas/chat-visualization-spec.schema.json",
     "adco_resources/skill_drafts/ad-creative-orchestrator/schemas/chat-visualization-writeback.schema.json",
     "adco_resources/skill_drafts/ad-creative-orchestrator/assets/visualizations/decision-surface.css",

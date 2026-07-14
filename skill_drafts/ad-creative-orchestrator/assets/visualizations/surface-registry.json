@@ -1,13 +1,42 @@
 {
-  "registry_version": "1.0",
+  "registry_version": "1.2",
   "spec_contract": "adco.chat-visualization@1.0",
   "principle": "Use the smallest chat-native review surface that makes one ADCO decision clearer; never create a dashboard.",
+  "capability_routes": {
+    "single-image-or-slide-review": {
+      "renderer": "codex-inline-vis",
+      "upgrade_renderer": "fullscreen-mcp-app",
+      "upgrade_when": "the review requires a large set, dense annotations, repeated editing, or cross-page spatial context"
+    },
+    "image-led-route-comparison": {
+      "renderer": "matching-callable-creative-production-widget-or-image-carousel",
+      "availability_rule": "feature-detect a matching callable capability; otherwise use the fallback without inventing a generic carousel",
+      "item_range": "3-8",
+      "fallback": "codex-inline-vis-or-table"
+    },
+    "observed-numeric-trend": {
+      "renderer": "data-analytics-chart-or-focused-inline-svg",
+      "required_evidence": ["named-data", "axes", "units", "source-definition", "unknown-handling"],
+      "forbidden": ["invented-score", "invented-time-series", "qualitative-progress-curve"]
+    },
+    "adjustable-scenario": {
+      "renderer": "stateful-mcp-app",
+      "required_evidence": ["bounded-inputs", "assumptions", "scenario-label", "readable-selected-state"],
+      "fallback": "static-chart-plus-table"
+    },
+    "static-relationship": {
+      "renderer": "mermaid",
+      "upgrade_renderer": "codex-inline-vis-or-fullscreen-mcp-app",
+      "upgrade_when": "adjustable state or dense repeated exploration is genuinely required"
+    }
+  },
   "surfaces": [
     {
       "kind": "current-status",
       "phases": ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"],
       "purpose": "Show exact-current version, active phase, evidence health and one blocker.",
-      "minimum_visible_fields": ["phase", "current-version", "validation", "blocker"],
+      "minimum_visible_fields": ["current-stage", "current-work", "review-state", "unresolved-question", "next-action"],
+      "renderer": "codex-inline-vis",
       "preferred_visual": "phase-rail",
       "fallback": "table"
     },
@@ -15,7 +44,8 @@
       "kind": "phase-logic",
       "phases": ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"],
       "purpose": "Explain P0-P8 dependencies, passed evidence and the next safe gate.",
-      "minimum_visible_fields": ["current-phase", "prerequisite", "gate", "next-safe-step"],
+      "minimum_visible_fields": ["current-stage", "what-is-needed", "what-must-be-revisited", "next-safe-step"],
+      "renderer": "mermaid-or-codex-inline-vis",
       "preferred_visual": "logic-flow",
       "fallback": "mermaid"
     },
@@ -23,7 +53,8 @@
       "kind": "blocking-decision",
       "phases": ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"],
       "purpose": "Ask exactly one blocking question with its downstream consequence.",
-      "minimum_visible_fields": ["blocker", "decision-owner", "why-now", "downstream-effect"],
+      "minimum_visible_fields": ["question", "who-can-decide", "why-now", "what-each-choice-changes"],
+      "renderer": "codex-inline-vis",
       "preferred_visual": "decision-card",
       "fallback": "markdown"
     },
@@ -32,6 +63,9 @@
       "phases": ["P1", "P3", "P5", "P8"],
       "purpose": "Compare two or three creative options with a recommendation and explicit tradeoffs.",
       "minimum_visible_fields": ["option", "creative-value", "tradeoff", "recommendation"],
+      "renderer": "codex-inline-vis",
+      "upgrade_renderer": "creative-production-moodboard-widget",
+      "upgrade_when": "options are represented by real reviewable images",
       "preferred_visual": "comparison",
       "fallback": "table"
     },
@@ -39,15 +73,21 @@
       "kind": "asset-review",
       "phases": ["P3", "P5", "P6", "P7"],
       "purpose": "Inspect asset role, source, authorization, QA and exact-current bindings.",
-      "minimum_visible_fields": ["asset", "role", "authorization", "qa-status", "binding"],
-      "preferred_visual": "asset-matrix",
+      "minimum_visible_fields": ["asset", "intended-use", "can-it-be-used", "inspection-result", "what-it-affects"],
+      "renderer": "codex-inline-vis",
+      "upgrade_renderer": "creative-production-moodboard-widget",
+      "upgrade_when": "the user is choosing or comparing multiple real visual assets",
+      "preferred_visual": "single-preview-with-region-findings",
       "fallback": "table"
     },
     {
       "kind": "ppt-slide-review",
       "phases": ["P4", "P5", "P6", "P7", "P8"],
       "purpose": "Review exact-current PPT slides, issue locations, severity and revision impact.",
-      "minimum_visible_fields": ["slide", "preview", "issue", "severity", "revision-impact"],
+      "minimum_visible_fields": ["slide-or-page", "preview", "visible-issue", "importance", "what-the-change-improves"],
+      "renderer": "codex-inline-vis",
+      "upgrade_renderer": "fullscreen-mcp-app",
+      "upgrade_when": "the deck is too dense for a bounded inline review",
       "preferred_visual": "slide-strip",
       "fallback": "table"
     },
@@ -55,7 +95,10 @@
       "kind": "feedback-impact",
       "phases": ["P8"],
       "purpose": "Map feedback to requirements and artifacts, then show a read-only confirmation after ADCO writes.",
-      "minimum_visible_fields": ["feedback", "affected-requirement", "affected-artifact", "stale-or-preserved", "confirmation"],
+      "minimum_visible_fields": ["received-feedback", "content-to-revisit", "content-to-preserve", "what-happens-next", "confirmation"],
+      "renderer": "mermaid-or-codex-inline-vis",
+      "upgrade_renderer": "fullscreen-mcp-app",
+      "upgrade_when": "the impact graph is dense or requires repeated filtering",
       "preferred_visual": "impact-map",
       "fallback": "mermaid"
     }
