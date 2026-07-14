@@ -24,6 +24,26 @@ PUBLISHED_DOC_ROOT_PATHS = [
     Path("SECURITY.md"),
 ]
 PUBLISHED_DOCS_ROOT = ROOT / "tools/adco_resources/published_docs"
+CHAT_NATIVE_SKILL_PATH = (
+    ROOT / "skill_drafts/ad-creative-orchestrator/chat_interaction_and_visualization.md"
+)
+CHAT_NATIVE_REQUIRED_SNIPPETS = [
+    "OpenAI Visualizations / `@Visualize`",
+    "adco.chat-visualization@1.0",
+    "Data Analytics evidence",
+    ".codex/visualizations",
+    "window.openai.sendFollowUpMessage",
+    "does not redesign the dashboard",
+    "The frontstage is for the user",
+]
+CHAT_NATIVE_FORBIDDEN_SNIPPETS = [
+    "adco interaction-view",
+    "adco interaction-resolve",
+    "adco.interaction-response",
+    "build_interaction_projection",
+    "native render_table",
+    "native render_chart",
+]
 
 
 def published_doc_paths() -> list[Path]:
@@ -81,6 +101,16 @@ def main() -> int:
             issues.append(f"stale packaged published doc: {packaged}")
     for path in sorted(actual_packaged_docs - expected_packaged_docs):
         issues.append(f"extra packaged published doc: {path}")
+    if not CHAT_NATIVE_SKILL_PATH.exists():
+        issues.append(f"missing chat-native skill reference: {CHAT_NATIVE_SKILL_PATH}")
+    else:
+        chat_native_text = CHAT_NATIVE_SKILL_PATH.read_text(encoding="utf-8")
+        for snippet in CHAT_NATIVE_REQUIRED_SNIPPETS:
+            if snippet not in chat_native_text:
+                issues.append(f"chat-native skill missing required contract: {snippet}")
+        for snippet in CHAT_NATIVE_FORBIDDEN_SNIPPETS:
+            if snippet in chat_native_text:
+                issues.append(f"chat-native skill contains rebuilt-UI contract: {snippet}")
     if issues:
         print("PACKAGED_ASSETS_CHECK=FAIL")
         for issue in issues:

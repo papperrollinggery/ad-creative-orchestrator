@@ -1,0 +1,10 @@
+{
+  "contract": "adco.chat-visualization@1.0", "view_id": "outline-blocking-decision", "execution_context": "standalone_chat",
+  "controller": {"surface_owner": "ad-creative-orchestrator", "user_facing": true}, "phase": "P1",
+  "surface": {"kind": "blocking-decision", "title": "需要你确认的一件事", "summary": "客户提案的核心叙事角度尚未确定，后续内容不能安全展开。", "question": "这版提案以消费者时刻为主，还是以产品证明为主？"},
+  "source_truth": {"project_id": "campaign-summer", "current_version": "v03", "artifacts": [{"artifact_id": "pending-confirmation", "path": "AD-creative/orchestrator/待你确认.md", "version": "v03", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "lifecycle": "current"}]},
+  "presentation": {"fields": [{"id": "blocker", "label": "待你确认", "value": "叙事角度尚未确定", "provenance": "source-bound", "source_ref": "pending-confirmation#/items/0"}, {"id": "effect", "label": "会影响", "value": "提案框架暂时无法定稿", "provenance": "source-bound", "source_ref": "pending-confirmation#/items/0/effect"}], "options": [{"id": "consumer-moment", "label": "消费者时刻", "summary": "先从真实使用瞬间进入故事", "tradeoff": "情绪自然，但产品说明需要更克制", "source_refs": ["pending-confirmation#/items/0"]}, {"id": "product-proof", "label": "产品证明", "summary": "先把核心卖点讲清楚", "tradeoff": "信息明确，但情绪铺垫较少", "source_refs": ["pending-confirmation#/items/0"]}], "recommendation": null, "downstream_effects": [{"phase": "P2", "effect": "确认后固定提案框架"}]},
+  "interactions": {"local_state": ["draft-feedback"], "actions": [{"id": "reply-decision", "label": "在聊天中回答", "kind": "submit-selection", "target_gate": "client-outline-gate", "conversation_intent": "我要回答当前唯一阻塞问题，请先复述两种叙事角度的差异。"}]},
+  "write_boundary": {"component_writes_authoritative_state": false, "conversation_intent_only": true, "write_owner": "ad-creative-orchestrator", "revalidation_command": "adco validate <project>", "forbidden_claims": ["approval", "readiness", "send", "completion", "global-install"]},
+  "fallback": {"summary": "当前只需要确认一个问题：提案采用哪种叙事角度。", "table": {"headers": ["问题", "影响"], "rows": [["消费者时刻或产品证明", "决定提案框架"]]}, "mermaid": "flowchart LR\n  D{选择叙事角度} --> O[固定提案框架]", "decision_prompt": "这版提案以消费者时刻为主，还是以产品证明为主？"}
+}

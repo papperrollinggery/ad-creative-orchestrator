@@ -1,0 +1,8 @@
+{
+  "contract":"adco.chat-visualization@1.0","view_id":"invalid-authoritative-write","execution_context":"standalone_chat","controller":{"surface_owner":"ad-creative-orchestrator","user_facing":true},"phase":"P1","surface":{"kind":"blocking-decision","title":"阻塞问题","summary":"一个问题。","question":"继续吗？"},
+  "source_truth":{"project_id":"test","current_version":"v1","artifacts":[{"artifact_id":"truth","path":"AD-creative/orchestrator/current_truth.md","version":"v1","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","lifecycle":"current"}]},
+  "presentation":{"fields":[{"id":"one","label":"一","value":"一","provenance":"source-bound","source_ref":"truth#/one"},{"id":"two","label":"二","value":"二","provenance":"source-bound","source_ref":"truth#/two"}],"options":[],"recommendation":null,"downstream_effects":[]},
+  "interactions":{"local_state":[],"actions":[{"id":"one","label":"一","kind":"inspect-detail","target_gate":"gate","conversation_intent":"检查。"}]},
+  "write_boundary":{"component_writes_authoritative_state":true,"conversation_intent_only":true,"write_owner":"ad-creative-orchestrator","revalidation_command":"adco validate <project>","forbidden_claims":["approval","readiness","send","completion","global-install"]},
+  "fallback":{"summary":"摘要。","table":{"headers":["项","值"],"rows":[["一","二"]]},"mermaid":"flowchart LR\n A-->B","decision_prompt":"继续吗？"}
+}

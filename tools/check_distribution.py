@@ -48,6 +48,14 @@ REQUIRED_PATHS = [
     "adco_resources/templates/project/AD-creative/handoff/项目看板.md",
     "adco_resources/templates/project/AD-creative/gates/adversarial_council_gate_template.md",
     "adco_resources/skill_drafts/ad-creative-orchestrator/SKILL.md",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/chat_interaction_and_visualization.md",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/scripts/adco_visualization.py",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/schemas/chat-visualization-spec.schema.json",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/schemas/chat-visualization-writeback.schema.json",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/assets/visualizations/decision-surface.css",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/assets/visualizations/decision-surface.js",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/assets/visualizations/surface-registry.json",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/fixtures/chat-visualization/manifest.json",
     "adco_resources/skill_drafts/ad-creative-orchestrator/migration_and_lifecycle.md",
     "adco_resources/skill_drafts/ad-creative-orchestrator/operator_cli_and_gates.md",
     "adco_resources/skill_drafts/ad-creative-orchestrator/specialist_exchange_and_craft.md",
@@ -56,6 +64,7 @@ REQUIRED_PATHS = [
     "adco_resources/contracts/specialist_exchange/v1/handoff.schema.json",
     "adco_resources/contracts/specialist_exchange/v1/receipt.schema.json",
     "adco_resources/contracts/specialist_exchange/v1/adoption.schema.json",
+    "adco_resources/published_docs/docs/operating/openai_visualizations.md",
 ] + [
     f"adco_resources/published_docs/{path.as_posix()}"
     for path in sorted(PUBLISHED_DOC_RELATIVE_PATHS)

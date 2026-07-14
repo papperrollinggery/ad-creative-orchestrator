@@ -107,6 +107,7 @@ def main() -> int:
             ]
         )
         run([python, "tools/check_packaged_assets.py"])
+        run([python, "skill_drafts/ad-creative-orchestrator/scripts/adco_visualization.py", "self-test"])
         run([python, "tools/check_specialist_schemas.py"])
         run([python, "tools/check_docs_commands.py"])
         run([python, "tools/check_gate_fixtures.py"])

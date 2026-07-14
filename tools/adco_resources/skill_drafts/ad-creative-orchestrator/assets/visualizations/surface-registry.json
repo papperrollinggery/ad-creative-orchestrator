@@ -1,0 +1,63 @@
+{
+  "registry_version": "1.0",
+  "spec_contract": "adco.chat-visualization@1.0",
+  "principle": "Use the smallest chat-native review surface that makes one ADCO decision clearer; never create a dashboard.",
+  "surfaces": [
+    {
+      "kind": "current-status",
+      "phases": ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"],
+      "purpose": "Show exact-current version, active phase, evidence health and one blocker.",
+      "minimum_visible_fields": ["phase", "current-version", "validation", "blocker"],
+      "preferred_visual": "phase-rail",
+      "fallback": "table"
+    },
+    {
+      "kind": "phase-logic",
+      "phases": ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"],
+      "purpose": "Explain P0-P8 dependencies, passed evidence and the next safe gate.",
+      "minimum_visible_fields": ["current-phase", "prerequisite", "gate", "next-safe-step"],
+      "preferred_visual": "logic-flow",
+      "fallback": "mermaid"
+    },
+    {
+      "kind": "blocking-decision",
+      "phases": ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"],
+      "purpose": "Ask exactly one blocking question with its downstream consequence.",
+      "minimum_visible_fields": ["blocker", "decision-owner", "why-now", "downstream-effect"],
+      "preferred_visual": "decision-card",
+      "fallback": "markdown"
+    },
+    {
+      "kind": "option-comparison",
+      "phases": ["P1", "P3", "P5", "P8"],
+      "purpose": "Compare two or three creative options with a recommendation and explicit tradeoffs.",
+      "minimum_visible_fields": ["option", "creative-value", "tradeoff", "recommendation"],
+      "preferred_visual": "comparison",
+      "fallback": "table"
+    },
+    {
+      "kind": "asset-review",
+      "phases": ["P3", "P5", "P6", "P7"],
+      "purpose": "Inspect asset role, source, authorization, QA and exact-current bindings.",
+      "minimum_visible_fields": ["asset", "role", "authorization", "qa-status", "binding"],
+      "preferred_visual": "asset-matrix",
+      "fallback": "table"
+    },
+    {
+      "kind": "ppt-slide-review",
+      "phases": ["P4", "P5", "P6", "P7", "P8"],
+      "purpose": "Review exact-current PPT slides, issue locations, severity and revision impact.",
+      "minimum_visible_fields": ["slide", "preview", "issue", "severity", "revision-impact"],
+      "preferred_visual": "slide-strip",
+      "fallback": "table"
+    },
+    {
+      "kind": "feedback-impact",
+      "phases": ["P8"],
+      "purpose": "Map feedback to requirements and artifacts, then show a read-only confirmation after ADCO writes.",
+      "minimum_visible_fields": ["feedback", "affected-requirement", "affected-artifact", "stale-or-preserved", "confirmation"],
+      "preferred_visual": "impact-map",
+      "fallback": "mermaid"
+    }
+  ]
+}

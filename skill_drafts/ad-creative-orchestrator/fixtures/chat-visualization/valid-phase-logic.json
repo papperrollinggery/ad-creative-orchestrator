@@ -1,0 +1,10 @@
+{
+  "contract": "adco.chat-visualization@1.0", "view_id": "phase-logic-v12", "execution_context": "standalone_chat",
+  "controller": {"surface_owner": "ad-creative-orchestrator", "user_facing": true}, "phase": "P4",
+  "surface": {"kind": "phase-logic", "title": "提案制作与检查顺序", "summary": "提案文件、预览和文字内容需要保持一致，之后才能开始内容与视觉检查。", "question": "是否先查看当前提案文件与预览是否一致？"},
+  "source_truth": {"project_id": "campaign-summer", "current_version": "v12", "artifacts": [{"artifact_id": "version-map", "path": "AD-creative/orchestrator/version_map.csv", "version": "v12", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "lifecycle": "current"}]},
+  "presentation": {"fields": [{"id": "prerequisite", "label": "已完成", "value": "创意方向已经确认", "provenance": "source-bound", "source_ref": "version-map#/v12/P3"}, {"id": "next-safe-step", "label": "下一步", "value": "确认提案文件、PDF、页面预览和文字内容一致", "provenance": "source-bound", "source_ref": "version-map#/v12/P4"}], "options": [], "recommendation": null, "downstream_effects": [{"phase": "P5", "effect": "内容一致后开始视觉与内容检查"}]},
+  "interactions": {"local_state": ["expanded-detail"], "actions": [{"id": "inspect-p4", "label": "查看一致性", "kind": "inspect-detail", "target_gate": "ppt-export-gate", "conversation_intent": "请说明当前提案文件、PDF、页面预览和文字内容是否一致。"}]},
+  "write_boundary": {"component_writes_authoritative_state": false, "conversation_intent_only": true, "write_owner": "ad-creative-orchestrator", "revalidation_command": "adco validate <project>", "forbidden_claims": ["approval", "readiness", "send", "completion", "global-install"]},
+  "fallback": {"summary": "先确认提案文件与预览内容一致，再开始内容与视觉检查。", "table": {"headers": ["进度", "需要确认"], "rows": [["提案制作", "文件、PDF、预览和文字一致"], ["内容与视觉检查", "等待上一步完成"]]}, "mermaid": "flowchart LR\n  A[创意方向已确认] --> B[提案文件与预览一致] --> C[内容与视觉检查]", "decision_prompt": "是否先查看当前提案文件与预览是否一致？"}
+}

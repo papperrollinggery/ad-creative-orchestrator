@@ -1,0 +1,9 @@
+{
+  "contract": "adco.chat-visualization-writeback@1.0",
+  "source_spec": {"path": "valid-option-comparison.json", "sha256": "404df994faf79f7df12bca3ed352bc59992e9c9ab63830b0594c087faafe0819", "view_id": "creative-route-comparison", "current_gate": "creative-route-gate"},
+  "intent": {"action_id": "choose-route", "selected_option_id": "route-a", "human_readable_intent": "用户选择路线 A，并要求 ADCO 先核对当前版本与下游影响。"},
+  "controller_result": {"current_gate": "creative-route-gate", "validation_status": "PASS", "recorded_change": "ADCO 将选择记录到当前 v06 决策日志；组件本身未写入。"},
+  "authority": {"visual_action_wrote_state": false, "controller_revalidated_source": true, "artifact_hashes_verified": true},
+  "artifact_results": [{"artifact_id": "proposal", "path": "AD-creative/handoff/proposal-v06.md", "version": "v06", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "result": "preserved"}, {"artifact_id": "decision-log", "path": "AD-creative/orchestrator/decision_log.csv", "version": "v06", "sha256": "6666666666666666666666666666666666666666666666666666666666666666", "result": "updated"}],
+  "confirmation": {"decision": "已记录路线 A：一刻成真", "artifact_status": "v06 提案保留，相关内容已重新检查", "downstream_effect": "下一版将以路线 A 构建提案骨架；旧草稿不再作为当前版本", "next_visible_stage": "规划下一版提案"}
+}
