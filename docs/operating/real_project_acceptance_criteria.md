@@ -43,6 +43,8 @@ P8 feedback + next version
 
 ```text
 source_events.csv
+evidence_chunks.jsonl
+fact_inventory.jsonl
 current_truth.md
 requirements.csv
 gaps.csv
@@ -55,6 +57,9 @@ gaps.csv
 
 ```text
 能区分首次资料、补充、变更、反馈、导演组意见。
+Markdown/text、CSV、JSON、YAML、DOCX、PPTX、PDF、SRT/VTT 可分块读取；图片/视频明确标记 inspection status。
+超过 12,000 字不被静默截断；预算溢出和 parser error 显式报告。
+present fact 不生成 missing gap；conflicting fact 保留各自 evidence refs。
 能识别缺口影响等级。
 能告诉用户先问客户什么。
 不直接开始创意生产。
@@ -84,21 +89,34 @@ research_gate_report.md
 
 ### 3. Creative 成立
 
-必须产出：
+先由 ADCO 产出 contract：
 
 ```text
+brief_snapshot.json
+creative_brief_contract.json
+creative_candidate.schema.json
+creative_generation_request.json
+creative_open_evidence_gaps.json
+```
+
+`creative-brief` 不生成方向。GPT-5.6 Sol 或明确选择的专业 Specialist 生成 4-6 个候选，独立 Critic 保留 2-3 个，再由 `creative-import` 产出：
+
+```text
+current_candidate.json
+candidate_import_receipt.json
 creative_directions.md
 option_matrix.csv
-message_line_candidates.md
-proposal_structure.md
-creative_gate_report.md
+creative_critic_receipt.json
 ```
 
 通过标准：
 
 ```text
-方向数量符合客户或用户要求。
-每个方向有主张、逻辑、关键画面、产品露出方法、参考支撑。
+每个 post-Critic 方向绑定 exact brief snapshot 和现有 evidence chunks。
+2-3 个方向的 normalized creative mechanism 不重复。
+每个方向有 human tension、brand/audience truth、single-minded proposition、关键画面、story/behavior、product role、channel execution、brand ownership 和 production risk。
+无证据/stale candidate 被拒绝，品牌专属性弱被标记。
+确定性 creative-review 不冒充独立 Critic 或客户批准。
 废弃文案不会回流到客户稿。
 ```
 
@@ -291,7 +309,7 @@ AD-creative/skill_drafts/<skill-slug>/install_request.md
 操作台可搜索、可筛选、可切换 Work / Materials / Assets / Gates / Decisions
 三方议会审核能给出 PASS / PARTIAL_PASS / BLOCKED
 用户确认搜索后能产出 reference pack
-能生成两到三个创意方向
+能由 Sol/专业 Specialist 基于 creative-brief 生成候选，经独立 Critic 留下两到三个方向，再由 creative-import 验证采用
 能规划视觉资产和 image job
 能跑视觉审核
 能先确认客户可读文本，再生成不可变 PPT 与 fresh 客户可审包

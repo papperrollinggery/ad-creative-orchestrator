@@ -1,0 +1,17 @@
+{
+  "schema_id": "adco.control-plane",
+  "schema_version": "2.0",
+  "migration_manifest": "AD-creative/orchestrator/migrations/control_plane_v2_manifest.json",
+  "lifecycle_values": [
+    "active",
+    "archived",
+    "deprecated",
+    "legacy_unknown",
+    "legacy_unresolved_tombstone",
+    "pending",
+    "rejected",
+    "removed",
+    "superseded",
+    "withdrawn"
+  ]
+}

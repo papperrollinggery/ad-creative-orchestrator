@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Replaced the fixed three-direction template path with an evidence-bound `creative-brief` → Sol/professional Specialist → independent Critic → `creative-import` contract; `creative-proposal` remains only as a deprecated brief alias.
+- Added multi-format, source-preserving ingestion plus evidence chunks and a structured fact inventory; long inputs use an explicit aggregate budget and present facts no longer invert into missing gaps.
+- Made default `adco run` lightweight and measurable: one dashboard render, no Council/Specialist/PPT/Client Pack/full validation, affected-scope validators only, and JSON phase timings/counters.
+- Added Specialist Exchange v2 highest-common-version negotiation, minimal inline handoff/receipt contracts, v1-only provider fallback, independent ADCO adoption, and rejection of nested dispatch or outer readiness claims.
+- Made source/package activation explicit-only and generated project agent policy conditional so ADCO/DIR source maintenance cannot recursively activate the ADCO project workflow.
 - Reworked chat-native key-visual review around ADCO's own advertising craft: proposal role, customer moment, product proof, brand memory, focusable region judgments, target-format placement, and creative revision intent instead of a generic status-card flow.
 - Bound real-candidate review to ADCO's current project/version, artifact registry, source event, human/client authorization, and exact-asset channel checks; illustrative fixtures now use a separate fail-closed path and cannot certify production claims.
 - Fixed confirmation echoes to show recorded choice, preserved content, required rechecks, and next step explicitly, and bound writeback validation to the action actually selected instead of the first action in the surface.

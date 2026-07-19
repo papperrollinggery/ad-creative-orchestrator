@@ -249,7 +249,11 @@ def main() -> int:
         run_json([python, *operator, "hygiene", str(sample), "--json"])
         run([python, *operator, "goal-run", str(sample), "--goal-id", "latest", "--max-steps", "1"])
         run_json([python, *operator, "goal-run", str(sample), "--goal-id", "latest", "--max-steps", "1", "--json"])
-        run([python, *operator, "film-quality-gate", str(sample)])
+        run_expected_exit(
+            [python, *operator, "film-quality-gate", str(sample)],
+            expected_exit=1,
+            required_text="FILM_QUALITY_GATE=BLOCKED",
+        )
         run([python, *operator, "demo", str(demo), "--no-open"])
         run([python, *operator, "quickstart", str(quickstart), "--no-open"])
         run_json([python, *operator, "quickstart", str(quickstart_json), "--no-open", "--json"])

@@ -50,24 +50,22 @@ adco open-dashboard <项目目录>
 adco docs
 ```
 
-产物：
+默认 `adco run` 产物：
 
 ```text
 AD-creative/handoff/操作台.html
 AD-creative/handoff/项目看板.md
 AD-creative/handoff/待你确认.md
 AD-creative/handoff/客户追问话术.md
-AD-creative/client_review/client_review_outline.md
-AD-creative/client_review/client_outline.csv
-AD-creative/proposal_architecture/proposal_structure.md
+AD-creative/orchestrator/evidence_chunks.jsonl
+AD-creative/orchestrator/fact_inventory.jsonl
 AD-creative/orchestrator/requirements.csv
 AD-creative/orchestrator/gaps.csv
 AD-creative/orchestrator/current_truth.md
-AD-creative/orchestrator/profile_knowledge/profile_current_truth.md
-AD-creative/handoff/画像分析简报.md
-AD-creative/gates/THREE-COUNCIL-READINESS_report.md
 AGENTS.md
 ```
+
+默认运行只做资料解析、事实/缺口更新、handoff 刷新、一次操作台渲染和受影响范围验证；Council、画像分析、创意方向、Specialist、客户 outline、PPT、Client Pack 和全量 delivery validation 都不会自动执行。
 
 `AGENTS.md` 在项目根目录。它不是客户稿，而是给 Codex 线程看的项目规则：先读哪些文件、哪些事必须停下来确认、哪些 Gate 必须跑、`VALIDATION=PASS` 不能当作客户创意质量批准。
 
@@ -80,17 +78,18 @@ AD-creative/orchestrator/AGENTS.merge_suggestion.md
 
 如果根目录 `AGENTS.md` 缺失或没有合入必需规则，`adco validate` 会返回 `CHECK`。
 
-adco 的创意方案定位：
+adco 的创意控制定位：
 
 ```text
-adco creative-proposal <项目目录> [--work-id <id>] [--json]
-adco creative-quality-gate <项目目录>
+adco creative-brief <项目目录> [--work-id <id>] [--json]
+adco creative-import <项目目录> --file <candidate.json> [--json]
+adco creative-review <项目目录> [--json]
 
-creative-proposal 起草 internal creative proposal：challenge、insight、creative idea、proposal structure、证据映射和客户待确认项。
-creative-quality-gate 只检查 proposal 草稿的结构、追溯、证据和专业完整度。
-证据稀疏、来源未闭合或关键假设未确认时，可以是 PARTIAL_PASS / BLOCKED。
-它不批准审美、不代表客户喜欢、不保证商业效果，也不能替代客户或创意负责人确认。
-视频/分镜/video prompt 通过 `adco.specialist-exchange` 交给 `dircreative.film-preproduction`；ADCO 保留采用、版本、PPT 和客户准备权。
+creative-brief 只冻结 evidence/fact/requirement/gap，并生成 brief contract、candidate schema 和 generation request；它不生成创意方向。
+GPT-5.6 Sol 或明确选择的专业 Specialist 基于该 contract 生成 4-6 个候选；独立 Critic 做品牌替换测试和机制去重后保留 2-3 个，再交给 creative-import。
+creative-import 拒绝无证据、stale snapshot 和重复机制；品牌专属性弱会被标记。creative-review 只是确定性结构/语言 lint，不能替代独立 Critic、客户或创意负责人判断。
+creative-proposal 仅为 creative-brief 的弃用兼容 alias。
+视频/分镜/video prompt 通过协商后的 `adco.specialist-exchange` 交给 `dircreative.film-preproduction`；ADCO 保留采用、版本、PPT 和客户准备权。
 image / KV / 背景图交给 imagegen 或 Creative Production。
 固定 PPT / DOCX / XLSX 模板交给 Template Creator。
 ```
@@ -118,7 +117,7 @@ AD-creative/handoff/客户追问话术.md
 AD-creative/client_review/client_outline.csv
 ```
 
-第一轮只到客户可读文本框架。人工或客户逐页确认后，再运行：
+默认 `run` 只到 Intake/handoff。客户可读 outline 必须在后续明确任务中形成；人工或客户逐页确认 exact outline 后，再运行：
 
 ```text
 adco confirm-client-outline <项目目录> --confirmed-by "<人工确认者>" --confirmed-at <iso_time> --evidence-ref "<user_confirmation:id|client_confirmation:id>"
@@ -225,7 +224,9 @@ adco next <项目目录>
 adco council <项目目录> --render-dashboard
 adco intake <项目目录>
 adco profile-analyze <项目目录> --source-id <SRC-ID> --brand <品牌> --company <公司>
-adco creative-proposal <项目目录>
+adco creative-brief <项目目录>
+adco creative-import <项目目录> --file <candidate.json>
+adco creative-review <项目目录>
 adco creative-quality-gate <项目目录>
 adco search-quality-gate <项目目录>
 adco reference-pack-gate <项目目录>

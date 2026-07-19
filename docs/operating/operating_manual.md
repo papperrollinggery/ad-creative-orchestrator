@@ -39,19 +39,21 @@ AD-creative/handoff/操作台.html
 adco run <项目目录> --material <资料文件或文件夹>
 ```
 
-自动生成：
+默认 `adco run` 生成或更新：
 
 ```text
 AD-creative/handoff/操作台.html
 AD-creative/handoff/项目看板.md
 AD-creative/handoff/待你确认.md
 AD-creative/handoff/客户追问话术.md
-AD-creative/client_review/client_review_outline.md
-AD-creative/client_review/client_outline.csv
-AD-creative/proposal_architecture/proposal_structure.md
-AD-creative/gates/THREE-COUNCIL-READINESS_report.md
+AD-creative/orchestrator/evidence_chunks.jsonl
+AD-creative/orchestrator/fact_inventory.jsonl
+AD-creative/orchestrator/requirements.csv
+AD-creative/orchestrator/gaps.csv
 AGENTS.md
 ```
+
+默认不会运行 Council、画像分析、创意生成、Specialist Exchange、客户 outline、PPT、Client Pack 或全量 delivery validation。
 
 检查状态：
 
@@ -79,19 +81,15 @@ adco thread-plan <项目目录> --title <目标标题> --objective <目标内容
 
 Threads 默认不启用。只有有界隔离、真实并行或独立审阅确有必要时才运行 `thread-plan`。
 
-生成内部创意 proposal 草稿：
+生成 evidence-bound 创意 brief：
 
 ```text
-adco creative-proposal <项目目录> [--work-id <id>] [--json]
+adco creative-brief <项目目录> [--work-id <id>] [--json]
+adco creative-import <项目目录> --file <candidate.json> [--json]
+adco creative-review <项目目录> [--json]
 ```
 
-运行创意 proposal 质量 Gate：
-
-```text
-adco creative-quality-gate <项目目录>
-```
-
-双击 launcher 会在 `run` 后生成上述客户可读文本框架，然后停在人工确认前。此时 `client-outline-gate` 会因缺少 hash-bound confirmation 保持 BLOCKED；人工确认并重跑 Gate 前不会自动生成 PPT。
+`creative-brief` 只生成 snapshot/contract/schema/request/open gaps，不生成方向。GPT-5.6 Sol 或专业 Specialist 生成 4-6 个候选，独立 Critic 去重后保留 2-3 个，再由 `creative-import` 验证并登记；`creative-review` 只是确定性 lint。双击 launcher 的默认 `run` 不进入这条创意链路，也不生成客户 outline 或 PPT。
 
 `thread-plan` 会写入：
 
@@ -149,23 +147,23 @@ search-quality-gate / reference-pack-gate / visual-quality-gate / client-pack-ga
 每次 Gate 运行追加新的 `gate_run_id` 并引用被替代记录，不覆盖旧结论。
 ```
 
-创意 proposal 和质量 Gate：
+创意 contract 和候选质量：
 
 ```text
-creative-proposal 是工作流和 CLI 命令，不是客户最终稿。
-它用于起草 challenge interpretation、insight、creative idea、option matrix、message line、proposal structure、证据映射和客户待确认项。
-creative-quality-gate 是独立 Gate 和 CLI 命令，独立于 adco validate。
-adco validate 只看结构和追溯；creative-quality-gate 看 proposal 草稿的策略/创意/专业完整度。
-creative-quality-gate 通过也不代表创意品味、客户偏好、商业效果或最终发送已经批准。
-证据稀疏、来源未闭合或关键假设未确认时，creative-quality-gate 可以是 PARTIAL_PASS / BLOCKED。
+creative-brief 是 evidence contract，不是创意方向或客户最终稿。
+Sol/专业 Specialist 负责创意推理；独立 Critic 负责创意判断和品牌替换测试；ADCO 负责 evidence binding、导入、版本、provenance 和 Gate。
+creative-import 拒绝 stale snapshot、无效 evidence refs、字段缺失和重复机制；品牌专属性弱会被标记。
+creative-review 是确定性结构/语言 lint，不能替代独立 Critic。
+creative-proposal 只是 creative-brief 的弃用 alias，不再生成固定方向。
 详细标准见 docs/operating/creative_proposal_quality_standard.md。
 ```
 
 模块路由：
 
 ```text
-策略方向、创意 proposal、option matrix、message line、proposal structure：留在 adco。
-视频脚本、分镜、导演阐述、video prompt：通过 `adco.specialist-exchange` 的 `dircreative.film-preproduction` profile 交接；ADCO 不依赖 DIR 仓库路径、包版本或内部 validator。
+项目事实、brief contract、候选 provenance、版本和 Gate：留在 ADCO control plane。
+创意推理：交给 GPT-5.6 Sol 或明确选择的专业 Specialist；ADCO 不用确定性模板冒充完整创意引擎。
+视频脚本、分镜、导演阐述、video prompt：通过协商后的 `adco.specialist-exchange` 交给 `dircreative.film-preproduction`；DIR 是 film craft provider，不能更新 ADCO 外层 readiness。
 image / KV / 背景图 / moodboard / visual asset：交给 imagegen 或 Creative Production，回到 adco 登记和 visual-quality-gate。
 固定 PPT / DOCX / XLSX 模板和版式系统：交给 Template Creator 或专门文档模板流程，adco 只维护内容结构、字段、追溯和 Gate。
 ```
@@ -333,7 +331,7 @@ adco specialist-handoff <项目目录> --work-id <WORK-ID> --profile-id dircreat
 adco specialist-adopt <项目目录> --handoff <handoff.json> --receipt <receipt.json> --decision partial_adopt --reason "<理由>" --map-output <DIR-ID=AD-creative/film/output.md>
 ```
 
-默认 `inline`，不会自动创建 Thread。兼容 descriptor 可在 `1.x` 独立演进，但必须显式支持 base contract `1.0`；若 profile 声明 required receipt extension，ADCO 会把 exact id/version 写进 handoff acceptance，缺失即拒收。DIRcreative 只给 specialist recommendation/QA；ADCO 独立记录 adoption，且仍独占 current truth、version、PPT、FinalDelivery 和 send readiness。
+Controller 选择双方支持的最高 contract version。Provider 同时支持 `2.0`/`1.0` 时使用 v2，只支持 `1.0` 时自动回退 v1；无共同版本则拒绝。V2 只有 `inline`，禁止 nested dispatch，receipt 禁止 `client_ready`、`ppt_ready`、`final_delivery_ready`、`send_ready`、`project_complete`、`control_plane_updated` 等外层声明。V1 原有 descriptor extension、授权、ThreadOps、receipt 和六个 false claims 保持兼容。DIRcreative 只给 specialist recommendation/QA；ADCO 独立记录 adoption，且仍独占 current truth、version、PPT、FinalDelivery 和 send readiness。
 
 非开发者交接 Gate：
 
@@ -383,22 +381,21 @@ adco run <项目目录> --material <资料文件或文件夹>
 本轮目标
 ```
 
-Codex 自动：
+默认运行时自动：
 
 ```text
 初始化缺失模板
 登记资料
-抽取需求和缺口
+按格式解析完整资料并写 evidence chunks
+建立 fact inventory，抽取 requirements 和真实 gaps/conflicts
 更新项目看板和待确认
 生成客户追问话术
-生成客户可读文本框架并停在 hash-bound 人工确认前；不自动生成 PPT
-判断是否需要搜索
-推进到安全的下一步
-遇到必须人工决策就停
-运行 adco validate
+操作台只渲染一次
+只运行受 changed artifacts 影响的 Validator
+报告 parse/fact/write/dashboard/validation/total timing 和下一条安全命令
 ```
 
-`adco validate` 只验证结构和追溯关系。`VALIDATION=PASS` 不代表创意质量、审美、客户措辞、AI 图客户可见性或最终发送已经批准；这些必须继续跑对应 Gate 并人工确认。
+默认 `run` 的 Council/Specialist/PPT/Client Pack/full-validation 计数均为 0。完整 `adco validate` 是显式命令；`VALIDATION=PASS` 仍只代表结构和追溯关系，不代表创意质量、审美、客户措辞、AI 图客户可见性或最终发送已经批准。
 
 ### start/status 路线 — `adco status`
 
@@ -443,6 +440,8 @@ adco run <项目目录> --material <新增资料>
 ```text
 AD-creative/orchestrator/source_events.csv
 AD-creative/orchestrator/events.jsonl
+AD-creative/orchestrator/evidence_chunks.jsonl
+AD-creative/orchestrator/fact_inventory.jsonl
 ```
 
 再更新：

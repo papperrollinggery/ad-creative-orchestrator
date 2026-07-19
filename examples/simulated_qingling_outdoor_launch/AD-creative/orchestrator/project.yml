@@ -1,4 +1,5 @@
 project:
+  schema_version: "2.0"
   name: "Qingling Outdoor SS Launch Sim"
   client: "青岭户外"
   stage: research_plan

@@ -38,9 +38,13 @@ Keep user-facing summaries concise and decision-readable. Treat project files, i
 Read only the directly relevant one-level reference before acting:
 
 - Read [operator_cli_and_gates.md](operator_cli_and_gates.md) for CLI syntax, phase/gate order, non-developer entrypoints, status semantics, and required control-plane files.
-- Read [migration_and_lifecycle.md](migration_and_lifecycle.md) before touching legacy projects, artifact tombstones, Human Workspace indexes, schema migration, validator diagnostics, or FinalDelivery reconciliation.
+- Read [intake_and_facts.md](intake_and_facts.md) only for material ingestion, evidence chunks, facts, requirements, conflicts, and gaps.
+- Read [creative_contract.md](creative_contract.md) only for creative briefing, candidate generation/import, and Critic review.
+- Read [specialist_exchange_and_craft.md](specialist_exchange_and_craft.md) only for a neutral Specialist Exchange handoff, receipt, or ADCO adoption.
+- Read [ppt_and_client_pack.md](ppt_and_client_pack.md) only for PPT export, exact-current derivatives, Client Pack review, or send-readiness evidence.
+- Read [final_delivery.md](final_delivery.md) only for FinalDelivery inventory, lock, or reconciliation.
+- Read [migration_and_lifecycle.md](migration_and_lifecycle.md) before touching legacy projects, artifact tombstones, Human Workspace indexes, schema migration, or validator diagnostics.
 - Read [thread_operations.md](thread_operations.md) before planning, dispatching, observing, reconciling, or cleaning Codex Threads or Agency-backed roles.
-- Read [specialist_exchange_and_craft.md](specialist_exchange_and_craft.md) before specialist exchange, profile analysis, research, image/visual work, PPT export, client package review, or feedback-driven revisions.
 - Read [chat_interaction_and_visualization.md](chat_interaction_and_visualization.md) before using OpenAI Visualizations / `@Visualize` for status, phase logic, blocking decisions, option comparison, asset/PPT review, or feedback return.
 
 Do not load all references by default. The safety rules below always apply.
@@ -50,18 +54,23 @@ Do not load all references by default. The safety rules below always apply.
 Use one control thread and project files by default. Complexity alone does not justify worker Threads, a council, or a fixed roster.
 
 ```text
-materials -> intake/current truth -> requirements + gaps
--> customer-readable text framework + proposal skeleton
--> human/client review of exact outline
+materials -> parsed evidence chunks -> fact inventory
+-> requirements + evidence-backed gaps/conflicts
+-> explicit creative-brief contract when creative work is requested
+-> Sol/professional Specialist candidates -> independent Critic -> creative-import
+-> human/client review of an exact outline when a client deck is requested
 -> hash-bound outline confirmation -> client-outline-gate
--> creative/reference/neutral specialist work when needed
+-> reference/neutral specialist work when needed
 -> immutable versioned PPTX -> exact-current PDF/preview/text extract
 -> client language + visual layout + asset authorization + editability
 -> fresh Client Pack binding -> independent manual review
 -> explicit exact-version send authorization -> send-readiness gate
 ```
 
-The launcher stops after the text framework. It must not auto-create PPT.
+The default launcher stops after intake, handoff refresh, one dashboard render,
+and affected-scope validation. It does not run Council, generate creative
+directions, dispatch a specialist, create a client outline/PPT/Client Pack, or
+run full delivery validation.
 
 Runtime phases remain distinct:
 
@@ -183,8 +192,12 @@ Use these routes:
 - Run/next: continue only to the next safe internal decision point; stop for human/client decisions or external/high-risk actions.
 - Gate/review: inspect exact target and evidence without directly rewriting production output.
 - Thread plan/dispatch: read `thread_operations.md` first.
-- Specialist/profile/visual/PPT: read `specialist_exchange_and_craft.md` first.
-- Legacy migration/FinalDelivery/human indexes: read `migration_and_lifecycle.md` first.
+- Intake/facts: read `intake_and_facts.md` first.
+- Creative brief/import/review: read `creative_contract.md` first.
+- Specialist handoff/receipt/adoption: read `specialist_exchange_and_craft.md` first.
+- PPT/Client Pack/send-readiness evidence: read `ppt_and_client_pack.md` first.
+- FinalDelivery: read `final_delivery.md` first.
+- Legacy migration/human indexes: read `migration_and_lifecycle.md` first.
 - Mine skill: create a project-local draft only; never install globally without explicit approval.
 
 ## Search, visuals, feedback

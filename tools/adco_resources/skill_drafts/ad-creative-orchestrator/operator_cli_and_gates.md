@@ -4,7 +4,7 @@ Read this file when invoking ADCO, choosing the next phase/Gate, building a non-
 
 ## Non-developer entrypoints
 
-The local launcher prompts for a project folder, materials, and goal, then opens `AD-creative/handoff/操作台.html`. It stops after the customer-readable text framework and must not auto-export PPT.
+The local launcher prompts for a project folder, materials, and goal, then opens `AD-creative/handoff/操作台.html`. Its default `run` path stops after evidence intake, fact/gap updates, handoff refresh, one dashboard render, and affected-scope validation. It must not auto-run Council, generate creative directions, dispatch a specialist, build a client outline/PPT/Client Pack, or run full delivery validation.
 
 Installed and source CLI behavior must match. Core commands:
 
@@ -17,9 +17,12 @@ adco status <project> [--json]
 adco next <project> [--json]
 adco validate <project> [--json] [--strict-legacy]
 adco check
-adco run <project> --material <path>
+adco run <project> --material <path> [--material <path> ...] [--max-total-chars <n>] [--json]
 adco migrate-control-plane <project> [--dry-run] [--json]
 adco agency-audit <project>
+adco creative-brief <project> [--work-id <id>] [--json]
+adco creative-import <project> --file <candidate.json> [--json]
+adco creative-review <project> [--json]
 adco creative-proposal <project> [--work-id <id>] [--json]
 adco creative-quality-gate <project>
 adco confirm-client-outline <project> --confirmed-by <human> --confirmed-at <iso> --evidence-ref <ref>
@@ -90,14 +93,13 @@ subcommands. Use these command mappings when operating through `adco`:
 
 ### `run`
 
-1. Initialize missing template files without overwriting existing files.
+1. Initialize only missing template files without overwriting existing files.
 2. Register materials as initial/supplement/change/feedback/approval/rejection/director note/unknown.
-3. Merge only owned truth sections; never replace Current Version Truth or user sections.
-4. Build the client-readable proposal framework and record gaps/questions.
-5. Stop for review and exact outline confirmation before PPT.
-6. Refresh all six human indexes.
-7. Continue only to the next safe internal step.
-8. Validate before status. Do not auto-export PPT.
+3. Parse supported formats into source-preserving evidence chunks without the old 12,000-character/16-line truncation path.
+4. Update the fact inventory, requirements, true gaps/conflicts, handoff files, and all six human indexes.
+5. Render the dashboard exactly once.
+6. Run only validators affected by changed evidence/fact/requirement/gap artifacts and report the scoped plan plus phase timings.
+7. Stop with the next safe command. Do not run Council, Specialist Exchange, creative generation/import, PPT, Client Pack, or full `adco validate` automatically.
 
 ### `start` / `status`
 
@@ -124,6 +126,8 @@ AD-creative/orchestrator/project.yml
 AD-creative/orchestrator/control_plane_schema.json
 AD-creative/orchestrator/events.jsonl
 AD-creative/orchestrator/source_events.csv
+AD-creative/orchestrator/evidence_chunks.jsonl
+AD-creative/orchestrator/fact_inventory.jsonl
 AD-creative/orchestrator/current_truth.md
 AD-creative/orchestrator/requirements.csv
 AD-creative/orchestrator/gaps.csv
@@ -147,7 +151,9 @@ Migration manifests are written only when legacy evidence exists. They are immut
 
 ## Gate semantics
 
-- `creative-quality-gate`: proposal completeness, evidence gaps, generic claims, product/benefit translation, differentiated routes, key visual/action, choice rationale, internal-language leaks.
+- `creative-import`: structural and provenance validation for 2-3 post-Critic candidates; rejects stale/unbound evidence and duplicate mechanisms, and flags weak brand ownership.
+- `creative-review`: deterministic structure/language lint; an independent creative Critic remains required.
+- `creative-quality-gate`: downstream legacy proposal completeness and client-safety checks; it is not Sol generation, independent Critic judgment, or client approval.
 - `client-outline-gate`: complete page framework plus explicit hash-bound human/client confirmation.
 - `client-language-gate`: blocks prompts, execution/Thread language, internal notes, fake/unsupported claims.
 - `search-quality-gate` and `reference-pack-gate`: source role, provenance, live evidence, borrow/do-not-copy boundary.

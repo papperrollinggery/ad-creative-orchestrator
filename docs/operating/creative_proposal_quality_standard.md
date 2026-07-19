@@ -1,6 +1,6 @@
-# Creative Proposal Quality Standard
+# Creative Contract and Candidate Quality Standard
 
-用途：把公开行业框架转成 Ad Creative Orchestrator 的本地检查项，用于策略方向、创意方案草稿、客户审阅包前的内部质量控制。
+用途：把公开行业框架转成 Ad Creative Orchestrator 的 evidence-bound creative contract、候选导入和人工/独立 Critic 复核项。
 
 ## 定位
 
@@ -11,47 +11,53 @@ Ad Creative Orchestrator 不是视频生成器、图片生成器、PPT 模板生
 ```text
 项目控制
 资料和参考追溯
-策略/创意 proposal 内部草稿
+creative brief contract 和候选 provenance
 质量 Gate
 交接和版本归属
 ```
 
-`creative-proposal` 是工作流和 CLI 命令：指内部策略和创意 proposal 草稿，包括 challenge interpretation、insight、creative idea、option matrix、message line、proposal structure、证据映射和客户待确认项。命令输出默认仍是 internal draft。
+`creative-brief` 只把当前 evidence chunks、facts、requirements 和 open gaps 冻结为 brief snapshot、contract、candidate schema 与 generation request；它不生成创意方向。
 
-`creative-quality-gate` 是独立 Gate 和 CLI 命令：检查 proposal 的结构、证据、专业完整度、可追溯性和风险边界。它不同于 `adco validate`；也不等于创意品味、客户偏好、商业效果或最终发送审批。
+GPT-5.6 Sol 或明确选择的专业 Specialist 负责创意推理：生成 4-6 个候选。独立 Critic 负责 brief adherence、insight、brand ownership、mechanism difference、key visual、shootability、production risk 和 brand replacement test，去重后保留 2-3 个。
+
+`creative-import` 验证候选结构、snapshot/evidence 绑定与机制差异；`creative-review` 是确定性结构/语言 lint。两者都不等于独立创意判断、客户偏好、商业效果或最终发送审批。`creative-proposal` 只是 `creative-brief` 的弃用兼容 alias。
 
 命令：
 
 ```text
-adco creative-proposal <project> [--work-id <id>] [--json]
-adco creative-quality-gate <project>
+adco creative-brief <project> [--work-id <id>] [--json]
+adco creative-import <project> --file <candidate.json> [--json]
+adco creative-review <project> [--json]
 ```
 
 ## 与 VALIDATION=PASS 的关系
 
 ```text
-VALIDATION=PASS = 结构和追溯关系通过
-creative-quality-gate = proposal 草稿的策略/创意/专业完整度检查
+VALIDATION=PASS = 项目结构和追溯关系通过
+creative-import = candidate contract / exact evidence binding 通过
+creative-review = deterministic structure/language lint，不是独立 Critic
+independent Critic = 创意判断与 brand replacement challenge
 human/client approval = 人工或客户最终判断
 ```
 
-三者不能互相替代。`VALIDATION=PASS` 不升级 proposal 的创意质量；`creative-quality-gate=PASS` 也不能把内容直接标成 client-approved。
+这些状态不能互相替代。结构通过不能升级创意质量，Critic 通过也不能把内容直接标成 client-approved。
 
 ## 必需输入
 
-运行 proposal 草稿或质量 Gate 前，至少要有：
+运行 creative brief/import/review 前，至少要有：
 
 ```text
 AD-creative/orchestrator/requirements.csv
 AD-creative/orchestrator/current_truth.md
 AD-creative/orchestrator/source_events.csv
+AD-creative/orchestrator/evidence_chunks.jsonl
+AD-creative/orchestrator/fact_inventory.jsonl
 AD-creative/orchestrator/artifact_index.csv
 参考来源或 search plan
 客户/导演/用户待确认项
 ```
 
-缺少关键客户目标、受众、品牌禁区、投放场景、参考来源或最终决策人时，只能输出 draft / PARTIAL_PASS / BLOCKED，不能写 client-ready。
-证据稀疏、来源未闭合或关键假设未确认时，`creative-quality-gate` 应返回 PARTIAL_PASS 或 BLOCKED。
+缺少关键客户目标、受众、品牌禁区、投放场景、参考来源或最终决策人时，open evidence gaps 必须保留，不能写 client-ready。候选不能以 assumption 文本代替现有 evidence chunk id。
 
 ## Source Mapping
 
@@ -67,13 +73,16 @@ AD-creative/orchestrator/artifact_index.csv
 
 ## Local Gate Checklist
 
-`creative-quality-gate` 至少检查：
+独立 Critic 加上 `creative-import` / `creative-review` 至少检查：
 
 ```text
-challenge 是否被准确解释，而不是复述 brief
-insight 是否绑定 source_event / reference / research note
-creative idea 是否能从 insight 推导出来
-每个 claim 是否能追溯到 requirement 或 reference
+brief_snapshot_sha256 是否仍是 exact current
+每个方向是否绑定现有 evidence chunk
+insight 是否能从 brief evidence 推导，而不是复述 brief
+2-3 个保留方向是否具有不同的 creative mechanism
+why_brand_can_own_it 是否能通过品牌替换测试
+key visual 是否清楚，story/behavior 是否可拍
+production risk 是否具体
 是否标注 borrowed / do_not_copy / avoid-copy 边界
 proposal 是否保留 story、segment summary、brand mapping、timing、key dialogue 或 key phrase
 是否列出客户/导演/用户必须确认的问题
@@ -97,12 +106,13 @@ PPT/DOCX/XLSX 固定模板已生成
 
 | 需求 | 归属模块 | adco 责任 |
 | --- | --- | --- |
-| 策略方向、创意 proposal、option matrix、message line、proposal structure | adco | 组织草稿、证据映射、Gate、版本和 handoff |
-| 视频脚本、分镜、导演阐述、视频 prompt | `dircreative` 或专门 film workflow | 写清需求、证据、交付边界，再移交 |
+| 创意推理与 4-6 个候选 | GPT-5.6 Sol 或专业 Specialist | 提供 brief contract、证据边界和输出 schema |
+| 2-3 个 post-Critic 候选、option matrix | ADCO import/control plane | 验证证据、机制差异、版本和 provenance |
+| 视频脚本、分镜、导演阐述、视频 prompt | `dircreative` 或专门 film workflow | 通过 Specialist Exchange 写清需求、证据和交付边界，再独立采用 |
 | image / KV / 背景图 / moodboard / visual asset | `imagegen` 或 Creative Production | 生成 image job spec、导入 asset、跑 visual-quality-gate |
 | 固定 PPT / DOCX / XLSX 模板和版式系统 | Template Creator 或专门文档模板流程 | 输出内容结构、字段、追溯关系、审阅 Gate |
 
-adco 可以起草 brief、检查来源、登记结果和维护版本；不要把它描述成实际视频、图片或固定模板的生成引擎。
+ADCO 可以起草 brief contract、检查来源、导入候选、登记结果和维护版本；不要把确定性模板或 lint 描述成完整创意、视频、图片或固定模板生成引擎。
 
 ## Humanized Writing Rules
 

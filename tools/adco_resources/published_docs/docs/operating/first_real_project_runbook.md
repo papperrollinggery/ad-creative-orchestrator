@@ -73,7 +73,7 @@ adco status <真实项目路径>
 adco next <真实项目路径>
 ```
 
-其中 `run` 登记资料并停在客户可读文本框架；`status` 只读；`next` 只推进到下一个安全决策点。公开官方来源搜索可在前置 Gate 满足后推进；AI 图客户可见、客户稿发送、付费/登录/上传资料前必须停。
+其中 `run` 把资料解析成 evidence chunks，更新 fact inventory、requirements、真实 gaps/conflicts 和 handoff，只渲染一次操作台并运行受影响 Validator；默认 Council、Specialist、创意方向、客户 outline、PPT、Client Pack 和全量 validation 都是 0。`status` 只读；`next` 只推进到下一个安全决策点。公开官方来源搜索可在前置 Gate 满足后推进；AI 图客户可见、客户稿发送、付费/登录/上传资料前必须停。
 
 Codex 展开方式：
 
@@ -147,40 +147,41 @@ adco next <真实项目路径>
 8. 运行 `adco validate` 后再报告结果。
 ```
 
-## 4.2 Creative Proposal Prompt
+## 4.2 Creative Contract Prompt
 
 Goal 模式默认仍由单一主控 inline 推进，不因“复杂”自动开 Threads。只有有界隔离、真实并行或独立 cold review 有明确收益时才生成 Thread lane。真实 worker 必须绑定真实 thread id；主控保存 host scope baseline，并在 reconcile 时用实际 diff 生成 host scope proof。轮询次数只是检查预算，最多一次有绝对截止时间的 extension 和一次独立证明的 rescue。
 
 命令：
 
 ```text
-adco creative-proposal <真实项目路径> [--work-id <id>] [--json]
-adco creative-quality-gate <真实项目路径>
+adco creative-brief <真实项目路径> [--work-id <id>] [--json]
+adco creative-import <真实项目路径> --file <candidate.json> [--json]
+adco creative-review <真实项目路径> [--json]
 ```
 
 ```text
-creative-proposal
+creative-brief -> Sol/专业 Specialist -> independent Critic -> creative-import
 
 要求：
-1. 只起草 internal proposal，不写 client-approved / final。
-2. 产出 challenge interpretation、insight、creative idea、option matrix、message line、proposal structure。
-3. 每个 claim 必须绑定 requirement、source_event、reference 或明确标成 assumption / gap。
-4. 使用 docs/operating/creative_proposal_quality_standard.md 的 source mapping 做本地检查。
-5. 不复制 Cannes / Effie / System1 / Google / TikTok / WARC / Ipsos 案例措辞。
-6. 视频脚本、分镜、video prompt 使用 `adco specialist-handoff` 的 `dircreative.film-preproduction` profile；不读取或写死 DIR 仓库内部路径。接受兼容 descriptor `1.x` 时仍要求它显式支持 base contract `1.0`，并按 exact id/version 协商 profile receipt extension。
-7. image / KV / 背景图只写 image job spec，交给 imagegen 或 Creative Production。
-8. 固定 PPT / DOCX / XLSX 模板只写结构和字段，交给 Template Creator。
+1. creative-brief 只冻结 evidence/fact/requirement/gap，生成 contract/schema/request，不生成方向或客户稿。
+2. GPT-5.6 Sol 或明确选择的专业 Specialist 基于 exact brief snapshot 生成 4-6 个机制不同的候选。
+3. 独立 Critic 检查 brief adherence、insight、brand ownership、机制差异、key visual、shootability、production risk 和 brand replacement，保留 2-3 个。
+4. creative-import 要求每个候选绑定现有 evidence chunk；无证据、stale snapshot 或重复机制直接拒绝，品牌专属性弱会被标记。
+5. creative-review 是确定性结构/语言 lint，不能替代独立 Critic；creative-proposal 仅是 creative-brief 的弃用 alias。
+6. 不复制 Cannes / Effie / System1 / Google / TikTok / WARC / Ipsos 案例措辞。
+7. 视频脚本、分镜、video prompt 使用 `adco specialist-handoff` 的 `dircreative.film-preproduction` profile；Controller 选择双方最高共同版本，provider 仅支持 v1 时回退 v1，v2 只允许 inline 且拒绝 nested dispatch 和外层 readiness claims。
+8. image / KV / 背景图交给 imagegen 或 Creative Production；固定 PPT / DOCX / XLSX 模板交给对应文档流程。
 ```
 
-如果要审核 proposal：
+如果要运行确定性候选 lint：
 
 ```text
-creative-quality-gate
+adco creative-review <真实项目路径>
 
 要求：
-1. 审核结构、追溯、证据、专业完整度和客户可见风险。
-2. 明确输出 PASS / PARTIAL_PASS / REVISE / BLOCKED。
-3. PASS 只表示 ready for human creative review 或 specialist handoff。
+1. 检查结构、证据绑定、机制差异、品牌专属性、视觉清晰度、可拍性和生产风险。
+2. receipt 明确标注 deterministic lint；独立 Critic 证据仍需另行完成。
+3. 结构 PASS 只表示可以继续人工创意复核或专项交接。
 4. 不把 PASS 写成客户批准、审美批准、商业效果证明或最终发送许可。
 ```
 
@@ -287,7 +288,9 @@ Brief Gate / Research Gate / Creative Gate / Client Outline Gate / Visual Review
 ```text
 adco council <真实项目路径> --render-dashboard
 adco validate <真实项目路径>
-adco creative-proposal <真实项目路径>
+adco creative-brief <真实项目路径>
+adco creative-import <真实项目路径> --file <candidate.json>
+adco creative-review <真实项目路径>
 adco creative-quality-gate <真实项目路径>
 adco confirm-client-outline <真实项目路径> --confirmed-by "<人工确认者>" --confirmed-at <iso_time> --evidence-ref "<user_confirmation:id|client_confirmation:id>"
 adco client-outline-gate <真实项目路径>
@@ -316,7 +319,7 @@ CLIENT_SEND_READINESS_GATE=PASS（仅在本轮确实准备发送，且独立人�
 HANDOFF_READINESS_GATE=PASS（仅表示内部运营可交接）
 ```
 
-`VALIDATION=PASS` 只证明结构、CSV/JSON、引用链和 traceability 成立。它不批准创意质量、审美、客户话术、客户可见 AI 图或最终发送。`CREATIVE_QUALITY_GATE=PASS` 也只是 proposal 草稿可进入人工创意复核或专项模块交接，不是客户批准。
+`VALIDATION=PASS` 只证明结构、CSV/JSON、引用链和 traceability 成立。它不批准创意质量、审美、客户话术、客户可见 AI 图或最终发送。`creative-import`/`creative-review` 通过也只证明候选契约和确定性 lint 成立，不能替代独立 Critic 或客户批准。
 
 ## 9. 人工停点
 

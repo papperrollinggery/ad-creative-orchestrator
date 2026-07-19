@@ -51,7 +51,7 @@ ADCO remains the only owner of client truth, adoption, version files, PPT,
 FinalDelivery, and send readiness. Specialist QA or recommendation is never client
 approval.
 
-Before PPT, complete the customer-readable text framework and pass `client-outline-gate`. The launcher stops at this text checkpoint and does not auto-generate PPT.
+Before PPT, explicitly create and confirm the customer-readable text framework, then pass `client-outline-gate`. The default launcher stops after intake/handoff, does not create the outline, and does not auto-generate PPT.
 
 `approval=PASS` is not asset authorization. Client-visible asset use requires a receipt in `asset_authorizations.csv` bound to the exact asset hash and scope. An unchecked manual review checklist is `NOT_RUN`, not PASS.
 

@@ -21,12 +21,16 @@ Expected output:
 requirements.csv
 gaps.csv
 current_truth.md
+evidence_chunks.jsonl
+fact_inventory.jsonl
 待你确认.md
 操作台.html
 NEXT_ACTION
 NEXT_STATUS
 DOCS_MODE
 ```
+
+This default route renders one dashboard and runs affected-scope validators only. It does not run Council, generate creative directions, dispatch a specialist, create a client outline/PPT/Client Pack, or run full validation.
 
 Gate:
 
@@ -74,7 +78,7 @@ AI/generated images stay internal_only until visual QA and an independent author
 Use when preparing an editable PPT review package.
 
 ```bash
-adco creative-proposal <project_dir>
+# First produce and review an exact client_outline.csv as an explicit project task.
 adco confirm-client-outline <project_dir> --confirmed-by "<human/client>" --confirmed-at <iso_time> --evidence-ref "<user_confirmation:id|client_confirmation:id>"
 adco client-outline-gate <project_dir>
 adco export-pptx <project_dir>
@@ -125,7 +129,7 @@ adco specialist-handoff <project_dir> --work-id <WORK-ID> --profile-id dircreati
 adco specialist-adopt <project_dir> --handoff <handoff.json> --receipt <receipt.json> --decision partial_adopt --reason "<reason>" --map-output <PROVIDER-ID=AD-creative/film/output.md>
 ```
 
-The base contract stays `adco.specialist-exchange` `1.0`. DIR may evolve a compatible descriptor `1.x` and a profile receipt extension; ADCO negotiates the exact extension id/version and keeps adoption, version, PPT, FinalDelivery, and send authority.
+ADCO selects the highest contract version supported by both sides. V2 is preferred and uses a minimal inline-only handoff/receipt; it rejects nested dispatch and provider claims about client/PPT/FinalDelivery/send/project readiness. A provider supporting only `1.0` falls back to the unchanged v1 descriptor/extension/authorization/ThreadOps/receipt contract. ADCO always keeps adoption, version, PPT, FinalDelivery, and send authority.
 
 ## Stop Rules
 

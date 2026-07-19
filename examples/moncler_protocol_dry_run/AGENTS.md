@@ -1,10 +1,20 @@
 # Project Rules for Ad Creative Orchestrator
 
-These rules apply to this project root and every subdirectory.
+These rules apply only when this root contains a valid
+`AD-creative/orchestrator/project.yml` and matching
+`AD-creative/orchestrator/control_plane_schema.json`, and the user explicitly
+invokes `$ad-creative-orchestrator` for the initialized advertising project.
+
+They do not apply to the `ad-creative-orchestrator` source repository, the
+`Paperrolling-DIRcreative-SKILL` source repository, Skill maintenance, a Skill
+Benchmark, AGENTS/SKILL/Schema/test changes, ordinary code refactoring, ordinary
+advertising requests, or any task where ADCO was not explicitly invoked. In those
+cases, use the task's normal workflow and do not create an ADCO control plane.
 
 ## Required Operating Surface
 
-- Use `ad-creative-orchestrator` for this project.
+- When the applicability conditions above hold, use the explicitly invoked
+  `$ad-creative-orchestrator` skill for this project.
 - Work through `AD-creative/orchestrator/` and `AD-creative/handoff/`.
 - Do not rely on chat memory as the operating record. Durable decisions, gaps, gates, artifacts, and handoff state must be written into project files.
 - Keep the six top-level human folders (`00_项目资料_ProjectMaterials/` through `05_最终交付_FinalDelivery/`) useful. If source files or artifacts live under `AD-creative/`, update the matching `目录索引.md` so a human can find the current material, WIP, client-review, and final-delivery entries without digging through the control plane.
@@ -32,9 +42,16 @@ Do not replace all of `current_truth.md` during intake. Update owned sections an
 
 Private/paid/login search, image generation, external upload, and final send actions require explicit authorization. Public official-source research may follow the project search plan.
 
-Video, commercial-film, storyboard, and video-prompt modules should use the versioned `adco.specialist-exchange` handoff when delegating to `dircreative` or another specialist. ADCO remains the only owner of client truth, adoption, version files, PPT, FinalDelivery, and send readiness. Specialist QA or recommendation is never client approval.
+Delegate film craft only when the current task belongs to this valid ADCO project,
+the user or current Work Item explicitly requires a professional film artifact,
+and a valid Specialist handoff exists. Words such as video, script, storyboard,
+commercial, advertising film, or Prompt never trigger DIRcreative by themselves.
+When those conditions hold, use the versioned `adco.specialist-exchange` handoff.
+ADCO remains the only owner of client truth, adoption, version files, PPT,
+FinalDelivery, and send readiness. Specialist QA or recommendation is never client
+approval.
 
-Before PPT, complete the customer-readable text framework and pass `client-outline-gate`. The launcher stops at this text checkpoint and does not auto-generate PPT.
+Before PPT, explicitly create and confirm the customer-readable text framework, then pass `client-outline-gate`. The default launcher stops after intake/handoff, does not create the outline, and does not auto-generate PPT.
 
 `approval=PASS` is not asset authorization. Client-visible asset use requires a receipt in `asset_authorizations.csv` bound to the exact asset hash and scope. An unchecked manual review checklist is `NOT_RUN`, not PASS.
 

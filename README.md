@@ -76,7 +76,9 @@ adco status <project_dir>
 adco next <project_dir>
 ```
 
-`adco run` registers the source material, extracts requirements and gaps, builds the handoff dashboard, creates a customer-readable text framework, and stops for human confirmation. It does **not** automatically create or send a presentation.
+`adco run` parses source material into evidence chunks, updates the fact inventory, requirements, true gaps/conflicts, and handoff files, renders the dashboard once, and runs only affected-scope validators. By default it runs no Council, Specialist Exchange, creative generation, PPT, Client Pack, or full delivery validation.
+
+Supported intake includes Markdown/text, CSV, JSON, YAML, DOCX, PPTX, PDF, SRT/VTT, images, and video. Long text is processed under an explicit aggregate character budget instead of silently truncating each file; media that was only registered by metadata is never presented as understood.
 
 Every new workspace includes:
 
@@ -131,6 +133,9 @@ Read the [authorization policy](docs/operating/authorization_policy.md) for the 
 |---|---|
 | `adco quickstart [project_dir]` | Create, validate, and open a safe first-run demo. |
 | `adco run <project_dir> --material <path>` | Register real materials and produce the first project state. |
+| `adco creative-brief <project_dir>` | Freeze current evidence into a creative contract; generates no directions. |
+| `adco creative-import <project_dir> --file <candidate.json>` | Import 2-3 evidence-bound, mechanism-distinct post-Critic candidates. |
+| `adco creative-review <project_dir>` | Run deterministic candidate lint; independent creative review is still required. |
 | `adco status <project_dir>` | Show blockers, pending confirmations, and current validation. |
 | `adco next <project_dir>` | Print the next safe action. |
 | `adco open-dashboard <project_dir>` | Open the non-developer project dashboard. |
@@ -143,9 +148,9 @@ Run `adco --help` or `adco <command> --help` for the complete CLI reference. The
 
 ## What ADCO Owns—and What It Does Not
 
-ADCO owns project truth, traceable proposal drafts, artifact versions, review evidence, specialist adoption, presentation/client-package binding, FinalDelivery protection, and send-readiness checks.
+ADCO owns project truth, evidence and creative contracts, candidate provenance, artifact versions, review evidence, specialist adoption, presentation/client-package binding, FinalDelivery protection, and send-readiness checks. GPT-5.6 Sol or an explicitly selected professional Specialist supplies creative reasoning. DIRcreative is a film-craft provider used only through a negotiated, bounded Specialist Exchange.
 
-ADCO is **not** a SaaS, image generator, video generator, autonomous creative approver, or delivery bot. Image and film work can come from specialist tools through a versioned exchange contract; ADCO remains the owner of adoption, provenance, and client-facing readiness.
+ADCO is **not** a SaaS, image generator, video generator, deterministic three-direction creative engine, autonomous creative approver, or delivery bot. `creative-brief` generates a contract, not ideas. Sol/a professional Specialist generates 4-6 candidates, an independent Critic narrows them to 2-3, and `creative-import` rejects stale or unbound evidence and duplicate mechanisms while flagging weak brand ownership. Image and film work can come from specialist tools through a versioned exchange contract; ADCO remains the owner of adoption, provenance, and client-facing readiness.
 
 ## Documentation
 
@@ -156,7 +161,8 @@ ADCO is **not** a SaaS, image generator, video generator, autonomous creative ap
 | [Operating manual](docs/operating/operating_manual.md) | Commands, gates, and lifecycle details. |
 | [Adoption patterns](docs/operating/adoption_patterns.md) | Adding ADCO to an existing workflow. |
 | [Real-project acceptance criteria](docs/operating/real_project_acceptance_criteria.md) | Deciding whether a project is genuinely ready. |
-| [Specialist exchange v1](docs/operating/specialist_exchange_v1.md) | Integrating external image, film, or craft specialists. |
+| [Specialist exchange v1/v2](docs/operating/specialist_exchange_v1.md) | Negotiating and integrating external image, film, or craft specialists. |
+| [Runtime refactor performance receipt](docs/operating/runtime_refactor_performance.md) | Reproducing the measured before/after intake and `run` behavior. |
 | [Security policy](SECURITY.md) | Reporting vulnerabilities without exposing client data. |
 | [Changelog](CHANGELOG.md) | User-visible changes by release. |
 | [Roadmap](ROADMAP.md) | Planned product work. |

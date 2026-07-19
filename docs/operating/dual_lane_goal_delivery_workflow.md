@@ -14,7 +14,7 @@
 
 ## 1. 归一化定义
 
-品牌深度研究：围绕客户资料、品牌事实、官方/可信参考、竞品与平台语境，形成 `current_truth`、`requirements`、`gaps`、`search_plan`、`reference_cards`、`visual_dna_notes`、`creative_directions`，只使用可追溯证据，不把未经确认的信息写成事实。
+品牌深度研究：围绕客户资料、品牌事实、官方/可信参考、竞品与平台语境，形成 `current_truth`、`requirements`、`gaps`、`search_plan`、`reference_cards`、`visual_dna_notes` 和 evidence-bound creative brief；方向由 Sol/专业 Specialist 生成并经独立 Critic 后导入，只使用可追溯证据，不把未经确认的信息写成事实。
 
 图片功能：围绕视觉资产、图片参考、image_gen、资产槽位、导入记录、质量审核、客户可见性，形成 `visual_asset_slots`、`image_job_spec`、`image_prompt_pack`、`asset_manifest`、`visual_review_report`、`client_visible_flags`，所有客户可见图片必须经过 Gate。
 
@@ -89,7 +89,7 @@
 
 关键里程碑：每页有 title/body/client confirmation point/material role/visual slot/status。风险：文本过薄、内部语言泄漏、视觉槽位与叙事断链。验收标准：outline 内容可确认，但状态仍 pending。
 
-测试清单：运行 creative-proposal/content preflight，检查所有必填字段与客户语言。责任人：Proposal Architect、Copy/Creative、Slide Architect。预计时长：0.5-1 工作日。依据：Client Outline content contract。
+测试清单：对显式创建的 client outline 运行 content preflight，检查所有必填字段与客户语言；`creative-brief` 不负责生成 outline。责任人：Proposal Architect、Copy/Creative、Slide Architect。预计时长：0.5-1 工作日。依据：Client Outline content contract。
 
 ### PRD-P2 Hash Confirmation
 
@@ -103,9 +103,9 @@
 
 目标：在已确认 outline 上按需补足创意、参考、图片任务与专业领域判断。范围：creative directions、reference pack、image jobs、`adco.specialist-exchange` handoff/receipt/adoption。非范围：让 DIR/specialist 更新 ADCO control plane、PPT、FinalDelivery 或 readiness claims。
 
-关键里程碑：创意/参考有 traceability；specialist descriptor 支持 base `1.0`，required extension exact-match；ADCO 独立 adoption。风险：reference 断链、provider authority escalation、output/path/hash 漂移。验收标准：所有 adopted output 绑定 provider/profile/descriptor/handoff/output scope/hash；domain QA 不越权。
+关键里程碑：创意候选绑定 exact brief/evidence 并经独立 Critic；reference 有 traceability；Specialist Exchange 选择双方最高共同版本，v1-only provider 可回退，ADCO 独立 adoption。风险：reference 断链、重复机制、品牌可替换、provider authority escalation、output/path/hash 漂移。验收标准：所有 imported/adopted output 绑定 evidence/provider/profile/descriptor/handoff/output scope/hash；domain QA 不越权。
 
-测试清单：运行 Creative/Reference/Specialist validation，检查六个 reserved claims=false 与 host scope proof。责任人：Creative Strategist、Reference Researcher、Domain Specialist、ADCO Main Controller。预计时长：按 specialist scope。依据：Specialist Exchange v1。
+测试清单：运行 creative-import/review、Reference/Specialist validation；v2 检查 inline-only、无 nested dispatch/outer readiness claims，v1 检查六个 reserved claims=false 与 host scope proof。责任人：Creative Strategist、Reference Researcher、Domain Specialist、ADCO Main Controller。预计时长：按 specialist scope。依据：Creative Contract 与 Specialist Exchange v1/v2。
 
 ### PRD-P4 Immutable PPT
 

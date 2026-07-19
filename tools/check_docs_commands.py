@@ -18,6 +18,7 @@ CHECK_PATHS = (
         ROOT / "SECURITY.md",
         ROOT / "CHANGELOG.md",
         ROOT / "docs/operating",
+        ROOT / "docs/assets",
         ROOT / "examples/moncler_protocol_dry_run/AD-creative/handoff",
         ROOT / "examples/simulated_qingling_outdoor_launch/AD-creative/handoff",
         ROOT / "templates/project",

@@ -6681,7 +6681,7 @@ Intake / 准备整理
         f"""# 本轮交付说明
 
 ## 本轮做了什么
-初始化或补齐项目结构，登记资料，创建 intake 工作项，生成非开发者操作台；双击入口会继续生成可编辑 PPTX 草稿并检查文本层。
+初始化或补齐项目结构，登记资料，创建 intake 工作项，生成非开发者操作台；默认入口不生成创意方向、PPTX 或 Client Pack。
 
 ## 产物位置
 | 产物 | 路径 |
@@ -6695,7 +6695,7 @@ Intake / 准备整理
 自动搜索结果质量、真实 image_gen 调用本身、最终客户稿内容审稿。
 
 ## 下一步建议
-让 Codex 继续执行 ad-creative:next，先完成需求和缺口整理。
+运行 `adco next {project}` 查看下一条安全动作；需要进入具体阶段时再显式运行对应命令或 Gate。
 """,
     )
 
@@ -8299,7 +8299,7 @@ def status_payload(
         next_action = "Run adco run <project> --material <brief_file_or_folder>."
     else:
         next_status = "READY_FOR_NEXT_GATE"
-        next_action = "Run the next stage Gate or continue with ad-creative:next."
+        next_action = f"Run adco next {project} or an explicit stage Gate."
     goal = latest_goal_row(project)
     phase = derive_goal_phase(project)
     next_command = ""
