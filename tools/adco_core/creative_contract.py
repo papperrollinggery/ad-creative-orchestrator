@@ -359,6 +359,13 @@ def _candidate_validation_errors(
     return errors, warnings
 
 
+def validate_creative_candidate(
+    project: Path, payload: object
+) -> tuple[list[str], list[str]]:
+    """Public scoped-validator entrypoint for the current candidate contract."""
+    return _candidate_validation_errors(project, payload)
+
+
 def _candidate_version_path(project: Path, digest: str) -> Path:
     current = project / CURRENT_CANDIDATE_REL
     if current.is_file():

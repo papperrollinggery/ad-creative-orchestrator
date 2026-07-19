@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+from time import perf_counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,6 +79,7 @@ class IntakeResult:
     new_requirements: list[dict[str, str]]
     new_gaps: list[dict[str, str]]
     facts: list[FactInventoryItem]
+    timings_ms: dict[str, int]
 
     def stats(self) -> dict[str, int]:
         return {
@@ -89,6 +91,9 @@ class IntakeResult:
             "over_budget_files": len(self.ingestion.over_budget),
             "parser_errors": len(self.ingestion.parser_errors),
             "facts": len(self.facts),
+            "parse_ms": self.timings_ms.get("parse_ms", 0),
+            "fact_analysis_ms": self.timings_ms.get("fact_analysis_ms", 0),
+            "write_ms": self.timings_ms.get("write_ms", 0),
         }
 
 
@@ -422,23 +427,34 @@ def run_evidence_intake(
     *,
     max_total_chars: int = 2_000_000,
 ) -> IntakeResult:
+    parse_started = perf_counter()
     ingestion = ingest_source_rows(
         project,
         source_rows,
         max_total_chars=max_total_chars,
     )
+    parse_ms = round((perf_counter() - parse_started) * 1000)
+    analysis_started = perf_counter()
     all_chunks = load_evidence_chunks(project)
     explicit_facts = explicit_facts_from_evidence(all_chunks)
     existing_facts = load_fact_inventory(project)
     facts = merge_facts(existing_facts, explicit_facts)
+    fact_analysis_ms = round((perf_counter() - analysis_started) * 1000)
+    write_started = perf_counter()
     write_fact_inventory(project, facts)
     new_requirements = _sync_requirements(project, requirement_candidates(ingestion.chunks))
     new_gaps = sync_fact_gaps(project, facts)
+    write_ms = round((perf_counter() - write_started) * 1000)
     return IntakeResult(
         ingestion=ingestion,
         new_requirements=new_requirements,
         new_gaps=new_gaps,
         facts=facts,
+        timings_ms={
+            "parse_ms": parse_ms,
+            "fact_analysis_ms": fact_analysis_ms,
+            "write_ms": write_ms,
+        },
     )
 
 

@@ -50,7 +50,9 @@ from adco_core.creative_contract import (
     import_creative_candidate,
     review_creative_candidate,
 )
+from adco_core.commands.run import execute_lightweight_run
 from adco_core.ingestion import ingest_source_rows
+from adco_core.incremental_validation import run_incremental_validation
 from init_project import agents_policy_status, copy_template
 from runtime_paths import published_docs_root, repo_or_module_root, skill_draft_dir, source_root, template_root
 from specialist_schema_validation import (
@@ -7445,7 +7447,12 @@ def item_title(row: dict[str, str], *keys: str, default: str = "-") -> str:
     return default
 
 
-def render_dashboard(project: Path) -> Path:
+def render_dashboard(
+    project: Path,
+    *,
+    validation_errors: list[str] | None = None,
+    validation_status: str | None = None,
+) -> Path:
     render_human_workspace_indexes(project)
     counts = read_counts(project)
     _, work_items = read_csv_rows(project / "AD-creative/orchestrator/work_items.csv")
@@ -7466,8 +7473,10 @@ def render_dashboard(project: Path) -> Path:
     stage = project_stage(project)
     phase = derive_goal_phase(project)
     lane_states = goal_lane_states(project)
-    validation_errors, _ = validate(project)
-    validation_status = "PASS" if not validation_errors else "CHECK"
+    if validation_errors is None:
+        validation_errors, _ = validate(project)
+    if validation_status is None:
+        validation_status = "PASS" if not validation_errors else "CHECK"
     active_work = [row for row in work_items if row.get("status", "").lower() not in {"done", "closed"}]
     next_action = first_nonempty(active_work[0].get("title") if active_work else "", "读取资料并生成需求/缺口")
     payload = {
@@ -8198,13 +8207,22 @@ Still requires explicit confirmation:
     return overall, results, report_path
 
 
-def status_payload(project: Path) -> dict[str, object]:
+def status_payload(
+    project: Path,
+    *,
+    validation_errors: list[str] | None = None,
+) -> dict[str, object]:
     project = project.resolve()
     counts = read_counts(project)
-    validation_issues, validation_stats = validate_issues(project)
-    errors = [
-        issue.message for issue in validation_issues if issue.scope != "legacy"
-    ]
+    if validation_errors is None:
+        validation_issues, validation_stats = validate_issues(project)
+        errors = [
+            issue.message for issue in validation_issues if issue.scope != "legacy"
+        ]
+    else:
+        validation_issues = []
+        validation_stats = {"legacy_debt": 0}
+        errors = list(validation_errors)
     dashboard = project / DASHBOARD_REL
     report = project / COUNCIL_REPORT_REL
     _, work_items = read_csv_rows(project / "AD-creative/orchestrator/work_items.csv")
@@ -8335,42 +8353,30 @@ def all_source_event_ids(project: Path) -> list[str]:
 
 
 def goal_run_step(project: Path, *, allow_generate: bool) -> tuple[str, str, str]:
-    payload = status_payload(project)
-    stop = goal_stop_reason(payload)
-    if stop:
-        return "stop", stop, str(payload.get("next_action", ""))
+    payload = status_payload(project, validation_errors=[])
+    if payload["pending_confirmation_count"]:
+        return "stop", "WAITING_FOR_CONFIRMATION", str(payload.get("next_action", ""))
+    if payload["blocking_gap_count"]:
+        return "stop", "BLOCKING_GAP", str(payload.get("next_action", ""))
 
     counts = payload["counts"]
-    if isinstance(counts, dict) and counts.get("source_events", 0) and counts.get("requirements", 0) == 0:
+    evidence_path = project / "AD-creative/orchestrator/evidence_chunks.jsonl"
+    if (
+        isinstance(counts, dict)
+        and counts.get("source_events", 0)
+        and (counts.get("requirements", 0) == 0 or not evidence_path.is_file())
+    ):
         source_ids = all_source_event_ids(project)
         perform_intake(project, source_ids, "goal-run 自动执行本地 intake。")
         render_handoff(project, "goal-run 自动执行本地 intake。", source_ids)
-        render_dashboard(project)
         return "intake", "PASS", "Extracted requirements and gaps from registered materials."
 
-    if not (project / DASHBOARD_REL).exists():
-        dashboard = render_dashboard(project)
-        return "dashboard", "PASS", safe_rel(project, dashboard)
-
-    if not has_gate(project, "GATE-AUTO-VISUAL-QUALITY-001"):
-        status, findings, report = review_visual_quality(project)
-        render_dashboard(project)
-        return "visual_quality_gate", status, f"{safe_rel(project, report)} findings={len(findings)}"
-
-    if not has_gate(project, "GATE-AUTO-FILM-QUALITY-001"):
-        status, findings, report = review_film_quality(project)
-        render_dashboard(project)
-        return "film_quality_gate", status, f"{safe_rel(project, report)} findings={len(findings)}"
-
-    if not has_gate(project, "GATE-THREE-COUNCIL-READINESS"):
-        status, _, report = run_council(project)
-        render_dashboard(project)
-        return "council", status, safe_rel(project, report)
-
-    if not allow_generate:
-        return "stop", "GENERATION_NOT_ALLOWED", "goal-run will not trigger Creative Production generation without --allow-generate."
-
-    return "stop", "READY_FOR_HUMAN_REVIEW", "Deterministic internal actions are complete; choose search/generation/client-review next."
+    del allow_generate
+    return (
+        "stop",
+        "SAFE_DECISION_POINT",
+        "Local intake is current. Use adco next to choose the next explicit Gate or creative brief action.",
+    )
 
 
 def run_goal(
@@ -8434,8 +8440,38 @@ def run_goal(
     else:
         stop_reason = "MAX_STEPS_REACHED"
 
-    dashboard = render_dashboard(project)
-    payload = status_payload(project)
+    intake_changed = any(step["action"] == "intake" for step in steps)
+    incremental = run_incremental_validation(
+        project,
+        changed_artifact_ids=(
+            [
+                "ART-AUTO-EVIDENCE-CHUNKS",
+                "ART-AUTO-FACT-INVENTORY",
+                "ART-AUTO-REQUIREMENTS",
+                "ART-AUTO-GAPS",
+            ]
+            if intake_changed
+            else []
+        ),
+        changed_file_paths=(
+            [
+                "AD-creative/orchestrator/evidence_chunks.jsonl",
+                "AD-creative/orchestrator/fact_inventory.jsonl",
+                "AD-creative/orchestrator/requirements.csv",
+                "AD-creative/orchestrator/gaps.csv",
+            ]
+            if intake_changed
+            else []
+        ),
+    )
+    dashboard = render_dashboard(
+        project,
+        validation_errors=incremental.errors,
+        validation_status=(
+            "SCOPED_PASS" if not incremental.errors else "SCOPED_CHECK"
+        ),
+    )
+    payload = status_payload(project, validation_errors=incremental.errors)
     if not stop_reason:
         stop_reason = str(payload.get("stop_reason") or "READY_FOR_NEXT_STEP")
     append_event(
@@ -8457,6 +8493,9 @@ def run_goal(
         "steps": steps,
         "dashboard": str(dashboard),
         "status": payload,
+        "incremental_validation": incremental.as_dict(),
+        "full_validation": "NOT_RUN",
+        "council_run_count": 0,
     }
 
 
@@ -16737,15 +16776,24 @@ def _command_creative_brief(args: argparse.Namespace, *, deprecated: bool) -> in
         if deprecated
         else render_creative_brief(project, work_id=args.work_id)
     )
-    dashboard = render_dashboard(project)
-    errors, stats = validate(project)
+    incremental = run_incremental_validation(
+        project,
+        changed_artifact_ids=payload["artifact_ids"],
+        changed_file_paths=payload["paths"],
+    )
+    errors = list(incremental.errors)
+    dashboard = render_dashboard(
+        project,
+        validation_errors=errors,
+        validation_status="SCOPED_PASS" if not errors else "SCOPED_CHECK",
+    )
     payload.update(
         {
             "creative_brief": "PASS" if not errors else "CHECK",
             "deprecated_alias": "creative-brief" if deprecated else None,
             "dashboard": str(dashboard),
-            "validation": "PASS" if not errors else "CHECK",
-            "stats": stats,
+            "incremental_validation": incremental.as_dict(),
+            "full_validation": "NOT_RUN",
             "errors": errors,
         }
     )
@@ -16764,9 +16812,9 @@ def _command_creative_brief(args: argparse.Namespace, *, deprecated: bool) -> in
     for path in payload["paths"]:
         print(f"ARTIFACT_PATH={path}")
     print(f"DASHBOARD={dashboard}")
-    for key, value in stats.items():
-        print(f"{key.upper()}={value}")
-    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    print("VALIDATORS_RUN=" + ";".join(incremental.validators_run))
+    print(f"INCREMENTAL_VALIDATION={'PASS' if not errors else 'CHECK'}")
+    print("FULL_VALIDATION=NOT_RUN")
     if errors:
         print("ERRORS:")
         for error in errors:
@@ -16821,25 +16869,45 @@ def command_creative_import(args: argparse.Namespace) -> int:
             "warnings": result.warnings,
         },
     )
+    incremental = run_incremental_validation(
+        project,
+        changed_artifact_ids=[
+            "ART-AUTO-CREATIVE-CANDIDATE",
+            "ART-AUTO-CREATIVE-DIRECTIONS",
+        ],
+        changed_file_paths=[
+            result.current_path,
+            result.directions_path,
+            result.matrix_path,
+        ],
+    )
     payload = {
-        "creative_import": "PASS",
+        "creative_import": "PASS" if not incremental.errors else "CHECK",
         "candidate": str(result.candidate_path),
         "current_candidate": str(result.current_path),
         "candidate_sha256": result.candidate_sha256,
         "directions": result.direction_count,
         "warnings": result.warnings,
         "creative_quality": "NOT_EVALUATED",
+        "incremental_validation": incremental.as_dict(),
+        "full_validation": "NOT_RUN",
     }
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:
-        print("CREATIVE_IMPORT=PASS")
+        print(f"CREATIVE_IMPORT={'PASS' if not incremental.errors else 'CHECK'}")
         print(f"CANDIDATE={result.candidate_path}")
         print(f"CANDIDATE_SHA256={result.candidate_sha256}")
         print(f"DIRECTIONS={result.direction_count}")
         print(f"WARNINGS={len(result.warnings)}")
         print("CREATIVE_QUALITY=NOT_EVALUATED")
-    return 0
+        print("VALIDATORS_RUN=" + ";".join(incremental.validators_run))
+        print("FULL_VALIDATION=NOT_RUN")
+        if incremental.errors:
+            print("ERRORS:")
+            for error in incremental.errors:
+                print(f"- {error}")
+    return 0 if not incremental.errors else 1
 
 
 def command_creative_review(args: argparse.Namespace) -> int:
@@ -16921,39 +16989,57 @@ def command_init(args: argparse.Namespace) -> int:
 
 def command_run(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
-    created, skipped = ensure_project(project)
-    agents_status = agents_policy_status(project)
     materials = [Path(item).expanduser().resolve() for item in args.material]
-    source_ids = register_materials(project, materials, args.goal) if materials else []
-    if source_ids or args.goal:
-        ensure_intake_work(project, source_ids, args.goal)
-    intake_stats = perform_intake(project, source_ids, args.goal) if source_ids else {
-        "requirements": 0,
-        "gaps": 0,
-        "materials": 0,
-    }
-    render_handoff(project, args.goal, source_ids)
-    dashboard = render_dashboard(project)
-    overall, _, report = run_council(project)
-    dashboard = render_dashboard(project)
-    errors, stats = validate(project)
-
+    result = execute_lightweight_run(
+        project,
+        materials=materials,
+        goal=args.goal,
+        max_total_chars=args.max_total_chars,
+        ensure_project=ensure_project,
+        register_materials=register_materials,
+        ensure_intake_work=ensure_intake_work,
+        perform_intake=perform_intake,
+        render_handoff=render_handoff,
+        render_dashboard=render_dashboard,
+    )
+    result["agents_policy"] = agents_policy_status(project)
+    incremental = result["incremental_validation"]
+    intake_stats = result["intake"]
+    errors = list(incremental["errors"])
+    if intake_stats.get("over_budget_files", 0):
+        errors.append("intake total character budget exceeded; inspect intake-evidence report")
+    if intake_stats.get("parser_errors", 0):
+        errors.append("one or more material parsers failed; inspect intake-evidence report")
+    result["run"] = "PASS" if not errors else "CHECK"
+    result["errors"] = errors
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if not errors else 1
     print(f"PROJECT={project}")
-    print(f"CREATED_FILES={created}")
-    print(f"SKIPPED_EXISTING_FILES={skipped}")
-    print(f"AGENTS_MD={agents_status}")
-    print(f"REGISTERED_SOURCES={len(source_ids)}")
+    print(f"CREATED_FILES={result['created_files']}")
+    print(f"SKIPPED_EXISTING_FILES={result['skipped_existing_files']}")
+    print(f"AGENTS_MD={result['agents_policy']}")
+    print(f"REGISTERED_SOURCES={result['registered_sources']}")
     print(f"INTAKE_MATERIALS={intake_stats['materials']}")
     print(f"INTAKE_REQUIREMENTS={intake_stats['requirements']}")
     print(f"INTAKE_GAPS={intake_stats['gaps']}")
-    print(f"DASHBOARD={dashboard}")
-    print(f"COUNCIL={overall}")
-    print(f"COUNCIL_REPORT={report}")
-    print(f"NEXT_COMMAND=adco creative-proposal {project}")
-    print("PPT_AUTO_GENERATED=0")
-    for key, value in stats.items():
+    print(f"INTAKE_CHARACTERS_READ={intake_stats['characters_read']}")
+    print(f"INTAKE_EVIDENCE_CHUNKS={intake_stats['evidence_chunks']}")
+    print(f"DASHBOARD={result['dashboard']}")
+    print(f"DASHBOARD_RENDER_COUNT={result['dashboard_render_count']}")
+    print("COUNCIL=NOT_RUN")
+    print(f"COUNCIL_RUN_COUNT={result['council_run_count']}")
+    print(f"SPECIALIST_HANDOFF_COUNT={result['specialist_handoff_count']}")
+    print(f"CLIENT_PACK_RUN_COUNT={result['client_pack_run_count']}")
+    print(f"FULL_VALIDATION_RUN_COUNT={result['full_validation_run_count']}")
+    print(f"NEXT_COMMAND={result['next_command']}")
+    print(f"PPT_AUTO_GENERATED={result['ppt_auto_generated']}")
+    print("VALIDATORS_RUN=" + ";".join(incremental["validators_run"]))
+    print("VALIDATORS_SKIPPED=" + ";".join(incremental["validators_skipped"]))
+    for key, value in result["timings"].items():
         print(f"{key.upper()}={value}")
-    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    print(f"INCREMENTAL_VALIDATION={'PASS' if not errors else 'CHECK'}")
+    print("FULL_VALIDATION=NOT_RUN")
     if errors:
         print("ERRORS:")
         for error in errors:
@@ -17207,8 +17293,31 @@ def command_intake(args: argparse.Namespace) -> int:
         max_total_chars=args.max_total_chars,
     )
     render_handoff(project, args.goal, source_ids)
-    dashboard = render_dashboard(project)
-    errors, validate_stats = validate(project)
+    incremental = run_incremental_validation(
+        project,
+        changed_artifact_ids=[
+            "ART-AUTO-EVIDENCE-CHUNKS",
+            "ART-AUTO-FACT-INVENTORY",
+            "ART-AUTO-REQUIREMENTS",
+            "ART-AUTO-GAPS",
+        ],
+        changed_file_paths=[
+            "AD-creative/orchestrator/evidence_chunks.jsonl",
+            "AD-creative/orchestrator/fact_inventory.jsonl",
+            "AD-creative/orchestrator/requirements.csv",
+            "AD-creative/orchestrator/gaps.csv",
+        ],
+    )
+    errors = list(incremental.errors)
+    if stats["over_budget_files"]:
+        errors.append("intake total character budget exceeded")
+    if stats["parser_errors"]:
+        errors.append("one or more material parsers failed")
+    dashboard = render_dashboard(
+        project,
+        validation_errors=errors,
+        validation_status="SCOPED_PASS" if not errors else "SCOPED_CHECK",
+    )
     print(f"PROJECT={project}")
     print(f"INTAKE_MATERIALS={stats['materials']}")
     print(f"INTAKE_REQUIREMENTS={stats['requirements']}")
@@ -17218,9 +17327,11 @@ def command_intake(args: argparse.Namespace) -> int:
     print(f"INTAKE_OVER_BUDGET_FILES={stats['over_budget_files']}")
     print(f"INTAKE_PARSER_ERRORS={stats['parser_errors']}")
     print(f"DASHBOARD={dashboard}")
-    for key, value in validate_stats.items():
-        print(f"{key.upper()}={value}")
-    print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
+    print("VALIDATORS_RUN=" + ";".join(incremental.validators_run))
+    print("VALIDATORS_SKIPPED=" + ";".join(incremental.validators_skipped))
+    print(f"VALIDATION_MS={incremental.validation_ms}")
+    print(f"INCREMENTAL_VALIDATION={'PASS' if not errors else 'CHECK'}")
+    print("FULL_VALIDATION=NOT_RUN")
     if errors:
         print("ERRORS:")
         for error in errors:
@@ -18672,10 +18783,15 @@ def build_parser() -> argparse.ArgumentParser:
     creative_review_parser.add_argument("--json", action="store_true")
     creative_review_parser.set_defaults(func=command_creative_review)
 
-    run_parser = subparsers.add_parser("run", help="Initialize, register materials, render dashboard, run council.")
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Initialize, parse evidence, update facts/handoff, render one dashboard, and run scoped validation.",
+    )
     run_parser.add_argument("project", help="Project directory.")
     run_parser.add_argument("--material", action="append", default=[], help="Client material file or folder. Repeatable.")
     run_parser.add_argument("--goal", default="先完成需求整理、缺口判断、客户追问、下一步建议。")
+    run_parser.add_argument("--max-total-chars", type=int, default=2_000_000)
+    run_parser.add_argument("--json", action="store_true", help="Print machine-readable output with phase timings.")
     run_parser.set_defaults(func=command_run)
 
     sample_parser = subparsers.add_parser("sample", help="Create a runnable bundled sample project.")
