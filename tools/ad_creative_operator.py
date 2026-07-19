@@ -1559,6 +1559,15 @@ def ensure_profile_work(project: Path, source_ids: list[str], goal: str) -> str:
 
 
 def ensure_creative_proposal_work(project: Path, work_id: str, source_ids: str, objective: str) -> str:
+    brief_outputs = ";".join(
+        [
+            "ART-AUTO-CREATIVE-BRIEF-SNAPSHOT",
+            "ART-AUTO-CREATIVE-BRIEF-CONTRACT",
+            "ART-AUTO-CREATIVE-CANDIDATE-SCHEMA",
+            "ART-AUTO-CREATIVE-GENERATION-REQUEST",
+            "ART-AUTO-CREATIVE-OPEN-GAPS",
+        ]
+    )
     work_path = project / "AD-creative/orchestrator/work_items.csv"
     fieldnames, rows = read_csv_rows(work_path)
     if not fieldnames:
@@ -1566,11 +1575,19 @@ def ensure_creative_proposal_work(project: Path, work_id: str, source_ids: str, 
     for row in rows:
         if work_id and row.get("work_id") == work_id:
             row["linked_source_events"] = join_unique_values(row.get("linked_source_events", ""), source_ids)
+            row["output_artifacts"] = join_unique_values(
+                row.get("output_artifacts", ""), brief_outputs
+            )
             row["updated_at"] = now_iso()
             write_csv_rows(work_path, fieldnames, rows)
             return work_id
-        if not work_id and row.get("stage") == "creative" and row.get("title") == "内部创意提案草案":
+        if not work_id and row.get("stage") == "creative" and row.get("title") in {
+            "内部创意提案草案",
+            "证据化创意 Brief",
+        }:
             row["linked_source_events"] = join_unique_values(row.get("linked_source_events", ""), source_ids)
+            row["title"] = "证据化创意 Brief"
+            row["output_artifacts"] = brief_outputs
             row["updated_at"] = now_iso()
             write_csv_rows(work_path, fieldnames, rows)
             return row.get("work_id", "")
@@ -1579,13 +1596,13 @@ def ensure_creative_proposal_work(project: Path, work_id: str, source_ids: str, 
         {
             "work_id": new_work_id,
             "stage": "creative",
-            "title": "内部创意提案草案",
-            "objective": objective or "生成可追溯的内部创意提案草案，并在客户可见前通过 creative-quality-gate。",
+            "title": "证据化创意 Brief",
+            "objective": objective or "生成证据快照、创意 Brief 合同与候选生成请求。",
             "owner_agent": "Codex",
             "status": "ready",
             "priority": "high",
             "input_refs": source_ids,
-            "output_artifacts": "ART-AUTO-CREATIVE-DIRECTIONS;ART-AUTO-CREATIVE-OPTION-MATRIX;ART-AUTO-PROPOSAL-STRUCTURE;ART-AUTO-SLIDE-SPEC",
+            "output_artifacts": brief_outputs,
             "linked_requirements": "",
             "linked_source_events": source_ids,
             "linked_references": "",
@@ -8365,12 +8382,14 @@ def all_source_event_ids(project: Path) -> list[str]:
 
 def goal_run_step(project: Path, *, allow_generate: bool) -> tuple[str, str, str]:
     payload = status_payload(project, validation_errors=[])
+    counts = payload["counts"]
+    if isinstance(counts, dict) and counts.get("source_events", 0) == 0:
+        return "stop", "NEEDS_MATERIAL", str(payload.get("next_action", ""))
     if payload["pending_confirmation_count"]:
         return "stop", "WAITING_FOR_CONFIRMATION", str(payload.get("next_action", ""))
     if payload["blocking_gap_count"]:
         return "stop", "BLOCKING_GAP", str(payload.get("next_action", ""))
 
-    counts = payload["counts"]
     evidence_path = project / "AD-creative/orchestrator/evidence_chunks.jsonl"
     if (
         isinstance(counts, dict)

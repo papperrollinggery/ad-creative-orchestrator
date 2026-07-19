@@ -9,6 +9,10 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
+from adco_core.specialist_exchange import (
+    negotiate_contract_version,
+    v2_boundary_errors,
+)
 from ad_creative_operator import (
     DIRCREATIVE_PROFILE_ID,
     adopt_specialist_receipt,
@@ -55,6 +59,13 @@ def descriptor_payload() -> dict[str, object]:
             }
         ],
     }
+
+
+def descriptor_payload_v2() -> dict[str, object]:
+    payload = descriptor_payload()
+    payload["descriptor_version"] = "2.0"
+    payload["supported_contract_versions"] = ["1.0", "2.0"]
+    return payload
 
 
 def media_descriptor_payload() -> dict[str, object]:
@@ -1477,6 +1488,147 @@ def test_codex_thread_specialist_exchange_requires_host_reconciliation() -> None
         assert errors == [], errors
 
 
+def test_v2_negotiation_handoff_receipt_and_independent_adoption() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-spx-v2-") as raw:
+        project = Path(raw)
+        ensure_project(project)
+        artifact_id, _ = add_input_artifact(project)
+        descriptor_data = descriptor_payload_v2()
+        assert negotiate_contract_version(descriptor_data) == "2.0"
+        descriptor = project / "descriptor-v2.json"
+        write_json_object(descriptor, descriptor_data)
+        handoff, handoff_path = create_specialist_handoff(
+            project,
+            work_id="WORK-SPX-001",
+            profile_id=DIRCREATIVE_PROFILE_ID,
+            objective="Create a bounded internal v2 story package.",
+            input_artifact_ids=[artifact_id],
+            expected_output_kinds=["film.story_package"],
+            required_capabilities=[],
+            descriptor_path=descriptor,
+            execution_mode="inline",
+            workspace_mode="isolated_workspace",
+        )
+        assert set(handoff) == {
+            "protocol_id",
+            "contract_version",
+            "task",
+            "brief_snapshot",
+            "locked_decisions",
+            "requested_outputs",
+            "quality_targets",
+            "execution_mode",
+        }
+        assert handoff["contract_version"] == "2.0"
+        assert handoff["execution_mode"] == "inline"
+        assert not specialist_schema_errors("handoff", handoff, force_builtin=True)
+        request = handoff["requested_outputs"][0]
+        assert isinstance(request, dict)
+        output = project / str(request["path_root"]) / "story.md"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("Evidence-bound v2 story package.", encoding="utf-8")
+        _, exchange_rows = read_csv_rows(
+            project / "AD-creative/orchestrator/specialist_exchange/exchange_index.csv"
+        )
+        row = exchange_rows[0]
+        assert row["contract_version"] == "2.0"
+        assert row["execution_mode"] == "inline"
+        assert not row["thread_id"]
+        receipt_path = project / row["receipt_path"]
+        receipt = {
+            "protocol_id": "adco.specialist-exchange",
+            "contract_version": "2.0",
+            "status": "completed",
+            "outputs": [
+                {
+                    "output_id": request["output_id"],
+                    "type": request["type"],
+                    "path": output.relative_to(project).as_posix(),
+                    "sha256": file_sha256(output),
+                }
+            ],
+            "domain_qa": {
+                "status": "pass",
+                "checks": ["provider-domain-continuity"],
+                "limitations": [],
+            },
+            "open_questions": [],
+        }
+        write_json_object(receipt_path, receipt)
+        adoption, adoption_path = adopt_specialist_receipt(
+            project,
+            handoff_path=handoff_path,
+            receipt_path=receipt_path,
+            decision="adopt",
+            reason="v2 domain QA passed and output bindings match.",
+            output_mappings={
+                str(request["output_id"]): "AD-creative/film/adopted_v2_story.md"
+            },
+        )
+        assert adoption_path and adoption_path.is_file()
+        assert adoption["protocol_id"] == "adco.specialist-adoption"
+        assert adoption["decision_owner"] == "adco"
+        assert adoption["adco_validation"] == [
+            "path",
+            "hash",
+            "type",
+            "domain_qa",
+            "scope",
+        ]
+        errors, _ = validate(project)
+        assert not errors, errors
+
+
+def test_v2_falls_back_to_v1_and_rejects_nested_dispatch() -> None:
+    assert negotiate_contract_version(descriptor_payload()) == "1.0"
+    with tempfile.TemporaryDirectory(prefix="adco-spx-v2-nested-") as raw:
+        project = Path(raw)
+        ensure_project(project)
+        artifact_id, _ = add_input_artifact(project)
+        descriptor = project / "descriptor-v2.json"
+        write_json_object(descriptor, descriptor_payload_v2())
+        try:
+            create_specialist_handoff(
+                project,
+                work_id="WORK-SPX-001",
+                profile_id=DIRCREATIVE_PROFILE_ID,
+                objective="This must remain inline.",
+                input_artifact_ids=[artifact_id],
+                expected_output_kinds=["film.story_package"],
+                required_capabilities=[],
+                descriptor_path=descriptor,
+                execution_mode="external_handoff",
+                workspace_mode="isolated_workspace",
+            )
+        except ValueError as exc:
+            assert "inline" in str(exc)
+        else:
+            raise AssertionError("v2 nested/delegated execution must fail")
+
+
+def test_v2_receipt_rejects_outer_readiness_claims() -> None:
+    receipt = {
+        "protocol_id": "adco.specialist-exchange",
+        "contract_version": "2.0",
+        "status": "completed",
+        "outputs": [
+            {
+                "output_id": "OUT-01",
+                "type": "film.story_package",
+                "path": "AD-creative/workspaces/output.md",
+                "sha256": "0" * 64,
+            }
+        ],
+        "domain_qa": {"status": "pass", "checks": [], "limitations": []},
+        "open_questions": [],
+        "project_complete": False,
+    }
+    schema_errors = specialist_schema_errors("receipt", receipt, force_builtin=True)
+    assert any("additional property" in item for item in schema_errors), schema_errors
+    boundary_errors = v2_boundary_errors(receipt, message_type="receipt")
+    assert any("outer readiness" in item for item in boundary_errors), boundary_errors
+
+
 def main() -> int:
     test_positive_inline_dircreative_exchange()
     test_unverified_descriptor_and_authority_escalation_are_blocked()
@@ -1491,6 +1643,9 @@ def main() -> int:
     test_descriptor_evolution_and_required_receipt_extension_are_negotiated()
     test_host_scope_manifest_detects_unreported_control_plane_write()
     test_codex_thread_specialist_exchange_requires_host_reconciliation()
+    test_v2_negotiation_handoff_receipt_and_independent_adoption()
+    test_v2_falls_back_to_v1_and_rejects_nested_dispatch()
+    test_v2_receipt_rejects_outer_readiness_claims()
     print("TEST_SPECIALIST_EXCHANGE=PASS")
     return 0
 

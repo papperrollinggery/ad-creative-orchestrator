@@ -377,7 +377,34 @@ def parse_pptx(path: Path, *, chunk_chars: int, overlap_chars: int) -> list[RawE
 
 
 def parse_pdf(path: Path, *, chunk_chars: int, overlap_chars: int) -> list[RawEvidence]:
-    from pypdf import PdfReader
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        pdftotext = shutil.which("pdftotext")
+        if not pdftotext:
+            raise
+        completed = subprocess.run(
+            [pdftotext, "-layout", str(path), "-"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if completed.returncode != 0:
+            raise ValueError(
+                "pdftotext failed: " + completed.stderr.strip()[:1000]
+            )
+        records: list[RawEvidence] = []
+        for page_number, text in enumerate(completed.stdout.split("\f"), 1):
+            for piece in _split_text(
+                text,
+                chunk_chars=chunk_chars,
+                overlap_chars=overlap_chars,
+            ):
+                piece.page = page_number
+                piece.field_path = f"page[{page_number}]"
+                records.append(piece)
+        return records
 
     reader = PdfReader(path)
     records: list[RawEvidence] = []

@@ -66,8 +66,12 @@ py-modules = [
   "runtime_paths",
   "specialist_schema_validation",
   "render_demo_transcript",
+  "test_creative_contract",
+  "test_fact_inventory",
   "test_gates",
   "test_goal_workflow",
+  "test_incremental_validation",
+  "test_multiformat_ingestion",
   "test_specialist_exchange",
   "test_skill_activation_policy"
 ]

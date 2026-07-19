@@ -78,6 +78,31 @@ def run_json(args: list[str]) -> None:
         raise AssertionError(f"Expected JSON output from {' '.join(args)}: {exc}\n{snippet}") from exc
 
 
+def run_expected_exit(
+    args: list[str], *, expected_exit: int, required_text: str
+) -> None:
+    print("+ " + " ".join(args) + f" # expect exit {expected_exit}")
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    completed = subprocess.run(
+        args,
+        cwd=ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+    if completed.stdout:
+        print(completed.stdout, end="")
+    if completed.stderr:
+        print(completed.stderr, end="", file=sys.stderr)
+    if completed.returncode != expected_exit or required_text not in completed.stdout:
+        raise AssertionError(
+            f"Expected exit {expected_exit} and {required_text!r} from {' '.join(args)}; "
+            f"got exit {completed.returncode}"
+        )
+
+
 def cleanup_python_caches(root: Path) -> None:
     pollution_dirs = ("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache")
     for path in [found for name in pollution_dirs for found in root.rglob(name)]:
@@ -112,6 +137,10 @@ def main() -> int:
                 "tools/render_demo_transcript.py",
                 "tools/test_gates.py",
                 "tools/test_goal_workflow.py",
+                "tools/test_multiformat_ingestion.py",
+                "tools/test_fact_inventory.py",
+                "tools/test_creative_contract.py",
+                "tools/test_incremental_validation.py",
                 "tools/test_specialist_exchange.py",
                 "tools/test_skill_activation_policy.py",
                 "tools/validate_project.py",
@@ -134,6 +163,10 @@ def main() -> int:
         run_json([python, "tools/ad_creative_operator.py", "release-status", "--json"])
         run([python, "tools/ad_creative_operator.py", "docs"])
         run_json([python, "tools/ad_creative_operator.py", "docs", "--json"])
+        run([python, "tools/test_multiformat_ingestion.py"])
+        run([python, "tools/test_fact_inventory.py"])
+        run([python, "tools/test_creative_contract.py"])
+        run([python, "tools/test_incremental_validation.py"])
         run([python, "tools/test_gates.py"])
         run([python, "tools/test_goal_workflow.py"])
         run([python, "tools/test_specialist_exchange.py"])
@@ -151,6 +184,10 @@ def main() -> int:
                 "render_demo_transcript.py",
                 "test_gates.py",
                 "test_goal_workflow.py",
+                "test_multiformat_ingestion.py",
+                "test_fact_inventory.py",
+                "test_creative_contract.py",
+                "test_incremental_validation.py",
                 "test_specialist_exchange.py",
                 "test_skill_activation_policy.py",
                 "validate_project.py",
@@ -168,6 +205,10 @@ def main() -> int:
         run_json([python, "-m", "ad_creative_operator", "release-status", "--json"])
         run([python, "-m", "ad_creative_operator", "docs"])
         run_json([python, "-m", "ad_creative_operator", "docs", "--json"])
+        run([python, "-m", "test_multiformat_ingestion"])
+        run([python, "-m", "test_fact_inventory"])
+        run([python, "-m", "test_creative_contract"])
+        run([python, "-m", "test_incremental_validation"])
         run([python, "-m", "test_gates"])
         run([python, "-m", "test_goal_workflow"])
         run([python, "-m", "test_specialist_exchange"])
@@ -197,7 +238,11 @@ def main() -> int:
         run_json([python, *operator, "validate", str(initialized), "--json"])
         run([python, *operator, "sample", str(sample)])
         run_json([python, *operator, "creative-proposal", str(sample), "--json"])
-        run([python, *operator, "creative-quality-gate", str(sample)])
+        run_expected_exit(
+            [python, *operator, "creative-quality-gate", str(sample)],
+            expected_exit=1,
+            required_text="CREATIVE_QUALITY_GATE=BLOCKED",
+        )
         run([python, *operator, "profile-analyze", str(sample), "--brand", "NOVA Trail", "--company", "NOVA Client"])
         run_json([python, *operator, "profile-analyze", str(sample), "--brand", "NOVA Trail", "--company", "NOVA Client", "--json"])
         run([python, *operator, "hygiene", str(sample), "--strict"])
