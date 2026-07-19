@@ -44,6 +44,12 @@ CHAT_NATIVE_FORBIDDEN_SNIPPETS = [
     "native render_table",
     "native render_chart",
 ]
+SKILL_METADATA_REL = Path("agents/openai.yaml")
+SKILL_METADATA_REQUIRED_SNIPPETS = [
+    'display_name: "Ad Creative Orchestrator"',
+    'default_prompt: "Use $ad-creative-orchestrator to operate this initialized ADCO project."',
+    "allow_implicit_invocation: false",
+]
 
 
 def published_doc_paths() -> list[Path]:
@@ -111,6 +117,20 @@ def main() -> int:
         for snippet in CHAT_NATIVE_FORBIDDEN_SNIPPETS:
             if snippet in chat_native_text:
                 issues.append(f"chat-native skill contains rebuilt-UI contract: {snippet}")
+    for root_label, skill_root in [
+        ("source", ROOT / "skill_drafts/ad-creative-orchestrator"),
+        ("packaged", ROOT / "tools/adco_resources/skill_drafts/ad-creative-orchestrator"),
+    ]:
+        metadata_path = skill_root / SKILL_METADATA_REL
+        if not metadata_path.is_file():
+            issues.append(f"missing {root_label} skill invocation metadata: {metadata_path}")
+            continue
+        metadata_text = metadata_path.read_text(encoding="utf-8")
+        for snippet in SKILL_METADATA_REQUIRED_SNIPPETS:
+            if snippet not in metadata_text:
+                issues.append(
+                    f"{root_label} skill invocation metadata missing contract: {snippet}"
+                )
     if issues:
         print("PACKAGED_ASSETS_CHECK=FAIL")
         for issue in issues:

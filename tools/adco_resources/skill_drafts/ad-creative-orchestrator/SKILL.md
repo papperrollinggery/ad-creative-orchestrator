@@ -1,9 +1,26 @@
 ---
 name: ad-creative-orchestrator
-description: "Use for Codex-first advertising creative project orchestration: intake, current truth, OpenAI Visualizations decision views, creative proposals, references, visual assets, controlled specialist work, PPT review, feedback, FinalDelivery protection, and client-send readiness."
+description: "Use only when the user explicitly invokes $ad-creative-orchestrator for an initialized or about-to-be-initialized real advertising project. Govern project materials, facts, versions, assets, PPT, approvals, and delivery. Do not use for ADCO or DIR maintenance, refactoring, testing, benchmarking, ordinary advertising questions, ordinary code work, or writing without ADCO project context. Film craft is delegated only through an explicit Specialist handoff."
 ---
 
 # Ad Creative Orchestrator
+
+## Activation policy
+
+This skill is opt-in. Use it only after the user explicitly invokes
+`$ad-creative-orchestrator` for a real advertising project that is initialized or
+about to be initialized with an ADCO control plane.
+
+Never activate it to maintain, refactor, test, benchmark, or evaluate the ADCO
+source repository or the DIRcreative source repository. Do not activate it for
+ordinary advertising questions, ordinary code tasks, generic writing, or work
+without ADCO project context. Source maintenance always uses the repository's
+ordinary Python and Git workflow.
+
+ADCO is the control plane. GPT-5.6 Sol or an explicitly selected professional
+specialist supplies creative reasoning. DIRcreative is a film-craft provider and
+is used only through an explicit, valid Specialist handoff; words such as video,
+script, storyboard, commercial, or prompt do not trigger delegation by themselves.
 
 ## Core rule
 

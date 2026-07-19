@@ -21,7 +21,9 @@ install-smoke:
 	$$tmp_dir/venv/bin/python -m pip install --upgrade pip >/dev/null; \
 	$$tmp_dir/venv/bin/python -m pip install -e . --no-deps >/dev/null; \
 	$$tmp_dir/venv/bin/adco --help >/dev/null; \
+	$$tmp_dir/venv/bin/python -c 'from runtime_paths import skill_draft_dir; p=skill_draft_dir()/"agents/openai.yaml"; t=p.read_text(); assert "allow_implicit_invocation: false" in t; print("SKILL_METADATA=PASS", p)'; \
 	$$tmp_dir/venv/bin/adco --version; \
+	$$tmp_dir/venv/bin/python -c 'from runtime_paths import skill_draft_dir; p=skill_draft_dir()/"agents/openai.yaml"; t=p.read_text(); assert "allow_implicit_invocation: false" in t; print("SKILL_METADATA=PASS", p)'; \
 	$$tmp_dir/venv/bin/adco doctor; \
 	$$tmp_dir/venv/bin/adco doctor --json >/dev/null; \
 	$$tmp_dir/venv/bin/adco release-status; \

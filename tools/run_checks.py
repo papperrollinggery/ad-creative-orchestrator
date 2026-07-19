@@ -13,13 +13,26 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-from runtime_paths import source_root, template_root
+from runtime_paths import skill_draft_dir, source_root, template_root
 
 
 SOURCE_ROOT = source_root()
 ROOT = SOURCE_ROOT or Path(__file__).resolve().parent
 SOURCE_MODE = SOURCE_ROOT is not None
 EXPECTED_CLI_VERSION = "adco 0.3.2"
+
+
+def check_installed_skill_metadata() -> None:
+    path = skill_draft_dir() / "agents/openai.yaml"
+    text = path.read_text(encoding="utf-8")
+    required = [
+        'default_prompt: "Use $ad-creative-orchestrator to operate this initialized ADCO project."',
+        "allow_implicit_invocation: false",
+    ]
+    missing = [snippet for snippet in required if snippet not in text]
+    if missing:
+        raise AssertionError(f"skill invocation metadata missing {missing}: {path}")
+    print(f"SKILL_METADATA=PASS {path}")
 
 
 def run(args: list[str]) -> None:
@@ -100,6 +113,7 @@ def main() -> int:
                 "tools/test_gates.py",
                 "tools/test_goal_workflow.py",
                 "tools/test_specialist_exchange.py",
+                "tools/test_skill_activation_policy.py",
                 "tools/validate_project.py",
                 "tools/init_project.py",
                 "tools/runtime_paths.py",
@@ -107,6 +121,7 @@ def main() -> int:
             ]
         )
         run([python, "tools/check_packaged_assets.py"])
+        run([python, "tools/test_skill_activation_policy.py"])
         run([python, "skill_drafts/ad-creative-orchestrator/scripts/adco_visualization.py", "self-test"])
         run([python, "tools/check_specialist_schemas.py"])
         run([python, "tools/check_docs_commands.py"])
@@ -137,6 +152,7 @@ def main() -> int:
                 "test_gates.py",
                 "test_goal_workflow.py",
                 "test_specialist_exchange.py",
+                "test_skill_activation_policy.py",
                 "validate_project.py",
                 "init_project.py",
                 "runtime_paths.py",
@@ -155,6 +171,8 @@ def main() -> int:
         run([python, "-m", "test_gates"])
         run([python, "-m", "test_goal_workflow"])
         run([python, "-m", "test_specialist_exchange"])
+        run([python, "-m", "test_skill_activation_policy"])
+    check_installed_skill_metadata()
     if SOURCE_MODE:
         run([python, "tools/validate_project.py", str(template_root())])
         run([python, "tools/validate_project.py", "examples/moncler_protocol_dry_run"])
