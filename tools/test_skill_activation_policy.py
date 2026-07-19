@@ -4,8 +4,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
 
-from runtime_paths import skill_draft_dir, source_root, template_root
+from init_project import (
+    AGENTS_MERGE_SUGGESTION_REL,
+    agents_policy_complete,
+    copy_template,
+)
+from runtime_paths import (
+    is_adco_source_repository,
+    is_initialized_adco_project,
+    skill_draft_dir,
+    source_root,
+    template_root,
+)
 
 
 EXPLICIT_TOKEN = "$ad-creative-orchestrator"
@@ -52,9 +64,34 @@ def main() -> int:
         if actual is not expected:
             raise AssertionError(f"activation scenario mismatch: {name}")
 
-    assert "Use `ad-creative-orchestrator` for this project." in project_agents
+    assert "apply only when" in project_agents
+    assert "explicitly" in project_agents
+    assert "$ad-creative-orchestrator" in project_agents
+    assert "Use `ad-creative-orchestrator` for this project." not in project_agents
+    assert "Paperrolling-DIRcreative-SKILL" in project_agents
+    assert "valid Specialist handoff" in project_agents
+
+    with tempfile.TemporaryDirectory(prefix="adco-activation-empty-") as raw:
+        ordinary = Path(raw)
+        assert not is_initialized_adco_project(ordinary)
+        copy_template(template_root(), ordinary)
+        assert is_initialized_adco_project(ordinary)
+        assert agents_policy_complete(ordinary)
+        generated = read_required(ordinary / "AGENTS.md")
+        assert "apply only when" in generated
+
+    with tempfile.TemporaryDirectory(prefix="adco-activation-merge-") as raw:
+        existing = Path(raw)
+        (existing / "AGENTS.md").write_text("# Existing\n", encoding="utf-8")
+        copy_template(template_root(), existing)
+        assert not agents_policy_complete(existing)
+        suggestion = read_required(existing / AGENTS_MERGE_SUGGESTION_REL)
+        assert "conditional ADCO section" in suggestion
+        assert "must not become an unconditional repository rule" in suggestion
     root = source_root()
     if root:
+        assert is_adco_source_repository(root)
+        assert not is_initialized_adco_project(root)
         repository_agents = read_required(root / "AGENTS.md")
         assert "ADCO Repository Self-Maintenance Mode" in repository_agents
         assert "Do not invoke an installed `ad-creative-orchestrator` skill" in repository_agents

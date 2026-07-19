@@ -369,7 +369,9 @@ def test_project_agents_policy_created_and_validated() -> None:
         agents = project / "AGENTS.md"
         assert agents.exists()
         text = agents.read_text(encoding="utf-8")
-        assert "ad-creative-orchestrator" in text
+        assert "$ad-creative-orchestrator" in text
+        assert "apply only when" in text
+        assert "Paperrolling-DIRcreative-SKILL" in text
         assert "VALIDATION=PASS" in text
         assert "creative-quality-gate" in text
         assert "client-pack-gate" in text

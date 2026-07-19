@@ -6,7 +6,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from runtime_paths import template_root as default_template_root
+from runtime_paths import (
+    is_initialized_adco_project,
+    template_root as default_template_root,
+)
 
 
 AGENTS_REL = Path("AGENTS.md")
@@ -25,7 +28,8 @@ def write_agents_merge_suggestion(source: Path, target_root: Path) -> bool:
                 "# AGENTS.md Merge Suggestion",
                 "",
                 "`AGENTS.md` already existed at the project root, so adco did not overwrite it.",
-                "Copy or adapt the required ad-creative-orchestrator section below into the root `AGENTS.md`, then run `adco validate` again.",
+                "Copy or adapt the conditional ADCO section below into the root `AGENTS.md`, then run `adco validate` again.",
+                "The section applies only to a valid initialized ADCO advertising project after explicit `$ad-creative-orchestrator` invocation; it must not become an unconditional repository rule.",
                 "",
                 "## Required Section",
                 "",
@@ -49,6 +53,8 @@ def agents_policy_status(target_root: Path) -> str:
 
 
 def agents_policy_complete(target_root: Path) -> bool:
+    if not is_initialized_adco_project(target_root):
+        return False
     agents_path = target_root / AGENTS_REL
     if not agents_path.exists():
         return False
@@ -56,8 +62,13 @@ def agents_policy_complete(target_root: Path) -> bool:
         from validate_project import AGENTS_REQUIRED_SNIPPETS
     except ImportError:
         return False
-    text = agents_path.read_text(encoding="utf-8").lower()
-    return all(snippet.lower() in text for snippet in AGENTS_REQUIRED_SNIPPETS)
+    text = " ".join(
+        agents_path.read_text(encoding="utf-8").replace("`", "").split()
+    ).lower()
+    return all(
+        " ".join(snippet.replace("`", "").split()).lower() in text
+        for snippet in AGENTS_REQUIRED_SNIPPETS
+    )
 
 
 def copy_template(template_root: Path, target_root: Path) -> tuple[int, int]:

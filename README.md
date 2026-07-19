@@ -93,7 +93,7 @@ project/
     └── orchestrator/     # requirements, gaps, versions, gates, audit trail
 ```
 
-If the project already has an `AGENTS.md`, ADCO leaves it untouched and writes an `AGENTS.merge_suggestion.md` for manual review.
+If the project already has an `AGENTS.md`, ADCO leaves it untouched and writes an `AGENTS.merge_suggestion.md` for manual review. The suggested policy is conditional: it applies only to a valid initialized ADCO project after explicit `$ad-creative-orchestrator` invocation, never to ADCO/DIR source maintenance or ordinary code and advertising tasks.
 
 ## How the Workflow Stays Safe
 

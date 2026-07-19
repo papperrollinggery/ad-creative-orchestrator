@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
+from runtime_paths import is_initialized_adco_project
+
 from specialist_schema_validation import (
     specialist_control_plane_errors,
     specialist_generation_authorization_errors,
@@ -529,7 +531,20 @@ PROFILE_SUBJECT_TYPES = {"participant", "brand", "company", "client_group"}
 PROFILE_DECISION_LEVELS = {"high", "medium", "low", "unknown", ""}
 
 AGENTS_REQUIRED_SNIPPETS = [
-    "ad-creative-orchestrator",
+    "$ad-creative-orchestrator",
+    "apply only when",
+    "project.yml",
+    "control_plane_schema.json",
+    "explicitly invokes",
+    "ad-creative-orchestrator source repository",
+    "Paperrolling-DIRcreative-SKILL",
+    "Skill maintenance",
+    "Skill Benchmark",
+    "AGENTS/SKILL/Schema/test changes",
+    "ordinary code refactoring",
+    "ordinary advertising requests",
+    "not explicitly invoked",
+    "valid Specialist handoff",
     "AD-creative/orchestrator/",
     "AD-creative/handoff/",
     "current_truth.md",
@@ -751,15 +766,20 @@ def check_structured_files(project: Path, errors: list[str]) -> None:
 
 
 def check_agents_policy(project: Path, errors: list[str]) -> bool:
+    if not is_initialized_adco_project(project):
+        errors.append(
+            "project is not an initialized ADCO runtime project with matching project.yml and control_plane_schema.json"
+        )
+        return False
     path = project / "AGENTS.md"
     if not path.exists():
         return False
     text = path.read_text(encoding="utf-8")
-    normalized = text.lower()
+    normalized = " ".join(text.replace("`", "").split()).lower()
     missing = [
         snippet
         for snippet in AGENTS_REQUIRED_SNIPPETS
-        if snippet.lower() not in normalized
+        if " ".join(snippet.replace("`", "").split()).lower() not in normalized
     ]
     if missing:
         errors.append(
