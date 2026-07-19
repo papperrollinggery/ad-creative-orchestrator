@@ -35,6 +35,21 @@ from adco_core.facts import (
     import_intake_analysis,
     run_evidence_intake,
 )
+from adco_core.creative_contract import (
+    BRIEF_CONTRACT_REL,
+    BRIEF_SNAPSHOT_REL,
+    CANDIDATE_IMPORT_RECEIPT_REL,
+    CANDIDATE_SCHEMA_REL,
+    CREATIVE_DIRECTIONS_REL,
+    CRITIC_RECEIPT_REL,
+    CURRENT_CANDIDATE_REL,
+    GENERATION_REQUEST_REL,
+    OPEN_GAPS_REL,
+    OPTION_MATRIX_REL,
+    create_creative_brief,
+    import_creative_candidate,
+    review_creative_candidate,
+)
 from adco_core.ingestion import ingest_source_rows
 from init_project import agents_policy_status, copy_template
 from runtime_paths import published_docs_root, repo_or_module_root, skill_draft_dir, source_root, template_root
@@ -4509,6 +4524,13 @@ def proposal_display_phrase(label: str, value: str) -> str:
 
 
 def build_creative_direction_rows(context: dict[str, object]) -> list[dict[str, str]]:
+    """Deprecated compatibility hook; deterministic templates are not creative output."""
+    del context
+    return []
+
+
+def legacy_build_creative_direction_rows(context: dict[str, object]) -> list[dict[str, str]]:
+    """Legacy test fixture retained for migration comparisons; never called in production."""
     feature = str(context["product_feature"])
     feature_phrase = proposal_display_phrase("product_feature", feature)
     objective_phrase = proposal_display_phrase("client_objective", str(context["client_objective"]))
@@ -4933,50 +4955,40 @@ artifact_role: client_readable_text_framework_before_ppt
 """
 
 
-def render_creative_proposal(project: Path, *, work_id: str = "") -> dict[str, object]:
+def render_creative_brief(project: Path, *, work_id: str = "") -> dict[str, object]:
     ensure_project(project)
-    context = collect_proposal_evidence(project)
+    _, requirements = read_csv_rows(
+        project / "AD-creative/orchestrator/requirements.csv"
+    )
+    _, sources = read_csv_rows(project / "AD-creative/orchestrator/source_events.csv")
+    source_ids = ";".join(
+        row.get("source_event_id", "") for row in sources if row.get("source_event_id")
+    )
+    requirement_ids = ";".join(
+        row.get("requirement_id", "")
+        for row in requirements
+        if row.get("requirement_id")
+    )
+    objective = next(
+        (row.get("statement", "") for row in requirements if row.get("statement")),
+        "Evidence-bound creative brief",
+    )
     work_id = ensure_creative_proposal_work(
         project,
         work_id,
-        str(context["source_ids"]),
-        str(context["client_objective"]),
+        source_ids,
+        objective,
     )
-    rows = build_creative_direction_rows(context)
-    creative_path = project / "AD-creative/creative/creative_directions.md"
-    matrix_path = project / "AD-creative/creative/option_matrix.csv"
-    structure_path = project / "AD-creative/proposal_architecture/proposal_structure.md"
-    outline_md_path = project / "AD-creative/client_review/client_review_outline.md"
-    outline_csv_path = project / "AD-creative/client_review/client_outline.csv"
-    slide_path = project / "AD-creative/client_review/slide_spec.md"
-    write_text(creative_path, render_creative_directions_content(context, rows))
-    matrix_fields = [
-        "direction_id",
-        "name",
-        "role",
-        "strategy_path",
-        "creative_proposition",
-        "core_message",
-        "target_feeling",
-        "product_feature",
-        "communication_benefit",
-        "behavior_barrier",
-        "key_visual_or_action",
-        "title_or_use_case",
-        "reference_ids",
-        "risk",
-        "why_choose",
-        "evidence_refs",
-        "status",
-        "notes",
+    result = create_creative_brief(project)
+    brief_artifacts = [
+        ("ART-AUTO-CREATIVE-BRIEF-SNAPSHOT", "creative_brief_snapshot", BRIEF_SNAPSHOT_REL),
+        ("ART-AUTO-CREATIVE-BRIEF-CONTRACT", "creative_brief_contract", BRIEF_CONTRACT_REL),
+        ("ART-AUTO-CREATIVE-CANDIDATE-SCHEMA", "creative_candidate_schema", CANDIDATE_SCHEMA_REL),
+        ("ART-AUTO-CREATIVE-GENERATION-REQUEST", "creative_generation_request", GENERATION_REQUEST_REL),
+        ("ART-AUTO-CREATIVE-OPEN-GAPS", "creative_open_evidence_gaps", OPEN_GAPS_REL),
     ]
-    write_csv_rows(matrix_path, matrix_fields, rows)
-    write_text(structure_path, render_proposal_structure_content(context, rows))
-    write_text(outline_md_path, render_client_review_outline_content(context, rows))
-    write_csv_rows(outline_csv_path, CLIENT_OUTLINE_FIELDS, render_client_outline_rows(context, rows))
-    write_text(slide_path, render_slide_spec_content(rows))
     artifact_ids: list[str] = []
-    for artifact_id, artifact_type, rel_path in CREATIVE_PROPOSAL_ARTIFACTS:
+    for artifact_id, artifact_type, rel_path in brief_artifacts:
         artifact_ids.append(artifact_id)
         update_artifact(
             project,
@@ -4985,34 +4997,55 @@ def render_creative_proposal(project: Path, *, work_id: str = "") -> dict[str, o
             str(rel_path),
             "creative",
             visibility="internal_only",
-            source_event_ids=str(context["source_ids"]),
-            linked_requirements=str(context["requirement_ids"]),
+            source_event_ids=source_ids,
+            linked_requirements=requirement_ids,
             linked_work_items=work_id,
-            linked_references=str(context["reference_ids"]),
+            linked_references="",
             gate_status="NOT_RUN",
         )
     append_event(
         project,
         {
-            "event_id": f"EVT-CREATIVE-PROPOSAL-{datetime.now().strftime('%Y%m%d%H%M%S')}",
-            "event_type": "creative_proposal_rendered",
+            "event_id": f"EVT-CREATIVE-BRIEF-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            "event_type": "creative_brief_created",
             "created_at": now_iso(),
             "work_id": work_id,
             "artifacts": artifact_ids,
+            "brief_snapshot_sha256": result.snapshot_sha256,
         },
     )
     return {
         "project": str(project),
         "work_id": work_id,
         "artifact_ids": artifact_ids,
-        "paths": [str(project / rel_path) for _, _, rel_path in CREATIVE_PROPOSAL_ARTIFACTS],
-        "context": context,
+        "paths": [str(path) for path in result.paths],
+        "brief_snapshot_sha256": result.snapshot_sha256,
+        "evidence_refs": result.evidence_refs,
+        "open_evidence_gaps": result.open_gaps,
+        "directions_generated": 0,
     }
+
+
+def render_creative_proposal(project: Path, *, work_id: str = "") -> dict[str, object]:
+    """Deprecated alias for render_creative_brief; never synthesizes directions."""
+    payload = render_creative_brief(project, work_id=work_id)
+    payload["deprecated_alias"] = "creative-brief"
+    return payload
 
 
 def creative_proposal_scan_files(project: Path) -> list[Path]:
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
-    paths = [project / rel_path for _, _, rel_path in CREATIVE_PROPOSAL_ARTIFACTS]
+    candidate_mode = (project / CURRENT_CANDIDATE_REL).is_file()
+    paths = (
+        [
+            project / CURRENT_CANDIDATE_REL,
+            project / CREATIVE_DIRECTIONS_REL,
+            project / OPTION_MATRIX_REL,
+            project / CRITIC_RECEIPT_REL,
+        ]
+        if candidate_mode
+        else [project / rel_path for _, _, rel_path in CREATIVE_PROPOSAL_ARTIFACTS]
+    )
     creative_types = {
         "creative_directions",
         "creative_option_matrix",
@@ -5020,6 +5053,8 @@ def creative_proposal_scan_files(project: Path) -> list[Path]:
         "slide_spec",
         "creative_proposal",
         "proposal_outline",
+        "creative_candidate",
+        "creative_critic_receipt",
     }
     for artifact in artifacts:
         if artifact.get("artifact_type", "").strip() in creative_types:
@@ -5121,7 +5156,17 @@ def client_facing_scan_paths(project: Path, files: list[Path]) -> list[Path]:
 
 def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
     files = creative_proposal_scan_files(project)
-    for artifact_id, artifact_type, rel_path in CREATIVE_PROPOSAL_ARTIFACTS:
+    candidate_mode = (project / CURRENT_CANDIDATE_REL).is_file()
+    active_artifacts = (
+        [
+            ("ART-AUTO-CREATIVE-CANDIDATE", "creative_candidate", CURRENT_CANDIDATE_REL),
+            ("ART-AUTO-CREATIVE-DIRECTIONS", "creative_directions", CREATIVE_DIRECTIONS_REL),
+            ("ART-AUTO-CREATIVE-OPTION-MATRIX", "creative_option_matrix", OPTION_MATRIX_REL),
+        ]
+        if candidate_mode
+        else CREATIVE_PROPOSAL_ARTIFACTS
+    )
+    for artifact_id, artifact_type, rel_path in active_artifacts:
         if (project / rel_path).exists():
             update_artifact(
                 project,
@@ -5149,17 +5194,40 @@ def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
     if len(combined_text.strip()) < 900 or not direction_rows:
         reason_codes.append("EMPTY_SKELETON")
         issues.append("创意/提案文件仍是空骨架或缺少 option_matrix 方向行。")
-    for label in CREATIVE_PROPOSAL_REQUIRED_LABELS:
+    required_labels = (
+        [
+            "human tension",
+            "brand truth",
+            "audience truth",
+            "single-minded proposition",
+            "creative mechanism",
+            "key visual",
+            "story or behavior",
+            "product role",
+            "why brand can own it",
+            "production risk",
+            "evidence refs",
+        ]
+        if candidate_mode
+        else CREATIVE_PROPOSAL_REQUIRED_LABELS
+    )
+    for label in required_labels:
         if label not in lower_text:
             reason_codes.append("MISSING_REQUIRED_FIELD")
             issues.append(f"缺少必要提案字段: {label}")
             break
 
-    insight_lines = [line for line in combined_text.splitlines() if "consumer insight" in line.lower()]
+    insight_label = "human tension" if candidate_mode else "consumer insight"
+    insight_lines = [line for line in combined_text.splitlines() if insight_label in line.lower()]
     if not insight_lines or all(field_is_tbd(line) for line in insight_lines):
         reason_codes.append("WEAK_OR_MISSING_INSIGHT")
         issues.append("consumer insight 缺失、过薄或仍是 TBD。")
-    feature_lines = [line for line in combined_text.splitlines() if "feature to benefit" in line.lower()]
+    feature_labels = ("product role", "single-minded proposition") if candidate_mode else ("feature to benefit",)
+    feature_lines = [
+        line
+        for line in combined_text.splitlines()
+        if any(label in line.lower() for label in feature_labels)
+    ]
     if not feature_lines or all(field_is_tbd(line) for line in feature_lines):
         reason_codes.append("NO_PRODUCT_TO_BENEFIT")
         issues.append("缺少产品功能到传播利益的明确翻译。")
@@ -5225,7 +5293,29 @@ def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
         reason_codes.append("OPEN_EVIDENCE_GAPS")
         warnings.append(f"仍有 {tbd_count} 个 TBD/open question，只能作为内部草案或 PARTIAL。")
 
+    if candidate_mode:
+        try:
+            critic_result = review_creative_candidate(project)
+        except ValueError as exc:
+            reason_codes.append("CRITIC_RECEIPT_INVALID")
+            issues.append(f"Critic Receipt could not be produced: {exc}")
+        else:
+            evidence.append(f"critic_receipt={safe_rel(project, critic_result.receipt_path)}")
+            if critic_result.blocking_issues:
+                reason_codes.append("CRITIC_STRUCTURE_BLOCKED")
+                issues.extend(critic_result.blocking_issues)
+            warnings.extend(critic_result.warnings)
+        reason_codes.append("INDEPENDENT_CREATIVE_CRITIC_REQUIRED")
+        warnings.append(
+            "确定性结构/语言 Lint 不能批准创意质量；仍需绑定 exact candidate 的独立创意 Critic。"
+        )
     status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
+    if status == "PASS":
+        status = "PARTIAL_PASS"
+        reason_codes.append("INDEPENDENT_CREATIVE_CRITIC_REQUIRED")
+        warnings.append(
+            "确定性结构/语言 Lint 已通过，但独立创意 Critic 尚未提供完整创意质量批准。"
+        )
     status = enforce_adversarial_gate_policy(project, "creative", status, warnings, evidence)
     if status == "PARTIAL_PASS" and "ADVERSARIAL_COUNCIL_MISSING" not in reason_codes and any("反驳性议会" in item for item in warnings):
         reason_codes.append("ADVERSARIAL_COUNCIL_MISSING")
@@ -5261,7 +5351,8 @@ checked_at: {now_iso()}
 
 ## Rules
 
-- Gate checks proposal traceability and completeness, not subjective taste.
+- Gate checks proposal traceability and deterministic structure/language lint, not subjective creative quality.
+- A structural PASS is capped at PARTIAL_PASS until an independent creative Critic is bound to the exact candidate.
 - PASS/PARTIAL_PASS/BLOCKED are reason-code based; score alone is never approval.
 - Missing facts stay internal as unconfirmed gaps and prevent client-ready claims.
 - Blocks empty skeletons, generic slogans, weak insight, undifferentiated directions, missing feature-to-benefit, missing key visual/action, missing why-choose, unsupported case/reference claims, internal language leaks, and humanizer writing risks.
@@ -5278,7 +5369,7 @@ checked_at: {now_iso()}
         visibility="internal_only",
         gate_status=status,
     )
-    checked_artifacts = ";".join([artifact_id for artifact_id, _, _ in CREATIVE_PROPOSAL_ARTIFACTS] + ["ART-AUTO-CREATIVE-QUALITY-GATE"])
+    checked_artifacts = ";".join([artifact_id for artifact_id, _, _ in active_artifacts] + ["ART-AUTO-CREATIVE-QUALITY-GATE"])
     append_gate(
         project,
         "GATE-AUTO-CREATIVE-QUALITY-001",
@@ -16639,14 +16730,19 @@ def command_import_creative_production(args: argparse.Namespace) -> int:
     return 0
 
 
-def command_creative_proposal(args: argparse.Namespace) -> int:
+def _command_creative_brief(args: argparse.Namespace, *, deprecated: bool) -> int:
     project = Path(args.project).resolve()
-    payload = render_creative_proposal(project, work_id=args.work_id)
+    payload = (
+        render_creative_proposal(project, work_id=args.work_id)
+        if deprecated
+        else render_creative_brief(project, work_id=args.work_id)
+    )
     dashboard = render_dashboard(project)
     errors, stats = validate(project)
     payload.update(
         {
-            "creative_proposal": "PASS" if not errors else "CHECK",
+            "creative_brief": "PASS" if not errors else "CHECK",
+            "deprecated_alias": "creative-brief" if deprecated else None,
             "dashboard": str(dashboard),
             "validation": "PASS" if not errors else "CHECK",
             "stats": stats,
@@ -16656,11 +16752,15 @@ def command_creative_proposal(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if not errors else 1
-    print(f"CREATIVE_PROPOSAL={'PASS' if not errors else 'CHECK'}")
+    if deprecated:
+        print("DEPRECATED=creative-proposal is an alias for creative-brief")
+    print(f"CREATIVE_BRIEF={'PASS' if not errors else 'CHECK'}")
     print(f"PROJECT={project}")
     if args.work_id:
         print(f"WORK_ID={args.work_id}")
     print("ARTIFACT_IDS=" + ";".join(payload["artifact_ids"]))
+    print(f"BRIEF_SNAPSHOT_SHA256={payload['brief_snapshot_sha256']}")
+    print(f"DIRECTIONS_GENERATED={payload['directions_generated']}")
     for path in payload["paths"]:
         print(f"ARTIFACT_PATH={path}")
     print(f"DASHBOARD={dashboard}")
@@ -16673,6 +16773,122 @@ def command_creative_proposal(args: argparse.Namespace) -> int:
             print(f"- {error}")
         return 1
     return 0
+
+
+def command_creative_brief(args: argparse.Namespace) -> int:
+    return _command_creative_brief(args, deprecated=False)
+
+
+def command_creative_proposal(args: argparse.Namespace) -> int:
+    return _command_creative_brief(args, deprecated=True)
+
+
+def command_creative_import(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    try:
+        result = import_creative_candidate(
+            project,
+            Path(args.file).expanduser().resolve(),
+        )
+    except ValueError as exc:
+        print("CREATIVE_IMPORT=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    for artifact_id, artifact_type, path in [
+        ("ART-AUTO-CREATIVE-CANDIDATE", "creative_candidate", result.current_path),
+        ("ART-AUTO-CREATIVE-CANDIDATE-RECEIPT", "creative_candidate_import_receipt", result.receipt_path),
+        ("ART-AUTO-CREATIVE-DIRECTIONS", "creative_directions", result.directions_path),
+        ("ART-AUTO-CREATIVE-OPTION-MATRIX", "creative_option_matrix", result.matrix_path),
+    ]:
+        update_artifact(
+            project,
+            artifact_id,
+            artifact_type,
+            safe_rel(project, path),
+            "creative",
+            visibility="internal_only",
+            gate_status="NOT_RUN",
+        )
+    append_event(
+        project,
+        {
+            "event_id": f"EVT-CREATIVE-IMPORT-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            "event_type": "creative_candidate_imported",
+            "created_at": now_iso(),
+            "candidate_sha256": result.candidate_sha256,
+            "direction_count": result.direction_count,
+            "warnings": result.warnings,
+        },
+    )
+    payload = {
+        "creative_import": "PASS",
+        "candidate": str(result.candidate_path),
+        "current_candidate": str(result.current_path),
+        "candidate_sha256": result.candidate_sha256,
+        "directions": result.direction_count,
+        "warnings": result.warnings,
+        "creative_quality": "NOT_EVALUATED",
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print("CREATIVE_IMPORT=PASS")
+        print(f"CANDIDATE={result.candidate_path}")
+        print(f"CANDIDATE_SHA256={result.candidate_sha256}")
+        print(f"DIRECTIONS={result.direction_count}")
+        print(f"WARNINGS={len(result.warnings)}")
+        print("CREATIVE_QUALITY=NOT_EVALUATED")
+    return 0
+
+
+def command_creative_review(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    try:
+        result = review_creative_candidate(project)
+    except ValueError as exc:
+        print("CREATIVE_REVIEW=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    update_artifact(
+        project,
+        "ART-AUTO-CREATIVE-CRITIC-RECEIPT",
+        "creative_critic_receipt",
+        safe_rel(project, result.receipt_path),
+        "creative",
+        visibility="internal_only",
+        gate_status=result.status,
+    )
+    append_event(
+        project,
+        {
+            "event_id": f"EVT-CREATIVE-REVIEW-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            "event_type": "creative_candidate_reviewed",
+            "created_at": now_iso(),
+            "status": result.status,
+            "receipt": safe_rel(project, result.receipt_path),
+            "verdict": result.receipt["verdict"],
+        },
+    )
+    payload = {
+        "creative_review": result.status,
+        "critic_receipt": str(result.receipt_path),
+        "verdict": result.receipt["verdict"],
+        "blocking_issues": result.blocking_issues,
+        "warnings": result.warnings,
+        "independent_critic_required": True,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"CREATIVE_REVIEW={result.status}")
+        print(f"CRITIC_RECEIPT={result.receipt_path}")
+        print(f"VERDICT={result.receipt['verdict']}")
+        print(f"BLOCKING_ISSUES={len(result.blocking_issues)}")
+        print(f"WARNINGS={len(result.warnings)}")
+        print("INDEPENDENT_CRITIC_REQUIRED=1")
+    return 1 if result.status == "BLOCKED" else 0
 
 
 def command_init(args: argparse.Namespace) -> int:
@@ -18423,12 +18639,38 @@ def build_parser() -> argparse.ArgumentParser:
 
     proposal_parser = subparsers.add_parser(
         "creative-proposal",
-        help="Create traceable internal creative proposal draft artifacts.",
+        help="Deprecated alias for creative-brief; does not generate directions.",
     )
     proposal_parser.add_argument("project", help="Project directory.")
     proposal_parser.add_argument("--work-id", default="", help="Optional work item id to link artifacts.")
     proposal_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     proposal_parser.set_defaults(func=command_creative_proposal)
+
+    creative_brief_parser = subparsers.add_parser(
+        "creative-brief",
+        help="Create an evidence snapshot, creative contract, candidate schema, generation request, and open gaps.",
+    )
+    creative_brief_parser.add_argument("project", help="Project directory.")
+    creative_brief_parser.add_argument("--work-id", default="")
+    creative_brief_parser.add_argument("--json", action="store_true")
+    creative_brief_parser.set_defaults(func=command_creative_brief)
+
+    creative_candidate_parser = subparsers.add_parser(
+        "creative-import",
+        help="Import 2-3 evidence-bound post-Critic creative candidates.",
+    )
+    creative_candidate_parser.add_argument("project", help="Project directory.")
+    creative_candidate_parser.add_argument("--file", required=True)
+    creative_candidate_parser.add_argument("--json", action="store_true")
+    creative_candidate_parser.set_defaults(func=command_creative_import)
+
+    creative_review_parser = subparsers.add_parser(
+        "creative-review",
+        help="Write a Critic Receipt for structure, mechanism, ownership, visual clarity, and shootability lint.",
+    )
+    creative_review_parser.add_argument("project", help="Project directory.")
+    creative_review_parser.add_argument("--json", action="store_true")
+    creative_review_parser.set_defaults(func=command_creative_review)
 
     run_parser = subparsers.add_parser("run", help="Initialize, register materials, render dashboard, run council.")
     run_parser.add_argument("project", help="Project directory.")
