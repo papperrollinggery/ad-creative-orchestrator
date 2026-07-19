@@ -17,7 +17,7 @@ from ad_creative_operator import (
     DIRCREATIVE_PROFILE_ID,
     adopt_specialist_receipt,
     create_specialist_handoff,
-    ensure_project,
+    ensure_delivery_project,
     file_sha256,
     read_csv_rows,
     reconcile_thread_receipt,
@@ -319,7 +319,7 @@ def assert_adoption_error(
 def test_positive_inline_dircreative_exchange() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-spx-positive-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         artifact_id, _ = add_input_artifact(project)
         descriptor = project / "descriptor.json"
         write_json_object(descriptor, descriptor_payload())
@@ -357,7 +357,7 @@ def test_positive_inline_dircreative_exchange() -> None:
 def test_unverified_descriptor_and_authority_escalation_are_blocked() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-spx-negative-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         artifact_id, _ = add_input_artifact(project)
         handoff, handoff_path = create_specialist_handoff(
             project,
@@ -414,7 +414,7 @@ def test_unverified_descriptor_and_authority_escalation_are_blocked() -> None:
 def test_needs_user_requires_questions_and_cannot_advance() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-spx-needs-user-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         artifact_id, _ = add_input_artifact(project)
         descriptor = project / "descriptor.json"
         write_json_object(descriptor, descriptor_payload())
@@ -492,7 +492,7 @@ def test_needs_user_requires_questions_and_cannot_advance() -> None:
 def test_specialist_identifiers_and_adoption_paths_cannot_escape() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-spx-paths-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         artifact_id, _ = add_input_artifact(project)
         descriptor_data = descriptor_payload()
         provider = descriptor_data["provider"]
@@ -543,7 +543,7 @@ def test_specialist_identifiers_and_adoption_paths_cannot_escape() -> None:
     ]:
         with tempfile.TemporaryDirectory(prefix="adco-spx-target-") as raw:
             project = Path(raw)
-            ensure_project(project)
+            ensure_delivery_project(project)
             _, handoff_path, receipt_path = create_inline_exchange(project)
             assert_adoption_error(
                 project,
@@ -555,7 +555,7 @@ def test_specialist_identifiers_and_adoption_paths_cannot_escape() -> None:
 
     with tempfile.TemporaryDirectory(prefix="adco-spx-symlink-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         outside = project.parent
         (project / "AD-creative/escape-link").symlink_to(outside, target_is_directory=True)
         _, handoff_path, receipt_path = create_inline_exchange(project)
@@ -601,7 +601,7 @@ def test_specialist_receipt_identity_authority_and_output_contract_are_bound() -
     for label, mutator, expected in cases:
         with tempfile.TemporaryDirectory(prefix=f"adco-spx-bind-{label}-") as raw:
             project = Path(raw)
-            ensure_project(project)
+            ensure_delivery_project(project)
             _, handoff_path, receipt_path = create_inline_exchange(project)
             mutate_json(receipt_path, mutator)
             assert_adoption_error(
@@ -617,7 +617,7 @@ def test_specialist_outputs_reject_aliases_and_physical_reuse() -> None:
     ]:
         with tempfile.TemporaryDirectory(prefix=f"adco-spx-{alias_kind}-") as raw:
             project = Path(raw)
-            ensure_project(project)
+            ensure_delivery_project(project)
             _, handoff_path, receipt_path = create_inline_exchange(project)
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
             outputs = receipt["output_artifacts"]
@@ -646,7 +646,7 @@ def test_specialist_outputs_reject_aliases_and_physical_reuse() -> None:
 
     with tempfile.TemporaryDirectory(prefix="adco-spx-physical-reuse-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         _, handoff_path, receipt_path = create_inline_exchange(
             project,
             expected_output_kinds=["film.story_package", "film.treatment"],
@@ -684,7 +684,7 @@ def test_specialist_outputs_reject_aliases_and_physical_reuse() -> None:
 
     with tempfile.TemporaryDirectory(prefix="adco-spx-duplicate-kind-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         _, handoff_path, receipt_path = create_inline_exchange(
             project,
             expected_output_kinds=["film.story_package", "film.treatment"],
@@ -716,7 +716,7 @@ def test_specialist_outputs_reject_aliases_and_physical_reuse() -> None:
 def test_generation_authorization_is_structured_and_baseline_bound() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-spx-generation-auth-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         artifact_id, _ = add_input_artifact(project)
         descriptor = project / "descriptor.json"
         write_json_object(descriptor, descriptor_payload())
@@ -960,7 +960,7 @@ def test_read_only_handoff_roundtrips_receipt_only() -> None:
             prefix=f"adco-spx-read-only-{outcome}-"
         ) as raw:
             project = Path(raw)
-            ensure_project(project)
+            ensure_delivery_project(project)
             artifact_id, _ = add_input_artifact(project)
             descriptor = project / "descriptor.json"
             write_json_object(descriptor, descriptor_payload())
@@ -1175,7 +1175,7 @@ def test_receipt_path_rejects_symlink_and_hardlink_aliases() -> None:
             prefix=f"adco-spx-receipt-{alias_kind}-"
         ) as raw:
             project = Path(raw)
-            ensure_project(project)
+            ensure_delivery_project(project)
             artifact_id, _ = add_input_artifact(project)
             descriptor = project / "descriptor.json"
             write_json_object(descriptor, descriptor_payload())
@@ -1230,7 +1230,7 @@ def test_receipt_path_rejects_symlink_and_hardlink_aliases() -> None:
 def test_runtime_and_project_validator_enforce_canonical_specialist_schemas() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-spx-schema-runtime-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         _, handoff_path, receipt_path = create_inline_exchange(project)
         valid_handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
         valid_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -1265,7 +1265,7 @@ def test_runtime_and_project_validator_enforce_canonical_specialist_schemas() ->
 
     with tempfile.TemporaryDirectory(prefix="adco-spx-schema-project-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         _, handoff_path, receipt_path = create_inline_exchange(project)
         _, adoption_path = adopt_specialist_receipt(
             project,
@@ -1302,7 +1302,7 @@ def test_runtime_and_project_validator_enforce_canonical_specialist_schemas() ->
 
     with tempfile.TemporaryDirectory(prefix="adco-spx-semantic-rebind-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         _, handoff_path, receipt_path = create_inline_exchange(project)
         _, adoption_path = adopt_specialist_receipt(
             project,
@@ -1343,7 +1343,7 @@ def test_runtime_and_project_validator_enforce_canonical_specialist_schemas() ->
 def test_descriptor_evolution_and_required_receipt_extension_are_negotiated() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-spx-extension-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         descriptor = descriptor_payload()
         descriptor["descriptor_version"] = "1.1"
         profiles = descriptor["profiles"]
@@ -1386,7 +1386,7 @@ def test_descriptor_evolution_and_required_receipt_extension_are_negotiated() ->
 def test_host_scope_manifest_detects_unreported_control_plane_write() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-spx-host-proof-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         _, handoff_path, receipt_path = create_inline_exchange(project)
         truth_path = project / "AD-creative/orchestrator/current_truth.md"
         truth_path.write_text(
@@ -1404,7 +1404,7 @@ def test_host_scope_manifest_detects_unreported_control_plane_write() -> None:
 def test_codex_thread_specialist_exchange_requires_host_reconciliation() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-spx-codex-thread-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         artifact_id, _ = add_input_artifact(project)
         render_thread_execution_plan(
             project,
@@ -1491,7 +1491,7 @@ def test_codex_thread_specialist_exchange_requires_host_reconciliation() -> None
 def test_v2_negotiation_handoff_receipt_and_independent_adoption() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-spx-v2-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         artifact_id, _ = add_input_artifact(project)
         descriptor_data = descriptor_payload_v2()
         assert negotiate_contract_version(descriptor_data) == "2.0"
@@ -1583,7 +1583,7 @@ def test_v2_falls_back_to_v1_and_rejects_nested_dispatch() -> None:
     assert negotiate_contract_version(descriptor_payload()) == "1.0"
     with tempfile.TemporaryDirectory(prefix="adco-spx-v2-nested-") as raw:
         project = Path(raw)
-        ensure_project(project)
+        ensure_delivery_project(project)
         artifact_id, _ = add_input_artifact(project)
         descriptor = project / "descriptor-v2.json"
         write_json_object(descriptor, descriptor_payload_v2())

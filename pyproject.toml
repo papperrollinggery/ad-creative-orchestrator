@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ad-creative-orchestrator"
 version = "0.3.2"
-description = "Local-first Codex control plane for traceable advertising creative projects, versioned deliverables, and client-send readiness."
+description = "Content-first advertising workflow with on-demand evidence, version, and delivery safeguards."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -67,6 +67,7 @@ py-modules = [
   "specialist_schema_validation",
   "render_demo_transcript",
   "test_creative_contract",
+  "test_content_first_runtime",
   "test_fact_inventory",
   "test_gates",
   "test_goal_workflow",
@@ -79,6 +80,7 @@ py-modules = [
 [tool.setuptools.package-data]
 adco_resources = [
   "templates/project/**/*",
+  "fixtures/**/*",
   "skill_drafts/ad-creative-orchestrator/*",
   "skill_drafts/ad-creative-orchestrator/**/*",
   "published_docs/**/*",

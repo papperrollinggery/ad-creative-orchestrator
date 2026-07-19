@@ -13,7 +13,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "docs/assets/first-run-transcript.md"
 DISPLAY_PROJECT = "/tmp/adco-first-run"
-DEMO_GOAL_ID = "GOAL-DEMO-FIRST-RUN"
 
 
 def run(label: str, args: list[str], project: Path) -> str:
@@ -41,14 +40,12 @@ def render() -> str:
         project = Path(raw_tmp) / "project"
         blocks = [
             run(
-                f"adco demo {DISPLAY_PROJECT} --goal-id {DEMO_GOAL_ID} --no-open",
+                f"adco demo {DISPLAY_PROJECT} --no-open",
                 [
                     python,
                     "tools/ad_creative_operator.py",
                     "demo",
                     str(project),
-                    "--goal-id",
-                    DEMO_GOAL_ID,
                     "--no-open",
                 ],
                 project,
@@ -111,7 +108,8 @@ python3 tools/render_demo_transcript.py
 {DISPLAY_PROJECT}/AD-creative/orchestrator/current_truth.md
 {DISPLAY_PROJECT}/AD-creative/orchestrator/requirements.csv
 {DISPLAY_PROJECT}/AD-creative/orchestrator/gaps.csv
-{DISPLAY_PROJECT}/AD-creative/orchestrator/goal_iterations/{DEMO_GOAL_ID}.md
+{DISPLAY_PROJECT}/AD-creative/handoff/项目看板.md
+{DISPLAY_PROJECT}/AD-creative/AGENTS.md
 ```
 """
 

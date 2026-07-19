@@ -19,7 +19,7 @@ from ad_creative_operator import (
     build_client_pack_input_manifest,
     client_language_text_for_path,
     default_adversarial_targets,
-    ensure_project,
+    ensure_delivery_project,
     export_editable_pptx,
     file_sha256,
     has_gate,
@@ -510,7 +510,7 @@ def create_png(path: Path, size: tuple[int, int] = (960, 640)) -> None:
 def test_reference_pack_blocks_client_visible_bad_reference() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-gate-ref-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         add_row(
             project,
@@ -539,7 +539,7 @@ def test_reference_pack_blocks_client_visible_bad_reference() -> None:
 def test_search_quality_passes_clean_plan_with_adversarial_record() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-gate-search-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         write_text(
             project / "AD-creative/references/official_search_plan.md",
@@ -575,7 +575,7 @@ Do not copy logos, layouts, people, product markings, or protected composition.
 def test_visual_quality_blocks_missing_selected_asset_file() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-gate-visual-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         add_row(
             project,
@@ -607,7 +607,7 @@ def test_visual_quality_passes_real_internal_selected_asset() -> None:
         return
     with tempfile.TemporaryDirectory(prefix="adco-gate-visual-pass-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         add_requirement(project)
         source = project / "fixture/selected.png"
@@ -638,7 +638,7 @@ def test_visual_quality_rejects_asset_self_stamp_without_hash_bound_authorizatio
         return
     with tempfile.TemporaryDirectory(prefix="adco-gate-visual-auth-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         add_requirement(project)
         source = project / "fixture/client-visible.png"
@@ -689,7 +689,7 @@ def test_visual_quality_rejects_asset_self_stamp_without_hash_bound_authorizatio
 def test_client_pack_blocks_without_editable_pptx() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-gate-client-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         status, findings, _ = review_client_pack(project)
         assert status == "BLOCKED", (status, findings)
@@ -702,7 +702,7 @@ def test_client_pack_passes_editable_internal_pptx() -> None:
         return
     with tempfile.TemporaryDirectory(prefix="adco-gate-client-pass-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         add_client_outline(project, visibility="client_visible_ready")
         write_safe_client_review_files(project)
@@ -720,7 +720,7 @@ def test_client_pack_blocks_fake_preview_even_with_updated_hash() -> None:
         return
     with tempfile.TemporaryDirectory(prefix="adco-client-fake-preview-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         add_client_outline(project, visibility="client_visible_ready")
         write_safe_client_review_files(project)
@@ -746,7 +746,7 @@ def test_client_pack_scans_exact_current_text_extract() -> None:
         return
     with tempfile.TemporaryDirectory(prefix="adco-client-language-package-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         add_client_outline(project, visibility="client_visible_ready")
         write_safe_client_review_files(project)
@@ -772,7 +772,7 @@ def test_internal_outline_cannot_satisfy_client_pack_readiness() -> None:
         return
     with tempfile.TemporaryDirectory(prefix="adco-client-internal-outline-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         add_client_outline(project)
         write_safe_client_review_files(project)
@@ -812,7 +812,7 @@ def test_client_send_readiness_requires_hash_bound_human_and_send_authorization(
         return
     with tempfile.TemporaryDirectory(prefix="adco-send-readiness-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         add_client_outline(project, visibility="client_visible_ready")
         write_safe_client_review_files(project)
@@ -910,7 +910,7 @@ def test_client_pack_manifest_tamper_cannot_be_rebound_by_rerunning_gate() -> No
         return
     with tempfile.TemporaryDirectory(prefix="adco-client-pack-immutable-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         add_client_outline(project, visibility="client_visible_ready")
         write_safe_client_review_files(project)
@@ -952,7 +952,7 @@ def test_validate_blocks_mismatched_current_delivery_version() -> None:
         return
     with tempfile.TemporaryDirectory(prefix="adco-gate-current-version-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_client_outline(project, visibility="client_visible_ready")
         export_editable_pptx(project)
         add_current_delivery_package(project)
@@ -969,7 +969,7 @@ def test_validate_blocks_mismatched_current_delivery_version() -> None:
 def test_validate_rejects_ambiguous_current_version_truth() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-current-truth-ambiguity-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         truth_path = project / "AD-creative/orchestrator/current_truth.md"
         original = truth_path.read_text(encoding="utf-8")
         truth_path.write_text(
@@ -1021,7 +1021,7 @@ def test_pdf_text_extraction_falls_back_after_pdftotext_failure() -> None:
 def test_validate_rejects_artifact_path_outside_project_even_with_matching_hash() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-artifact-path-scope-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         outside = Path("/etc/hosts")
         add_row(
             project,
@@ -1052,7 +1052,7 @@ def test_client_pack_blocks_missing_exact_current_pptx_without_crashing() -> Non
         return
     with tempfile.TemporaryDirectory(prefix="adco-gate-missing-current-pptx-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         add_client_outline(project, visibility="client_visible_ready")
         write_safe_client_review_files(project)
@@ -1068,7 +1068,7 @@ def test_client_pack_blocks_missing_exact_current_pptx_without_crashing() -> Non
 def test_handoff_readiness_is_internal_operation_gate_not_send_gate() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-gate-handoff-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project)
         status, blockers, warnings, _ = review_handoff_readiness(project)
         assert status == "PASS", (status, blockers, warnings)
@@ -1081,7 +1081,7 @@ def test_handoff_readiness_is_internal_operation_gate_not_send_gate() -> None:
 def test_goal_plan_cannot_self_stamp_adversarial_review() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-adversarial-self-stamp-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         render_goal_iteration_plan(
             project,
             goal_id="GOAL-SELF-STAMP",
@@ -1097,7 +1097,7 @@ def test_goal_plan_cannot_self_stamp_adversarial_review() -> None:
 def test_blocked_gate_does_not_count_as_completed_goal_stage() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-blocked-gate-stage-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_row(
             project,
             "AD-creative/orchestrator/gate_log.csv",
@@ -1121,7 +1121,7 @@ def test_blocked_gate_does_not_count_as_completed_goal_stage() -> None:
 def test_gate_history_is_append_only_and_latest_target_must_be_fresh() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-gate-history-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_client_outline(project, visibility="client_visible_ready")
         status, findings, report = review_client_outline(project)
         assert status == "PASS", findings
@@ -1162,7 +1162,7 @@ def test_gate_history_is_append_only_and_latest_target_must_be_fresh() -> None:
 def test_adversarial_review_rejects_global_irrelevant_or_nonpass_evidence() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-adversarial-forged-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         unrelated = project / "irrelevant.txt"
         write_text(unrelated, "not the reference gate target")
         write_text(
@@ -1192,7 +1192,7 @@ target_sha256: {file_sha256(unrelated)}
 def test_manual_review_checklist_starts_pending_not_passed() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-manual-review-pending-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         checklist = write_manual_review_checklist(project)
         assert "status: pending_human_review" in checklist.read_text(encoding="utf-8")
         _, artifacts = read_csv_rows(
@@ -1210,7 +1210,7 @@ def test_manual_review_checklist_starts_pending_not_passed() -> None:
 def test_creative_proposal_alias_writes_brief_contract_not_directions() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-creative-proposal-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         directions_path = project / "AD-creative/creative/creative_directions.md"
         directions_before = directions_path.read_bytes()
         payload = render_creative_proposal(project, work_id="WORK-001")
@@ -1232,7 +1232,7 @@ def test_creative_proposal_alias_writes_brief_contract_not_directions() -> None:
 def test_creative_quality_blocks_generic_proposal() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-creative-generic-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project, "creative")
         write_complete_creative_fixture(project, generic=True)
         status, findings, report = review_creative_quality(project)
@@ -1245,7 +1245,7 @@ def test_creative_quality_blocks_generic_proposal() -> None:
 def test_creative_quality_structural_pass_still_requires_independent_critic() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-creative-pass-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         write_complete_creative_fixture(project)
         add_adversarial_record(project, "creative")
         status, findings, _ = review_creative_quality(project)
@@ -1257,7 +1257,7 @@ def test_creative_quality_structural_pass_still_requires_independent_critic() ->
 def test_creative_quality_blocks_unsupported_case_claim() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-creative-case-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project, "creative")
         write_complete_creative_fixture(project, unsupported_claim=True)
         status, findings, _ = review_creative_quality(project)
@@ -1269,7 +1269,7 @@ def test_creative_quality_blocks_unsupported_case_claim() -> None:
 def test_creative_quality_blocks_humanizer_writing_risks() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-creative-humanizer-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_adversarial_record(project, "creative")
         write_complete_creative_fixture(project, humanizer_risk=True)
         status, findings, _ = review_creative_quality(project)
@@ -1290,7 +1290,7 @@ def test_creative_quality_blocks_humanizer_writing_risks() -> None:
 def test_validation_pass_is_not_creative_quality_pass() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-creative-validation-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         errors, _ = validate(project)
         assert errors == [], errors
         status, findings, _ = review_creative_quality(project)

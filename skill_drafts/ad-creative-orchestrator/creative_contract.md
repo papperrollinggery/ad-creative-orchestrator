@@ -1,26 +1,34 @@
 # Creative Contract Reference
 
-Read this file only for creative briefing, candidate generation/import, and
-Critic review.
+Read this file only for creative direction work or a durable candidate exchange.
 
-## Ownership
+## Use direct reasoning by default
 
-```text
-ADCO = evidence, contract, import, provenance, versions, and gates
-GPT-5.6 Sol or an explicitly selected professional Specialist = creative reasoning
-independent Critic = creative judgment and brand-replacement challenge
-DIRcreative = film craft provider after a valid Specialist Exchange handoff
-```
+For an internal brief, concept, script, storyboard, or ordinary revision, reason
+directly from the inspected material and return the useful creative work. Do not
+create a candidate contract, version, Gate, or Specialist handoff merely because
+the task is creative. Match the number of directions to the request; do not force
+4-6 options when three strong, mechanism-distinct directions are enough.
 
-ADCO's deterministic strings are not a complete creative engine.
+Use an independent Critic when the selection is consequential, the user asks for
+a second judgment, or a client-visible boundary needs it. It is not a mandatory
+step for every brainstorm.
 
-## Commands and flow
+ADCO's deterministic strings are evidence and structural checks, not a complete
+creative engine. The active model or an explicitly chosen creative Specialist
+owns creative reasoning; ADCO owns any durable evidence, provenance, and version
+contract that the task actually needs.
+
+## Durable candidate exchange
+
+Use this flow only for cross-model/provider exchange, imported candidates, or a
+versioned review that must bind to an exact brief snapshot:
 
 ```text
 adco creative-brief <project> [--work-id <id>] [--json]
--> Sol/professional Specialist generates 4-6 mechanism-distinct candidates
--> independent Critic rejects weak, duplicate, or replaceable ideas
--> retain 2-3 candidates
+-> creative model or Specialist generates mechanism-distinct candidates
+-> Critic is added when the decision boundary requires independent judgment
+-> retain the requested number of viable candidates
 adco creative-import <project> --file <candidate.json> [--json]
 adco creative-review <project> [--json]
 ```
@@ -42,7 +50,7 @@ It binds current facts, requirements, evidence chunk ids, and open evidence gaps
 It does not write `creative_directions.md`, an option matrix, slogans, a client
 outline, or a PPT.
 
-## Candidate contract
+## Imported candidate contract
 
 The imported JSON binds the exact `brief_snapshot_sha256` and contains 2-3
 post-Critic directions. Every direction has non-empty:

@@ -26,7 +26,7 @@ def check_installed_skill_metadata() -> None:
     path = skill_draft_dir() / "agents/openai.yaml"
     text = path.read_text(encoding="utf-8")
     required = [
-        'default_prompt: "Use $ad-creative-orchestrator to operate this initialized ADCO project."',
+        'default_prompt: "Use $ad-creative-orchestrator to reason from this project\'s real materials and produce the requested advertising outcome."',
         "allow_implicit_invocation: false",
     ]
     missing = [snippet for snippet in required if snippet not in text]
@@ -140,6 +140,7 @@ def main() -> int:
                 "tools/test_multiformat_ingestion.py",
                 "tools/test_fact_inventory.py",
                 "tools/test_creative_contract.py",
+                "tools/test_content_first_runtime.py",
                 "tools/test_incremental_validation.py",
                 "tools/test_specialist_exchange.py",
                 "tools/test_skill_activation_policy.py",
@@ -166,6 +167,7 @@ def main() -> int:
         run([python, "tools/test_multiformat_ingestion.py"])
         run([python, "tools/test_fact_inventory.py"])
         run([python, "tools/test_creative_contract.py"])
+        run([python, "tools/test_content_first_runtime.py"])
         run([python, "tools/test_incremental_validation.py"])
         run([python, "tools/test_gates.py"])
         run([python, "tools/test_goal_workflow.py"])
@@ -187,6 +189,7 @@ def main() -> int:
                 "test_multiformat_ingestion.py",
                 "test_fact_inventory.py",
                 "test_creative_contract.py",
+                "test_content_first_runtime.py",
                 "test_incremental_validation.py",
                 "test_specialist_exchange.py",
                 "test_skill_activation_policy.py",
@@ -208,6 +211,7 @@ def main() -> int:
         run([python, "-m", "test_multiformat_ingestion"])
         run([python, "-m", "test_fact_inventory"])
         run([python, "-m", "test_creative_contract"])
+        run([python, "-m", "test_content_first_runtime"])
         run([python, "-m", "test_incremental_validation"])
         run([python, "-m", "test_gates"])
         run([python, "-m", "test_goal_workflow"])

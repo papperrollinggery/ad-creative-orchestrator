@@ -8,6 +8,10 @@ project:
   created_at: ""
   updated_at: ""
 
+runtime:
+  surface: "delivery"
+  governance: "on_demand"
+
 rules:
   source_of_truth: AD-creative/orchestrator
   user_handoff: AD-creative/handoff

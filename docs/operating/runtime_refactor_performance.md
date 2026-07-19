@@ -2,6 +2,11 @@
 
 Status: measured locally on 2026-07-19 with Python 3.14.5
 
+> Historical baseline for the first lightweight refactor. The later
+> Content-Surface candidate supersedes the “one dashboard / 95 files” target
+> with zero default dashboard renders and a 9-file initialization budget; see
+> `content_first_runtime.md` and the current forward-test receipt.
+
 ## Comparison
 
 Baseline: `46c548a` (`docs: streamline public repository onboarding`)

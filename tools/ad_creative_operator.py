@@ -22,6 +22,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 import zipfile
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,7 @@ sys.dont_write_bytecode = True
 from adco_core.facts import (
     export_intake_analysis_request,
     import_intake_analysis,
+    load_fact_inventory,
     run_evidence_intake,
 )
 from adco_core.creative_contract import (
@@ -64,8 +66,18 @@ from adco_core.specialist_exchange import (
     validate_v2_receipt_outputs,
     v2_boundary_errors,
 )
-from init_project import agents_policy_status, copy_template
-from runtime_paths import published_docs_root, repo_or_module_root, skill_draft_dir, source_root, template_root
+from init_project import agents_policy_status, copy_content_template, copy_template
+from runtime_paths import (
+    CONTENT_SURFACE,
+    DELIVERY_SURFACE,
+    project_surface,
+    published_docs_root,
+    repo_or_module_root,
+    set_project_surface,
+    skill_draft_dir,
+    source_root,
+    template_root,
+)
 from specialist_schema_validation import (
     specialist_control_plane_errors,
     specialist_generation_authorization_errors,
@@ -97,6 +109,10 @@ FINAL_DELIVERY_CONFIRMATION_PROTOCOL = (
     "adco.final-delivery-reconciliation-confirmation"
 )
 FINAL_DELIVERY_CONFIRMATION_VERSION = "1.0"
+DELIVERY_COMMAND_ACTIVE: ContextVar[bool] = ContextVar(
+    "adco_delivery_command_active",
+    default=False,
+)
 FINAL_DELIVERY_HOST_ATTESTATION_PROTOCOL = "adco.host-readback-attestation"
 FINAL_DELIVERY_HOST_ATTESTATION_VERSION = "1.0"
 FINAL_DELIVERY_HOST_ATTESTATION_ROOT = Path(
@@ -144,7 +160,7 @@ GOAL_ITERATIONS_REL = Path("AD-creative/orchestrator/goal_iterations")
 SUPPORT_BUNDLE_REL = Path("AD-creative/handoff/support_bundle.md")
 SAMPLE_MATERIAL_REL = Path("00_项目资料_ProjectMaterials/01_客户资料_ClientMaterials/sample_brief.md")
 DEFAULT_DEMO_PROJECT = Path(tempfile.gettempdir()) / "adco-demo"
-SAMPLE_GOAL = "用内置样例跑通品牌深度研究与视觉资产双泳道，生成可审计的本地操作台。"
+SAMPLE_GOAL = "基于内置 brief 提炼品牌策略，并提出三条机制不同的内部创意方向。"
 SAMPLE_BRIEF = """# Sample Creative Brief
 
 项目：NOVA Trail 户外功能饮料新品广告创意样例
@@ -957,7 +973,7 @@ def doctor_report() -> tuple[str, list[str], list[str], list[str]]:
 
     required_template_files = [
         "AD-creative/orchestrator/project.yml",
-        "AGENTS.md",
+        "AD-creative/AGENTS.md",
         "AD-creative/orchestrator/requirements.csv",
         "AD-creative/orchestrator/thread_registry.csv",
         "AD-creative/orchestrator/thread_lane_plan_template.md",
@@ -1239,7 +1255,17 @@ def check_global_skill(target: Path = DEFAULT_SKILL_INSTALL_DIR) -> dict[str, ob
 
 def ensure_project(project: Path) -> tuple[int, int]:
     project.mkdir(parents=True, exist_ok=True)
-    return copy_template(TEMPLATE_ROOT, project)
+    if DELIVERY_COMMAND_ACTIVE.get() or project_surface(project) == DELIVERY_SURFACE:
+        return ensure_delivery_project(project)
+    return copy_content_template(TEMPLATE_ROOT, project)
+
+
+def ensure_delivery_project(project: Path) -> tuple[int, int]:
+    """Materialize the full governance surface only for a delivery-risk command."""
+    project.mkdir(parents=True, exist_ok=True)
+    created, skipped = copy_template(TEMPLATE_ROOT, project)
+    set_project_surface(project, DELIVERY_SURFACE)
+    return created, skipped
 
 
 def read_csv_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -1421,6 +1447,7 @@ def register_materials(project: Path, material_paths: list[Path], goal: str) -> 
     _, rows = read_csv_rows(source_path)
     source_ids: list[str] = []
     allocate_source_id = id_allocator(rows, "source_event_id", "SRC")
+    delivery_surface = project_surface(project) == DELIVERY_SURFACE
 
     for material in material_paths:
         if not material.exists():
@@ -1442,17 +1469,18 @@ def register_materials(project: Path, material_paths: list[Path], goal: str) -> 
         }
         rows.append(row)
         source_ids.append(source_id)
-        append_event(
-            project,
-            {
-                "event_id": f"EVT-{source_id}",
-                "event_type": "material_registered",
-                "created_at": row["received_at"],
-                "source_event_id": source_id,
-                "material": row["file_paths"],
-                "goal": goal,
-            },
-        )
+        if delivery_surface:
+            append_event(
+                project,
+                {
+                    "event_id": f"EVT-{source_id}",
+                    "event_type": "material_registered",
+                    "created_at": row["received_at"],
+                    "source_event_id": source_id,
+                    "material": row["file_paths"],
+                    "goal": goal,
+                },
+            )
 
     if source_ids:
         fieldnames, _ = read_csv_rows(source_path)
@@ -1485,6 +1513,7 @@ def write_sample_brief(project: Path, force: bool = False) -> tuple[Path, str]:
 
 
 def ensure_intake_work(project: Path, source_ids: list[str], goal: str) -> str:
+    """Preserve the historical intake work item on the Delivery Surface."""
     work_path = project / "AD-creative/orchestrator/work_items.csv"
     fieldnames, rows = read_csv_rows(work_path)
     for row in rows:
@@ -1492,29 +1521,30 @@ def ensure_intake_work(project: Path, source_ids: list[str], goal: str) -> str:
             return row.get("work_id", "")
 
     work_id = next_id(rows, "work_id", "WORK")
-    row = {
-        "work_id": work_id,
-        "stage": "intake",
-        "title": "需求整理与缺口判断",
-        "objective": goal or "整理客户资料，输出需求、缺口、追问和下一步建议。",
-        "owner_agent": "Codex",
-        "status": "ready",
-        "priority": "high",
-        "input_refs": ";".join(source_ids),
-        "output_artifacts": "",
-        "linked_requirements": "",
-        "linked_source_events": ";".join(source_ids),
-        "linked_references": "",
-        "linked_assets": "",
-        "linked_slides": "",
-        "blocked_by": "",
-        "gate_required": "Brief Gate",
-        "client_visibility": "internal_only",
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
-        "supersedes_work_id": "",
-    }
-    rows.append(row)
+    rows.append(
+        {
+            "work_id": work_id,
+            "stage": "intake",
+            "title": "需求整理与缺口判断",
+            "objective": goal or "整理客户资料，输出需求、缺口、追问和下一步建议。",
+            "owner_agent": "Codex",
+            "status": "ready",
+            "priority": "high",
+            "input_refs": ";".join(source_ids),
+            "output_artifacts": "",
+            "linked_requirements": "",
+            "linked_source_events": ";".join(source_ids),
+            "linked_references": "",
+            "linked_assets": "",
+            "linked_slides": "",
+            "blocked_by": "",
+            "gate_required": "Brief Gate",
+            "client_visibility": "internal_only",
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+            "supersedes_work_id": "",
+        }
+    )
     write_csv_rows(work_path, fieldnames, rows)
     return work_id
 
@@ -1558,7 +1588,13 @@ def ensure_profile_work(project: Path, source_ids: list[str], goal: str) -> str:
     return work_id
 
 
-def ensure_creative_proposal_work(project: Path, work_id: str, source_ids: str, objective: str) -> str:
+def ensure_creative_proposal_work(
+    project: Path,
+    work_id: str,
+    source_ids: str,
+    objective: str,
+) -> str:
+    """Maintain the legacy creative work binding on the Delivery Surface."""
     brief_outputs = ";".join(
         [
             "ART-AUTO-CREATIVE-BRIEF-SNAPSHOT",
@@ -1574,7 +1610,9 @@ def ensure_creative_proposal_work(project: Path, work_id: str, source_ids: str, 
         raise FileNotFoundError(f"CSV header not found: {work_path}")
     for row in rows:
         if work_id and row.get("work_id") == work_id:
-            row["linked_source_events"] = join_unique_values(row.get("linked_source_events", ""), source_ids)
+            row["linked_source_events"] = join_unique_values(
+                row.get("linked_source_events", ""), source_ids
+            )
             row["output_artifacts"] = join_unique_values(
                 row.get("output_artifacts", ""), brief_outputs
             )
@@ -1585,7 +1623,9 @@ def ensure_creative_proposal_work(project: Path, work_id: str, source_ids: str, 
             "内部创意提案草案",
             "证据化创意 Brief",
         }:
-            row["linked_source_events"] = join_unique_values(row.get("linked_source_events", ""), source_ids)
+            row["linked_source_events"] = join_unique_values(
+                row.get("linked_source_events", ""), source_ids
+            )
             row["title"] = "证据化创意 Brief"
             row["output_artifacts"] = brief_outputs
             row["updated_at"] = now_iso()
@@ -4987,28 +5027,36 @@ artifact_role: client_readable_text_framework_before_ppt
 
 def render_creative_brief(project: Path, *, work_id: str = "") -> dict[str, object]:
     ensure_project(project)
-    _, requirements = read_csv_rows(
-        project / "AD-creative/orchestrator/requirements.csv"
-    )
-    _, sources = read_csv_rows(project / "AD-creative/orchestrator/source_events.csv")
-    source_ids = ";".join(
-        row.get("source_event_id", "") for row in sources if row.get("source_event_id")
-    )
-    requirement_ids = ";".join(
-        row.get("requirement_id", "")
-        for row in requirements
-        if row.get("requirement_id")
-    )
-    objective = next(
-        (row.get("statement", "") for row in requirements if row.get("statement")),
-        "Evidence-bound creative brief",
-    )
-    work_id = ensure_creative_proposal_work(
-        project,
-        work_id,
-        source_ids,
-        objective,
-    )
+    delivery_surface = project_surface(project) == DELIVERY_SURFACE
+    source_ids = ""
+    requirement_ids = ""
+    if delivery_surface:
+        _, requirements = read_csv_rows(
+            project / "AD-creative/orchestrator/requirements.csv"
+        )
+        _, sources = read_csv_rows(
+            project / "AD-creative/orchestrator/source_events.csv"
+        )
+        source_ids = ";".join(
+            row.get("source_event_id", "")
+            for row in sources
+            if row.get("source_event_id")
+        )
+        requirement_ids = ";".join(
+            row.get("requirement_id", "")
+            for row in requirements
+            if row.get("requirement_id")
+        )
+        objective = next(
+            (row.get("statement", "") for row in requirements if row.get("statement")),
+            "Evidence-bound creative brief",
+        )
+        work_id = ensure_creative_proposal_work(
+            project,
+            work_id,
+            source_ids,
+            objective,
+        )
     result = create_creative_brief(project)
     brief_artifacts = [
         ("ART-AUTO-CREATIVE-BRIEF-SNAPSHOT", "creative_brief_snapshot", BRIEF_SNAPSHOT_REL),
@@ -5020,30 +5068,32 @@ def render_creative_brief(project: Path, *, work_id: str = "") -> dict[str, obje
     artifact_ids: list[str] = []
     for artifact_id, artifact_type, rel_path in brief_artifacts:
         artifact_ids.append(artifact_id)
-        update_artifact(
+        if delivery_surface:
+            update_artifact(
+                project,
+                artifact_id,
+                artifact_type,
+                str(rel_path),
+                "creative",
+                visibility="internal_only",
+                source_event_ids=source_ids,
+                linked_requirements=requirement_ids,
+                linked_work_items=work_id,
+                linked_references="",
+                gate_status="NOT_RUN",
+            )
+    if delivery_surface:
+        append_event(
             project,
-            artifact_id,
-            artifact_type,
-            str(rel_path),
-            "creative",
-            visibility="internal_only",
-            source_event_ids=source_ids,
-            linked_requirements=requirement_ids,
-            linked_work_items=work_id,
-            linked_references="",
-            gate_status="NOT_RUN",
+            {
+                "event_id": f"EVT-CREATIVE-BRIEF-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "event_type": "creative_brief_created",
+                "created_at": now_iso(),
+                "work_id": work_id,
+                "artifacts": artifact_ids,
+                "brief_snapshot_sha256": result.snapshot_sha256,
+            },
         )
-    append_event(
-        project,
-        {
-            "event_id": f"EVT-CREATIVE-BRIEF-{datetime.now().strftime('%Y%m%d%H%M%S')}",
-            "event_type": "creative_brief_created",
-            "created_at": now_iso(),
-            "work_id": work_id,
-            "artifacts": artifact_ids,
-            "brief_snapshot_sha256": result.snapshot_sha256,
-        },
-    )
     return {
         "project": str(project),
         "work_id": work_id,
@@ -6428,45 +6478,63 @@ def perform_intake(
     )
     requirement_path = project / "AD-creative/orchestrator/requirements.csv"
     _, requirement_rows = read_csv_rows(requirement_path)
-    new_requirements = intake_result.new_requirements
     gap_path = project / "AD-creative/orchestrator/gaps.csv"
     _, gap_rows = read_csv_rows(gap_path)
-    new_gaps = intake_result.new_gaps
-
-    linked_req_ids = ";".join(row["requirement_id"] for row in new_requirements) or ";".join(
-        row.get("requirement_id", "") for row in requirement_rows[:8]
-    )
-    linked_source_ids = ";".join(source_ids) if source_ids else ";".join(
-        row.get("source_event_id", "") for row in target_sources
-    )
+    delivery_surface = project_surface(project) == DELIVERY_SURFACE
+    blocking_gap_rows = [
+        row
+        for row in gap_rows
+        if row.get("status", "").strip().lower() not in {"closed", "resolved", "done"}
+        and row.get("impact", "").strip().lower() in {"blocking", "high_impact"}
+    ]
     current_truth_path = project / "AD-creative/orchestrator/current_truth.md"
     confirmed = "\n".join(f"- {row['statement']}" for row in requirement_rows[:12]) or "- 暂无已抽取需求"
     open_questions = "\n".join(
         f"- {row.get('question_for_client') or row.get('description')}" for row in gap_rows[:8]
     ) or "- 暂无"
+    if delivery_surface:
+        inferred = (
+            "- 当前处于 intake；已从本地资料抽取第一轮需求和缺口。\n"
+            "- 客户可见稿前需要独立质量与发送准备检查；生成图默认 internal_only。"
+        )
+        next_action = "按缺口向客户/内部负责人追问；确认文本框架后再进入视觉与 PPT。"
+    else:
+        inferred = "- 当前处于内容理解阶段；先形成可用判断，再按风险决定是否进入交付治理。"
+        next_action = (
+            "处理真正阻塞的缺口，同时继续不受影响的内部内容工作。"
+            if blocking_gap_rows
+            else "基于当前证据完成本轮内部广告内容产出。"
+        )
     update_markdown_sections(
         current_truth_path,
         {
             "Project": project.name,
             "Confirmed": confirmed,
-            "Inferred": "- 当前处于 intake；已从本地资料抽取第一轮需求和缺口。\n- 客户可见稿前需要独立质量与发送准备检查；生成图默认 internal_only。",
+            "Inferred": inferred,
             "Conflicted": "- 暂无自动识别冲突。",
             "Deprecated": "- 暂无。",
             "Open Questions": open_questions,
             "Current Stage": "intake",
-            "Next Action": "按缺口向客户/内部负责人追问；确认文本框架后再进入视觉与 PPT。",
+            "Next Action": next_action,
         },
     )
-
-    question_rows = "\n".join(
-        f"| {row['gap_id']} | {row.get('question_for_client') or row['description']} | {row['recommended_action']} | {row['impact']} | 客户补充 / 先内部推进 |"
-        for row in gap_rows[:8]
-    )
-    if not question_rows:
-        question_rows = "| - | 暂无 | - | - | - |"
-    write_text(
-        project / "AD-creative/handoff/客户追问话术.md",
-        f"""# 客户追问话术
+    if delivery_surface:
+        new_requirements = intake_result.new_requirements
+        new_gaps = intake_result.new_gaps
+        linked_req_ids = ";".join(
+            row["requirement_id"] for row in new_requirements
+        ) or ";".join(row.get("requirement_id", "") for row in requirement_rows[:8])
+        linked_source_ids = ";".join(source_ids) if source_ids else ";".join(
+            row.get("source_event_id", "") for row in target_sources
+        )
+        question_rows = "\n".join(
+            f"| {row['gap_id']} | {row.get('question_for_client') or row['description']} | "
+            f"{row['recommended_action']} | {row['impact']} | 客户补充 / 先内部推进 |"
+            for row in gap_rows[:8]
+        ) or "| - | 暂无 | - | - | - |"
+        write_text(
+            project / "AD-creative/handoff/客户追问话术.md",
+            f"""# 客户追问话术
 
 ## 建议询问
 | ID | 问题 | 推荐动作 | 影响 | 可选动作 |
@@ -6476,228 +6544,233 @@ def perform_intake(
 ## 可复制话术
 我们已先把资料整理成需求和缺口。为避免误判，请补充品牌资产、产品高清图/包装规范、参考片边界、AI 图是否可用于客户审阅，以及本轮希望看到的方案精度。
 """,
-    )
-
-    work_path = project / "AD-creative/orchestrator/work_items.csv"
-    work_fields, work_rows = read_csv_rows(work_path)
-    intake_work_id = "WORK-001"
-    for row in work_rows:
-        if row.get("stage") == "intake" and row.get("title") == "需求整理与缺口判断":
-            intake_work_id = row.get("work_id", intake_work_id) or intake_work_id
-            break
-
-    artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
-    now = now_iso()
-    for artifact_id, artifact_type, rel_path, gate_status in [
-        ("ART-AUTO-CURRENT-TRUTH", "intake_report", "AD-creative/orchestrator/current_truth.md", "PARTIAL_PASS"),
-        ("ART-AUTO-CLIENT-QUESTIONS", "client_questions", "AD-creative/handoff/客户追问话术.md", "PARTIAL_PASS"),
-    ]:
-        update_or_append_csv_row(
-            artifact_path,
-            "artifact_id",
-            {
-                "artifact_id": artifact_id,
-                "artifact_type": artifact_type,
-                "path": rel_path,
-                "stage": "intake",
-                "version": "v001",
-                "status": "done",
-                "visibility": "internal_only",
-                "source_event_ids": linked_source_ids,
-                "linked_requirements": linked_req_ids,
-                "linked_work_items": intake_work_id,
-                "linked_references": "",
-                "linked_assets": "",
-                "gate_status": gate_status,
-                "supersedes_artifact_id": "",
-                "created_at": now,
-                "updated_at": now,
-            },
         )
-    if work_rows:
+
+        work_path = project / "AD-creative/orchestrator/work_items.csv"
+        work_fields, work_rows = read_csv_rows(work_path)
+        intake_work_id = "WORK-001"
         for row in work_rows:
             if row.get("stage") == "intake" and row.get("title") == "需求整理与缺口判断":
+                intake_work_id = row.get("work_id", intake_work_id) or intake_work_id
                 row["status"] = "done"
-                row["output_artifacts"] = "ART-AUTO-CURRENT-TRUTH;ART-AUTO-CLIENT-QUESTIONS"
+                row["output_artifacts"] = (
+                    "ART-AUTO-CURRENT-TRUTH;ART-AUTO-CLIENT-QUESTIONS"
+                )
                 row["linked_requirements"] = linked_req_ids
                 row["linked_source_events"] = linked_source_ids
-                row["updated_at"] = now
+                row["updated_at"] = now_iso()
                 break
         write_csv_rows(work_path, work_fields, work_rows)
 
-    append_gate(
-        project,
-        "GATE-AUTO-BRIEF-001",
-        "intake",
-        "PARTIAL_PASS" if gap_rows else "PASS",
-        "72",
-        "ART-AUTO-CURRENT-TRUTH;ART-AUTO-CLIENT-QUESTIONS",
-        ";".join(row["description"] for row in gap_rows[:5]),
-        "补齐缺口后进入 research_plan。",
-        ";".join(row.get("question_for_client", "") for row in gap_rows[:5]),
-        "research_plan",
-        "ad_creative_operator",
-    )
-
-    append_event(
-        project,
-        {
-            "event_id": f"EVT-INTAKE-{now}",
-            "event_type": "intake_completed",
-            "created_at": now,
-            "actor": "ad_creative_operator",
-            "summary": f"Extracted {len(new_requirements)} requirements and {len(new_gaps)} gaps from local materials.",
-        },
-    )
+        artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+        recorded_at = now_iso()
+        for artifact_id, artifact_type, rel_path in [
+            (
+                "ART-AUTO-CURRENT-TRUTH",
+                "intake_report",
+                "AD-creative/orchestrator/current_truth.md",
+            ),
+            (
+                "ART-AUTO-CLIENT-QUESTIONS",
+                "client_questions",
+                "AD-creative/handoff/客户追问话术.md",
+            ),
+        ]:
+            update_or_append_csv_row(
+                artifact_path,
+                "artifact_id",
+                {
+                    "artifact_id": artifact_id,
+                    "artifact_type": artifact_type,
+                    "path": rel_path,
+                    "stage": "intake",
+                    "version": "v001",
+                    "status": "done",
+                    "visibility": "internal_only",
+                    "source_event_ids": linked_source_ids,
+                    "linked_requirements": linked_req_ids,
+                    "linked_work_items": intake_work_id,
+                    "linked_references": "",
+                    "linked_assets": "",
+                    "gate_status": "PARTIAL_PASS",
+                    "supersedes_artifact_id": "",
+                    "created_at": recorded_at,
+                    "updated_at": recorded_at,
+                },
+            )
+        append_gate(
+            project,
+            "GATE-AUTO-BRIEF-001",
+            "intake",
+            "PARTIAL_PASS" if gap_rows else "PASS",
+            "72",
+            "ART-AUTO-CURRENT-TRUTH;ART-AUTO-CLIENT-QUESTIONS",
+            ";".join(row["description"] for row in gap_rows[:5]),
+            "补齐缺口后进入 research_plan。",
+            ";".join(row.get("question_for_client", "") for row in gap_rows[:5]),
+            "research_plan",
+            "ad_creative_operator",
+        )
+        append_event(
+            project,
+            {
+                "event_id": f"EVT-INTAKE-{recorded_at}",
+                "event_type": "intake_completed",
+                "created_at": recorded_at,
+                "actor": "ad_creative_operator",
+                "summary": (
+                    f"Extracted {len(new_requirements)} requirements and "
+                    f"{len(new_gaps)} gaps from local materials."
+                ),
+            },
+        )
     return intake_result.stats()
 
 
-def render_handoff(project: Path, goal: str, source_ids: list[str]) -> None:
-    render_human_workspace_indexes(project)
-    counts = read_counts(project)
-    _, work_items = read_csv_rows(project / "AD-creative/orchestrator/work_items.csv")
+def render_handoff(project: Path, goal: str, source_ids: list[str]) -> dict[str, object]:
+    _, requirement_rows = read_csv_rows(
+        project / "AD-creative/orchestrator/requirements.csv"
+    )
     _, gap_rows = read_csv_rows(project / "AD-creative/orchestrator/gaps.csv")
-    _, requirement_rows = read_csv_rows(project / "AD-creative/orchestrator/requirements.csv")
-    active_work = [
-        row for row in work_items if row.get("status", "").lower() not in {"done", "closed"}
+    open_gaps = [
+        row
+        for row in gap_rows
+        if row.get("status", "").strip().lower() not in {"closed", "resolved", "done"}
     ]
-    latest_work = active_work[-5:]
-    latest_source_ids = ";".join(source_ids) if source_ids else "无新增资料"
-
-    board_rows = "\n".join(
-        f"| {row.get('work_id', '')} | {row.get('status', '')} | {row.get('owner_agent', '')} | {row.get('title', '')} |"
-        for row in latest_work
+    blocking_gaps = [
+        row
+        for row in open_gaps
+        if row.get("impact", "").strip().lower() in {"blocking", "high_impact"}
+    ]
+    non_blocking_gaps = [row for row in open_gaps if row not in blocking_gaps]
+    facts = load_fact_inventory(project)
+    fact_lines = [
+        f"{fact.fact_key}: {fact.value or fact.state}"
+        for fact in facts
+        if fact.state == "present"
+    ][:8]
+    current_source_ids = set(source_ids)
+    ordered_requirement_rows = (
+        [
+            row
+            for row in requirement_rows
+            if row.get("source_event_id", "") in current_source_ids
+        ]
+        + [
+            row
+            for row in requirement_rows
+            if row.get("source_event_id", "") not in current_source_ids
+        ]
+        if current_source_ids
+        else requirement_rows
     )
-    if not board_rows:
-        board_rows = "| - | - | - | 暂无工作项 |"
-    blocker_rows = "\n".join(
-        f"| {row.get('description', '')} | {row.get('impact', '')} | {row.get('owner', '') or 'operator'} |"
-        for row in gap_rows[:5]
+    requirement_lines = [
+        row.get("statement", "").strip()
+        for row in ordered_requirement_rows
+        if row.get("statement", "").strip()
+    ][:8]
+    blocking_gap_lines = [
+        row.get("description", "").strip()
+        for row in blocking_gaps
+        if row.get("description", "").strip()
+    ][:6]
+    non_blocking_gap_lines = [
+        row.get("description", "").strip()
+        for row in non_blocking_gaps
+        if row.get("description", "").strip()
+    ][:6]
+    requirement_types = {
+        row.get("requirement_type", "").strip().lower()
+        for row in ordered_requirement_rows
+    }
+    proceed: list[str] = []
+    if requirement_lines:
+        proceed.append("可以基于已锁定要求继续内部分析和方案构思，不需要先建立交付账本。")
+    if requirement_types & {"creative", "visual", "research"}:
+        proceed.append("下一步应把证据转成内容判断或创意 brief，并优先检查真实素材语义。")
+    if "delivery" in requirement_types:
+        proceed.append("交付格式已被识别，但只有真正进入客户可见版本时才升级到 Delivery Surface。")
+    if not proceed:
+        proceed.append("材料已完成证据化读取；需要补充一个明确产出目标，才能继续内容工作。")
+    if blocking_gap_lines:
+        next_action = "先确认最小阻塞项；不受其影响的内部内容工作可以继续。"
+    elif requirement_lines:
+        next_action = "基于当前证据生成或更新 creative brief，再进入专业内容推理。"
+    else:
+        next_action = "补充本轮希望得到的具体广告产出。"
+
+    facts_markdown = "\n".join(f"- {item}" for item in fact_lines) or "- 暂无可确认的结构化事实"
+    requirements_markdown = (
+        "\n".join(f"- {item}" for item in requirement_lines)
+        or "- 暂无可确认的明确要求"
     )
-    if not blocker_rows:
-        blocker_rows = "| 暂无强阻塞 | 可继续内部整理 | - |"
-    question_rows = "\n".join(
-        f"| {row.get('gap_id', '')} | {row.get('question_for_client') or row.get('description', '')} | {row.get('recommended_action', '')} | {row.get('impact', '')} | 客户补充 / 先内部推进 |"
-        for row in gap_rows[:8]
+    gaps_markdown = (
+        "\n".join(f"- {item}" for item in blocking_gap_lines)
+        or "- 无真实阻塞缺口"
     )
-    if not question_rows:
-        question_rows = "| - | 暂无 | - | - | - |"
-    confirmed_rows = "\n".join(
-        f"- {row.get('statement', '')}" for row in requirement_rows[:6]
-    ) or "- 暂无已抽取需求"
+    non_blocking_markdown = (
+        "\n".join(f"- {item}" for item in non_blocking_gap_lines)
+        or "- 无"
+    )
+    proceed_markdown = "\n".join(f"- {item}" for item in proceed)
+    objective = goal.strip() or "理解材料并推进当前广告任务"
+    answer_markdown = f"""## 当前目标
+{objective}
 
-    write_text(
-        project / "AD-creative/handoff/项目看板.md",
-        f"""# 项目看板
+## 材料事实
+{facts_markdown}
 
-## 当前阶段
-Intake / 准备整理
+## 明确要求
+{requirements_markdown}
 
-## 当前结论
-项目结构已初始化。资料入口、需求/缺口、验证和操作台已可用。
+## 真正阻塞
+{gaps_markdown}
 
-## 已抽取需求
-{confirmed_rows}
+## 非阻塞未知
+{non_blocking_markdown}
 
-## 数量
-| 项 | 数量 |
-|---|---:|
-| 资料事件 | {counts['source_events']} |
-| 需求 | {counts['requirements']} |
-| 缺口 | {counts['gaps']} |
-| 工作项 | {counts['work_items']} |
-| 参考链接 | {counts['references']} |
-| 图片资产 | {counts['assets']} |
-| 产物 | {counts['artifacts']} |
-| Gate | {counts['gates']} |
-
-## 正在进行
-| Work | 状态 | Owner | 下一步 |
-|---|---|---|---|
-{board_rows}
-
-## 阻塞
-| 问题 | 影响 | 需要谁确认 |
-|---|---|---|
-{blocker_rows}
-
-## 最近产物
-| 产物 | 状态 | 是否客户可见 |
-|---|---|---|
-| AD-creative/handoff/操作台.html | ready | no |
-| AD-creative/gates/THREE-COUNCIL-READINESS_report.md | ready after council | no |
+## 现在可以推进
+{proceed_markdown}
 
 ## 下一步
-按缺口追问客户或内部负责人；三方议会 PASS 后可推进公开官方来源搜索计划。
-""",
+{next_action}"""
+    board_path = project / "AD-creative/handoff/项目看板.md"
+    write_text(board_path, "# 工作摘要\n\n" + answer_markdown + "\n")
+    confirmation_gaps = (
+        open_gaps
+        if project_surface(project) == DELIVERY_SURFACE
+        else blocking_gaps
     )
-
+    question_rows = "\n".join(
+        "| {id} | {question} | {action} |".format(
+            id=row.get("gap_id", ""),
+            question=(
+                row.get("question_for_user")
+                or row.get("question_for_client")
+                or row.get("description", "")
+            ),
+            action=row.get("recommended_action", ""),
+        )
+        for row in confirmation_gaps[:8]
+    ) or "| - | 无阻塞确认 | 继续内部内容工作 |"
     write_text(
         project / "AD-creative/handoff/待你确认.md",
-        f"""# 待你确认
-
-当前无必须立即确认的事项。
-
-| ID | 问题 | 推荐 | 不确认的影响 | 可选动作 |
-|---|---|---|---|---|
-{question_rows}
-""",
+        "# 待你确认\n\n| ID | 问题 | 推荐动作 |\n|---|---|---|\n"
+        + question_rows
+        + "\n",
     )
-
-    write_text(
-        project / "AD-creative/handoff/客户追问话术.md",
-        f"""# 客户追问话术
-
-## 建议询问
-| ID | 问题 | 推荐动作 | 影响 | 可选动作 |
-|---|---|---|---|---|
-{question_rows}
-
-## 可复制话术
-我们已先把资料整理成需求和缺口。为避免误判，请补充品牌资产、产品高清图/包装规范、参考片边界、AI 图是否可用于客户审阅，以及本轮希望看到的方案精度。
-""",
-    )
-
-    write_text(
-        project / "AD-creative/handoff/下一步建议.md",
-        f"""# 下一步建议
-
-## 推荐动作
-读取资料事件 `{latest_source_ids}`，生成 requirements / gaps / current_truth，并跑 Brief Gate。
-
-## 理由
-非开发者只需要看项目看板、待确认、客户追问和操作台；内部 CSV 继续作为可追溯事实源。
-
-## 风险
-未读取真实资料前，不能宣称创意方向、参考包或客户稿已经成立。
-
-## 是否需要你确认
-内部整理不需要确认；客户稿发送、付费/登录平台、全局 Skill 安装仍需要明确确认。
-""",
-    )
-
-    write_text(
-        project / "AD-creative/handoff/本轮交付说明.md",
-        f"""# 本轮交付说明
-
-## 本轮做了什么
-初始化或补齐项目结构，登记资料，创建 intake 工作项，生成非开发者操作台；默认入口不生成创意方向、PPTX 或 Client Pack。
-
-## 产物位置
-| 产物 | 路径 |
-|---|---|
-| 操作台 | AD-creative/handoff/操作台.html |
-| 项目看板 | AD-creative/handoff/项目看板.md |
-| 待确认 | AD-creative/handoff/待你确认.md |
-| 客户追问 | AD-creative/handoff/客户追问话术.md |
-
-## 未完成事项
-自动搜索结果质量、真实 image_gen 调用本身、最终客户稿内容审稿。
-
-## 下一步建议
-运行 `adco next {project}` 查看下一条安全动作；需要进入具体阶段时再显式运行对应命令或 Gate。
-""",
-    )
+    return {
+        "objective": objective,
+        "facts": fact_lines,
+        "requirements": requirement_lines,
+        "blocking_gaps": blocking_gap_lines,
+        "non_blocking_unknowns": non_blocking_gap_lines,
+        "can_proceed": proceed,
+        "next_action": next_action,
+        "markdown": answer_markdown,
+        "path": str(board_path),
+        "source_ids": source_ids,
+    }
 
 
 def cell(value: str | None) -> str:
@@ -6746,15 +6819,15 @@ def parse_confirmation_rows(path: Path) -> list[dict[str, str]]:
         if not line.startswith("|"):
             continue
         parts = [part.strip() for part in line.strip("|").split("|")]
-        if len(parts) < 5 or parts[0] in CONFIRMATION_HEADER_CELLS or set(parts[0]) == {"-"}:
+        if len(parts) < 3 or parts[0] in CONFIRMATION_HEADER_CELLS or set(parts[0]) == {"-"}:
             continue
         rows.append(
             {
                 "id": parts[0],
                 "question": parts[1],
                 "recommendation": parts[2],
-                "impact": parts[3],
-                "actions": parts[4],
+                "impact": parts[3] if len(parts) > 3 else "",
+                "actions": parts[4] if len(parts) > 4 else parts[2],
             }
         )
     return rows
@@ -8253,6 +8326,8 @@ def status_payload(
         errors = list(validation_errors)
     dashboard = project / DASHBOARD_REL
     report = project / COUNCIL_REPORT_REL
+    surface = project_surface(project)
+    content_surface = surface == CONTENT_SURFACE
     _, work_items = read_csv_rows(project / "AD-creative/orchestrator/work_items.csv")
     _, gaps = read_csv_rows(project / "AD-creative/orchestrator/gaps.csv")
     confirmations = parse_confirmation_rows(project / "AD-creative/handoff/待你确认.md")
@@ -8271,12 +8346,40 @@ def status_payload(
         for row in open_gaps
         if row.get("impact", "").strip().lower() in {"blocking", "high_impact"}
     ]
+    if content_surface:
+        known_gap_ids = {row.get("gap_id", "") for row in open_gaps}
+        blocking_gap_ids = {row.get("gap_id", "") for row in blocking_gaps}
+        confirmations = [
+            row
+            for row in confirmations
+            if row.get("id", "") not in known_gap_ids
+            or row.get("id", "") in blocking_gap_ids
+        ]
+    current_truth_path = project / "AD-creative/orchestrator/current_truth.md"
+    recorded_next_action = (
+        first_section_line(current_truth_path.read_text(encoding="utf-8"), "Next Action")
+        if current_truth_path.is_file()
+        else ""
+    )
     if errors:
         next_status = "VALIDATION_CHECK"
         next_action = "Fix validation errors before continuing."
+    elif content_surface and blocking_gaps:
+        next_status = "BLOCKING_CONTENT_GAP"
+        next_action = first_nonempty(
+            blocking_gaps[0].get("recommended_action"),
+            blocking_gaps[0].get("description"),
+            default="Resolve the minimum content blocker.",
+        )
     elif confirmations:
         next_status = "WAITING_FOR_CONFIRMATION"
         next_action = first_nonempty(confirmations[0].get("question"), default="Resolve pending confirmation.")
+    elif content_surface and counts["source_events"] == 0:
+        next_status = "NEEDS_MATERIAL"
+        next_action = "Run adco run <project> --material <brief_file_or_folder>."
+    elif content_surface:
+        next_status = "READY_FOR_CONTENT_WORK"
+        next_action = recorded_next_action or "Use the current evidence to produce the requested internal advertising outcome."
     elif active_work:
         next_status = "ACTIVE_WORK"
         next_action = first_nonempty(active_work[0].get("title"), active_work[0].get("objective"), default="Continue active work item.")
@@ -8300,24 +8403,25 @@ def status_payload(
     else:
         next_status = "READY_FOR_NEXT_GATE"
         next_action = f"Run adco next {project} or an explicit stage Gate."
-    goal = latest_goal_row(project)
-    phase = derive_goal_phase(project)
+    goal = latest_goal_row(project) if not content_surface else None
+    phase = "CONTENT" if content_surface else derive_goal_phase(project)
     next_command = ""
     if next_status == "NEEDS_MATERIAL":
         next_command = f"adco run {project} --material <brief_file_or_folder>"
-    elif next_status == "READY_FOR_NEXT_GATE":
+    elif not content_surface and next_status == "READY_FOR_NEXT_GATE":
         next_command = f"adco goal-run {project} --goal-id latest --max-steps 1"
-    elif next_status == "ACTIVE_WORK":
+    elif not content_surface and next_status == "ACTIVE_WORK":
         next_command = f"adco goal-run {project} --goal-id latest --max-steps 1"
 
     payload: dict[str, object] = {
         "project": str(project),
+        "surface": surface,
         "stage": project_stage(project),
         "phase": phase,
         "phase_name": GOAL_PHASE_NAMES.get(phase, phase),
         "goal_id": goal.get("goal_id") if goal else "",
         "goal": goal or {},
-        "lane_states": goal_lane_states(project),
+        "lane_states": {} if content_surface else goal_lane_states(project),
         "validation": "PASS" if not errors else "CHECK",
         "validation_issues": [issue.as_dict() for issue in validation_issues],
         "legacy_debt": validation_stats.get("legacy_debt", 0),
@@ -8337,7 +8441,19 @@ def status_payload(
         "errors": errors,
         "next_command": next_command,
     }
-    payload["completion_readiness"] = goal_completion_readiness(project, errors, confirmations)
+    if content_surface:
+        payload["completion_readiness"] = {
+            "status": (
+                "READY_FOR_CONTENT_WORK"
+                if not errors and not blocking_gaps and not confirmations and counts["source_events"]
+                else "NEEDS_INPUT"
+            ),
+            "delivery_gates_required": False,
+            "validation_errors": len(errors),
+            "pending_confirmations": len(confirmations),
+        }
+    else:
+        payload["completion_readiness"] = goal_completion_readiness(project, errors, confirmations)
     payload["stop_reason"] = goal_stop_reason(payload)
     return payload
 
@@ -8346,28 +8462,33 @@ def print_status(project: Path) -> None:
     payload = status_payload(project)
     counts = payload["counts"]
     print(f"PROJECT={payload['project']}")
+    print(f"PROJECT_SURFACE={payload['surface']}")
     print(f"STAGE={payload['stage']}")
-    print(f"PHASE={payload['phase']}")
-    print(f"GOAL_ID={payload['goal_id']}")
+    if payload["surface"] == DELIVERY_SURFACE:
+        print(f"PHASE={payload['phase']}")
+        print(f"GOAL_ID={payload['goal_id']}")
     print(f"VALIDATION={payload['validation']}")
     print(f"SOURCE_EVENTS={counts['source_events']}")
     print(f"REQUIREMENTS={counts['requirements']}")
     print(f"GAPS={counts['gaps']}")
-    print(f"WORK_ITEMS={counts['work_items']}")
-    print(f"ACTIVE_WORK={payload['active_work_count']}")
+    if payload["surface"] == DELIVERY_SURFACE:
+        print(f"WORK_ITEMS={counts['work_items']}")
+        print(f"ACTIVE_WORK={payload['active_work_count']}")
     print(f"OPEN_GAPS={payload['open_gap_count']}")
     print(f"BLOCKING_GAPS={payload['blocking_gap_count']}")
     print(f"PENDING_CONFIRMATIONS={payload['pending_confirmation_count']}")
-    print(f"REFERENCES={counts['references']}")
-    print(f"ASSETS={counts['assets']}")
-    print(f"ARTIFACTS={counts['artifacts']}")
-    print(f"GATES={counts['gates']}")
+    if payload["surface"] == DELIVERY_SURFACE:
+        print(f"REFERENCES={counts['references']}")
+        print(f"ASSETS={counts['assets']}")
+        print(f"ARTIFACTS={counts['artifacts']}")
+        print(f"GATES={counts['gates']}")
     print(f"NEXT_STATUS={payload['next_status']}")
     print(f"NEXT_ACTION={payload['next_action']}")
     print(f"NEXT_COMMAND={payload['next_command']}")
     print(f"STOP_REASON={payload['stop_reason'] or 'NONE'}")
-    print(f"DASHBOARD={payload['dashboard'] or 'MISSING'}")
-    print(f"COUNCIL_REPORT={payload['council_report'] or 'MISSING'}")
+    print(f"DASHBOARD={payload['dashboard'] or 'NOT_RUN'}")
+    if payload["surface"] == DELIVERY_SURFACE:
+        print(f"COUNCIL_REPORT={payload['council_report'] or 'NOT_RUN'}")
     errors = payload["errors"]
     if errors:
         print("ERRORS:")
@@ -9726,8 +9847,8 @@ def updated_migration_manifest(
 
 
 def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, object]:
-    if not dry_run and not (project / "AD-creative").exists():
-        ensure_project(project)
+    if not dry_run:
+        ensure_delivery_project(project)
     project = project.resolve()
     targets = [
         ("AD-creative/client_review/client_outline.csv", CLIENT_OUTLINE_FIELDS),
@@ -11202,18 +11323,21 @@ def adopt_specialist_receipt(
     output_mappings: dict[str, str],
     dry_run: bool = False,
 ) -> tuple[dict[str, object], Path | None]:
+    operation = lambda: _adopt_specialist_receipt_locked(
+        project,
+        handoff_path=handoff_path,
+        receipt_path=receipt_path,
+        decision=decision,
+        reason=reason,
+        output_mappings=output_mappings,
+        dry_run=dry_run,
+    )
+    if dry_run:
+        return operation()
     return with_project_advisory_lock(
         project,
         ".exchange.lock",
-        lambda: _adopt_specialist_receipt_locked(
-            project,
-            handoff_path=handoff_path,
-            receipt_path=receipt_path,
-            decision=decision,
-            reason=reason,
-            output_mappings=output_mappings,
-            dry_run=dry_run,
-        ),
+        operation,
     )
 
 
@@ -11480,7 +11604,7 @@ def _adopt_specialist_receipt_locked(
     output_mappings: dict[str, str],
     dry_run: bool = False,
 ) -> tuple[dict[str, object], Path | None]:
-    migrate_control_plane(project)
+    migrate_control_plane(project, dry_run=dry_run)
     for evidence_path, label in [
         (handoff_path.resolve(), "handoff"),
         (receipt_path.resolve(), "receipt"),
@@ -17221,18 +17345,27 @@ def command_creative_doctor(args: argparse.Namespace) -> int:
 
 def command_creative_run(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
-    ensure_project(project)
     if args.generate and args.review_only:
         print("CREATIVE_RUN=CHECK")
         print("ERROR=Choose either --review-only or --generate, not both.")
         return 1
+    brief_file = Path(args.brief_file).expanduser().resolve()
     base_asset = Path(args.base_asset).expanduser().resolve() if args.base_asset else None
+    if not brief_file.is_file():
+        print("CREATIVE_RUN=BLOCKED")
+        print(f"ERROR=brief file not found: {brief_file}")
+        return 1
+    if base_asset is not None and not base_asset.is_file():
+        print("CREATIVE_RUN=BLOCKED")
+        print(f"ERROR=base asset not found: {base_asset}")
+        return 1
+    ensure_project(project)
     try:
         run_dir, logs = run_creative_production(
             project,
             kind=args.kind,
             work_id=args.work_id,
-            brief_file=Path(args.brief_file).expanduser().resolve(),
+            brief_file=brief_file,
             base_asset=base_asset,
             generate=args.generate,
             force=args.force,
@@ -17260,11 +17393,16 @@ def command_creative_run(args: argparse.Namespace) -> int:
 
 def command_import_creative_production(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
+    run_dir = Path(args.run_dir).expanduser().resolve()
+    if not run_dir.is_dir():
+        print("CREATIVE_PRODUCTION_IMPORT=BLOCKED")
+        print(f"ERROR=run directory not found: {run_dir}")
+        return 1
     ensure_project(project)
     try:
         asset_ids, metadata_dir = import_creative_production_run(
             project,
-            run_dir=Path(args.run_dir).expanduser().resolve(),
+            run_dir=run_dir,
             kind=args.kind,
             slot_prefix=args.slot_prefix,
             requirement_id=args.requirement_id,
@@ -17305,16 +17443,11 @@ def _command_creative_brief(args: argparse.Namespace, *, deprecated: bool) -> in
         changed_file_paths=payload["paths"],
     )
     errors = list(incremental.errors)
-    dashboard = render_dashboard(
-        project,
-        validation_errors=errors,
-        validation_status="SCOPED_PASS" if not errors else "SCOPED_CHECK",
-    )
     payload.update(
         {
             "creative_brief": "PASS" if not errors else "CHECK",
             "deprecated_alias": "creative-brief" if deprecated else None,
-            "dashboard": str(dashboard),
+            "dashboard": "",
             "incremental_validation": incremental.as_dict(),
             "full_validation": "NOT_RUN",
             "errors": errors,
@@ -17334,7 +17467,7 @@ def _command_creative_brief(args: argparse.Namespace, *, deprecated: bool) -> in
     print(f"DIRECTIONS_GENERATED={payload['directions_generated']}")
     for path in payload["paths"]:
         print(f"ARTIFACT_PATH={path}")
-    print(f"DASHBOARD={dashboard}")
+    print("DASHBOARD=NOT_RUN")
     print("VALIDATORS_RUN=" + ";".join(incremental.validators_run))
     print(f"INCREMENTAL_VALIDATION={'PASS' if not errors else 'CHECK'}")
     print("FULL_VALIDATION=NOT_RUN")
@@ -17366,32 +17499,37 @@ def command_creative_import(args: argparse.Namespace) -> int:
         print("CREATIVE_IMPORT=BLOCKED")
         print(f"ERROR={exc}")
         return 1
-    for artifact_id, artifact_type, path in [
-        ("ART-AUTO-CREATIVE-CANDIDATE", "creative_candidate", result.current_path),
-        ("ART-AUTO-CREATIVE-CANDIDATE-RECEIPT", "creative_candidate_import_receipt", result.receipt_path),
-        ("ART-AUTO-CREATIVE-DIRECTIONS", "creative_directions", result.directions_path),
-        ("ART-AUTO-CREATIVE-OPTION-MATRIX", "creative_option_matrix", result.matrix_path),
-    ]:
-        update_artifact(
+    if project_surface(project) == DELIVERY_SURFACE:
+        for artifact_id, artifact_type, path in [
+            ("ART-AUTO-CREATIVE-CANDIDATE", "creative_candidate", result.current_path),
+            (
+                "ART-AUTO-CREATIVE-CANDIDATE-RECEIPT",
+                "creative_candidate_import_receipt",
+                result.receipt_path,
+            ),
+            ("ART-AUTO-CREATIVE-DIRECTIONS", "creative_directions", result.directions_path),
+            ("ART-AUTO-CREATIVE-OPTION-MATRIX", "creative_option_matrix", result.matrix_path),
+        ]:
+            update_artifact(
+                project,
+                artifact_id,
+                artifact_type,
+                safe_rel(project, path),
+                "creative",
+                visibility="internal_only",
+                gate_status="NOT_RUN",
+            )
+        append_event(
             project,
-            artifact_id,
-            artifact_type,
-            safe_rel(project, path),
-            "creative",
-            visibility="internal_only",
-            gate_status="NOT_RUN",
+            {
+                "event_id": f"EVT-CREATIVE-IMPORT-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "event_type": "creative_candidate_imported",
+                "created_at": now_iso(),
+                "candidate_sha256": result.candidate_sha256,
+                "direction_count": result.direction_count,
+                "warnings": result.warnings,
+            },
         )
-    append_event(
-        project,
-        {
-            "event_id": f"EVT-CREATIVE-IMPORT-{datetime.now().strftime('%Y%m%d%H%M%S')}",
-            "event_type": "creative_candidate_imported",
-            "created_at": now_iso(),
-            "candidate_sha256": result.candidate_sha256,
-            "direction_count": result.direction_count,
-            "warnings": result.warnings,
-        },
-    )
     incremental = run_incremental_validation(
         project,
         changed_artifact_ids=[
@@ -17442,26 +17580,27 @@ def command_creative_review(args: argparse.Namespace) -> int:
         print("CREATIVE_REVIEW=BLOCKED")
         print(f"ERROR={exc}")
         return 1
-    update_artifact(
-        project,
-        "ART-AUTO-CREATIVE-CRITIC-RECEIPT",
-        "creative_critic_receipt",
-        safe_rel(project, result.receipt_path),
-        "creative",
-        visibility="internal_only",
-        gate_status=result.status,
-    )
-    append_event(
-        project,
-        {
-            "event_id": f"EVT-CREATIVE-REVIEW-{datetime.now().strftime('%Y%m%d%H%M%S')}",
-            "event_type": "creative_candidate_reviewed",
-            "created_at": now_iso(),
-            "status": result.status,
-            "receipt": safe_rel(project, result.receipt_path),
-            "verdict": result.receipt["verdict"],
-        },
-    )
+    if project_surface(project) == DELIVERY_SURFACE:
+        update_artifact(
+            project,
+            "ART-AUTO-CREATIVE-CRITIC-RECEIPT",
+            "creative_critic_receipt",
+            safe_rel(project, result.receipt_path),
+            "creative",
+            visibility="internal_only",
+            gate_status=result.status,
+        )
+        append_event(
+            project,
+            {
+                "event_id": f"EVT-CREATIVE-REVIEW-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "event_type": "creative_candidate_reviewed",
+                "created_at": now_iso(),
+                "status": result.status,
+                "receipt": safe_rel(project, result.receipt_path),
+                "verdict": result.receipt["verdict"],
+            },
+        )
     payload = {
         "creative_review": result.status,
         "critic_receipt": str(result.receipt_path),
@@ -17490,13 +17629,18 @@ def command_init(args: argparse.Namespace) -> int:
         print(f"ERROR=template not found: {template}")
         return 1
     project.mkdir(parents=True, exist_ok=True)
-    created, skipped = copy_template(template, project)
+    use_delivery = args.full or project_surface(project) == DELIVERY_SURFACE
+    copy = copy_template if use_delivery else copy_content_template
+    created, skipped = copy(template, project)
+    if use_delivery:
+        set_project_surface(project, DELIVERY_SURFACE)
     agents_status = agents_policy_status(project)
     errors, stats = validate(project)
     print(f"PROJECT={project}")
     print(f"TEMPLATE={template}")
     print(f"CREATED_FILES={created}")
     print(f"SKIPPED_EXISTING_FILES={skipped}")
+    print(f"PROJECT_SURFACE={project_surface(project)}")
     print(f"AGENTS_MD={agents_status}")
     print(f"INIT={'PASS' if not errors else 'CHECK'}")
     for key, value in stats.items():
@@ -17513,6 +17657,7 @@ def command_init(args: argparse.Namespace) -> int:
 def command_run(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     materials = [Path(item).expanduser().resolve() for item in args.material]
+    delivery_surface = project_surface(project) == DELIVERY_SURFACE
     result = execute_lightweight_run(
         project,
         materials=materials,
@@ -17520,10 +17665,11 @@ def command_run(args: argparse.Namespace) -> int:
         max_total_chars=args.max_total_chars,
         ensure_project=ensure_project,
         register_materials=register_materials,
-        ensure_intake_work=ensure_intake_work,
+        ensure_intake_work=ensure_intake_work if delivery_surface else None,
         perform_intake=perform_intake,
         render_handoff=render_handoff,
         render_dashboard=render_dashboard,
+        render_optional_dashboard=args.dashboard,
     )
     result["agents_policy"] = agents_policy_status(project)
     incremental = result["incremental_validation"]
@@ -17538,7 +17684,10 @@ def command_run(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if not errors else 1
+    print("CONTENT_ANSWER:")
+    print(result["content_answer"]["markdown"])
     print(f"PROJECT={project}")
+    print(f"PROJECT_SURFACE={project_surface(project)}")
     print(f"CREATED_FILES={result['created_files']}")
     print(f"SKIPPED_EXISTING_FILES={result['skipped_existing_files']}")
     print(f"AGENTS_MD={result['agents_policy']}")
@@ -17548,7 +17697,7 @@ def command_run(args: argparse.Namespace) -> int:
     print(f"INTAKE_GAPS={intake_stats['gaps']}")
     print(f"INTAKE_CHARACTERS_READ={intake_stats['characters_read']}")
     print(f"INTAKE_EVIDENCE_CHUNKS={intake_stats['evidence_chunks']}")
-    print(f"DASHBOARD={result['dashboard']}")
+    print(f"DASHBOARD={result['dashboard'] or 'NOT_RUN'}")
     print(f"DASHBOARD_RENDER_COUNT={result['dashboard_render_count']}")
     print("COUNCIL=NOT_RUN")
     print(f"COUNCIL_RUN_COUNT={result['council_run_count']}")
@@ -17571,49 +17720,59 @@ def command_run(args: argparse.Namespace) -> int:
     return 0
 
 
-def command_sample(args: argparse.Namespace) -> int:
-    project = Path(args.project).resolve()
+def _run_sample_content(project: Path, *, force_material: bool) -> dict[str, object]:
     created, skipped = ensure_project(project)
     agents_status = agents_policy_status(project)
-    material, material_action = write_sample_brief(project, force=args.force_material)
+    material, material_action = write_sample_brief(project, force=force_material)
     source_ids = existing_source_ids_for_material(project, material)
     registered_sources = 0
     if not source_ids:
         source_ids = register_materials(project, [material], SAMPLE_GOAL)
         registered_sources = len(source_ids)
-    ensure_intake_work(project, source_ids, SAMPLE_GOAL)
+    if project_surface(project) == DELIVERY_SURFACE:
+        ensure_intake_work(project, source_ids, SAMPLE_GOAL)
     intake_stats = perform_intake(project, source_ids, SAMPLE_GOAL)
-    render_handoff(project, SAMPLE_GOAL, source_ids)
-    goal_id = args.goal_id or default_goal_id()
-    goal_plan = render_goal_iteration_plan(
-        project,
-        goal_id=goal_id,
-        title=args.title,
-        objective=SAMPLE_GOAL,
-        owner="Main Controller",
-        force=args.force_goal,
-    )
-    dashboard = render_dashboard(project)
-    overall, _, report = run_council(project)
-    dashboard = render_dashboard(project)
+    content_answer = render_handoff(project, SAMPLE_GOAL, source_ids)
     errors, stats = validate(project)
+    return {
+        "project": str(project),
+        "surface": project_surface(project),
+        "created_files": created,
+        "skipped_existing_files": skipped,
+        "agents_policy": agents_status,
+        "sample_material": str(material),
+        "sample_material_action": material_action,
+        "registered_sources": registered_sources,
+        "source_ids": source_ids,
+        "intake": intake_stats,
+        "content_answer": content_answer,
+        "stats": stats,
+        "errors": errors,
+    }
+
+
+def command_sample(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    result = _run_sample_content(project, force_material=args.force_material)
+    errors = result["errors"]
     print(f"SAMPLE={'PASS' if not errors else 'CHECK'}")
-    print(f"PROJECT={project}")
-    print(f"CREATED_FILES={created}")
-    print(f"SKIPPED_EXISTING_FILES={skipped}")
-    print(f"AGENTS_MD={agents_status}")
-    print(f"SAMPLE_MATERIAL={material}")
-    print(f"SAMPLE_MATERIAL_ACTION={material_action}")
-    print(f"REGISTERED_SOURCES={registered_sources}")
-    print(f"SOURCE_IDS={';'.join(source_ids)}")
-    print(f"INTAKE_MATERIALS={intake_stats['materials']}")
-    print(f"INTAKE_REQUIREMENTS={intake_stats['requirements']}")
-    print(f"INTAKE_GAPS={intake_stats['gaps']}")
-    print(f"GOAL_PLAN={goal_plan}")
-    print(f"DASHBOARD={dashboard}")
-    print(f"COUNCIL={overall}")
-    print(f"COUNCIL_REPORT={report}")
-    for key, value in stats.items():
+    print("CONTENT_ANSWER:")
+    print(result["content_answer"]["markdown"])
+    print(f"PROJECT={result['project']}")
+    print(f"PROJECT_SURFACE={result['surface']}")
+    print(f"CREATED_FILES={result['created_files']}")
+    print(f"SKIPPED_EXISTING_FILES={result['skipped_existing_files']}")
+    print(f"AGENTS_MD={result['agents_policy']}")
+    print(f"SAMPLE_MATERIAL={result['sample_material']}")
+    print(f"SAMPLE_MATERIAL_ACTION={result['sample_material_action']}")
+    print(f"REGISTERED_SOURCES={result['registered_sources']}")
+    print(f"SOURCE_IDS={';'.join(result['source_ids'])}")
+    print(f"INTAKE_MATERIALS={result['intake']['materials']}")
+    print(f"INTAKE_REQUIREMENTS={result['intake']['requirements']}")
+    print(f"INTAKE_GAPS={result['intake']['gaps']}")
+    print("DASHBOARD=NOT_RUN")
+    print("COUNCIL=NOT_RUN")
+    for key, value in result["stats"].items():
         print(f"{key.upper()}={value}")
     print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
     if errors:
@@ -17626,51 +17785,31 @@ def command_sample(args: argparse.Namespace) -> int:
 
 def command_demo(args: argparse.Namespace) -> int:
     project = Path(args.project).expanduser().resolve() if args.project else DEFAULT_DEMO_PROJECT
-    created, skipped = ensure_project(project)
-    agents_status = agents_policy_status(project)
-    material, material_action = write_sample_brief(project, force=args.force_material)
-    source_ids = existing_source_ids_for_material(project, material)
-    registered_sources = 0
-    if not source_ids:
-        source_ids = register_materials(project, [material], SAMPLE_GOAL)
-        registered_sources = len(source_ids)
-    ensure_intake_work(project, source_ids, SAMPLE_GOAL)
-    intake_stats = perform_intake(project, source_ids, SAMPLE_GOAL)
-    render_handoff(project, SAMPLE_GOAL, source_ids)
-    goal_id = args.goal_id or default_goal_id()
-    goal_plan = render_goal_iteration_plan(
-        project,
-        goal_id=goal_id,
-        title=args.title,
-        objective=SAMPLE_GOAL,
-        owner="Main Controller",
-        force=args.force_goal,
-    )
-    dashboard = render_dashboard(project)
-    overall, _, report = run_council(project)
+    result = _run_sample_content(project, force_material=args.force_material)
     dashboard = render_dashboard(project)
     open_status = "SKIPPED"
     if not args.no_open:
         open_status = "PASS" if webbrowser.open(dashboard.as_uri()) else "CHECK"
-    errors, stats = validate(project)
+    errors = result["errors"]
     print(f"DEMO={'PASS' if not errors and open_status != 'CHECK' else 'CHECK'}")
-    print(f"PROJECT={project}")
-    print(f"CREATED_FILES={created}")
-    print(f"SKIPPED_EXISTING_FILES={skipped}")
-    print(f"AGENTS_MD={agents_status}")
-    print(f"SAMPLE_MATERIAL={material}")
-    print(f"SAMPLE_MATERIAL_ACTION={material_action}")
-    print(f"REGISTERED_SOURCES={registered_sources}")
-    print(f"SOURCE_IDS={';'.join(source_ids)}")
-    print(f"INTAKE_MATERIALS={intake_stats['materials']}")
-    print(f"INTAKE_REQUIREMENTS={intake_stats['requirements']}")
-    print(f"INTAKE_GAPS={intake_stats['gaps']}")
-    print(f"GOAL_PLAN={goal_plan}")
+    print("CONTENT_ANSWER:")
+    print(result["content_answer"]["markdown"])
+    print(f"PROJECT={result['project']}")
+    print(f"PROJECT_SURFACE={result['surface']}")
+    print(f"CREATED_FILES={result['created_files']}")
+    print(f"SKIPPED_EXISTING_FILES={result['skipped_existing_files']}")
+    print(f"AGENTS_MD={result['agents_policy']}")
+    print(f"SAMPLE_MATERIAL={result['sample_material']}")
+    print(f"SAMPLE_MATERIAL_ACTION={result['sample_material_action']}")
+    print(f"REGISTERED_SOURCES={result['registered_sources']}")
+    print(f"SOURCE_IDS={';'.join(result['source_ids'])}")
+    print(f"INTAKE_MATERIALS={result['intake']['materials']}")
+    print(f"INTAKE_REQUIREMENTS={result['intake']['requirements']}")
+    print(f"INTAKE_GAPS={result['intake']['gaps']}")
     print(f"DASHBOARD={dashboard}")
     print(f"DASHBOARD_OPEN={open_status}")
-    print(f"COUNCIL={overall}")
-    print(f"COUNCIL_REPORT={report}")
-    for key, value in stats.items():
+    print("COUNCIL=NOT_RUN")
+    for key, value in result["stats"].items():
         print(f"{key.upper()}={value}")
     print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
     if errors or open_status == "CHECK":
@@ -17684,85 +17823,51 @@ def command_demo(args: argparse.Namespace) -> int:
 
 def command_quickstart(args: argparse.Namespace) -> int:
     project = Path(args.project).expanduser().resolve() if args.project else DEFAULT_DEMO_PROJECT
-    created, skipped = ensure_project(project)
-    agents_status = agents_policy_status(project)
-    material, material_action = write_sample_brief(project, force=args.force_material)
-    source_ids = existing_source_ids_for_material(project, material)
-    registered_sources = 0
-    if not source_ids:
-        source_ids = register_materials(project, [material], SAMPLE_GOAL)
-        registered_sources = len(source_ids)
-    ensure_intake_work(project, source_ids, SAMPLE_GOAL)
-    intake_stats = perform_intake(project, source_ids, SAMPLE_GOAL)
-    render_handoff(project, SAMPLE_GOAL, source_ids)
-    goal_id = args.goal_id or default_goal_id()
-    goal_plan = render_goal_iteration_plan(
-        project,
-        goal_id=goal_id,
-        title=args.title,
-        objective=SAMPLE_GOAL,
-        owner="Main Controller",
-        force=args.force_goal,
-    )
+    result = _run_sample_content(project, force_material=args.force_material)
     dashboard = render_dashboard(project)
-    overall, _, report = run_council(project)
-    dashboard = render_dashboard(project)
-    errors, stats = validate(project)
+    errors = result["errors"]
     open_status = "SKIPPED"
     if not args.no_open:
         open_status = "PASS" if webbrowser.open(dashboard.as_uri()) else "CHECK"
     quickstart_status = "PASS" if not errors and open_status != "CHECK" else "CHECK"
     payload = {
         "quickstart": quickstart_status,
-        "project": str(project),
-        "created_files": created,
-        "skipped_existing_files": skipped,
-        "agents_md": agents_status,
-        "sample_material": str(material),
-        "sample_material_action": material_action,
-        "registered_sources": registered_sources,
-        "source_ids": source_ids,
-        "intake_materials": intake_stats["materials"],
-        "intake_requirements": intake_stats["requirements"],
-        "intake_gaps": intake_stats["gaps"],
-        "goal_plan": str(goal_plan),
+        **result,
         "dashboard": str(dashboard),
         "dashboard_open": open_status,
-        "council": overall,
-        "council_report": str(report),
+        "council": "NOT_RUN",
         "next_command": f"adco next {project}",
         "status_command": f"adco status {project}",
         "validate_command": f"adco validate {project}",
         "real_project_command": "adco run <project_dir> --material <material_file_or_folder>",
-        "stats": stats,
         "validation": "PASS" if not errors else "CHECK",
-        "errors": errors,
     }
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if quickstart_status == "PASS" else 1
     print(f"QUICKSTART={quickstart_status}")
-    print(f"PROJECT={project}")
-    print(f"CREATED_FILES={created}")
-    print(f"SKIPPED_EXISTING_FILES={skipped}")
-    print(f"AGENTS_MD={agents_status}")
-    print(f"SAMPLE_MATERIAL={material}")
-    print(f"SAMPLE_MATERIAL_ACTION={material_action}")
-    print(f"REGISTERED_SOURCES={registered_sources}")
-    print(f"SOURCE_IDS={';'.join(source_ids)}")
-    print(f"INTAKE_MATERIALS={intake_stats['materials']}")
-    print(f"INTAKE_REQUIREMENTS={intake_stats['requirements']}")
-    print(f"INTAKE_GAPS={intake_stats['gaps']}")
-    print(f"GOAL_PLAN={goal_plan}")
+    print("CONTENT_ANSWER:")
+    print(result["content_answer"]["markdown"])
+    print(f"PROJECT={result['project']}")
+    print(f"PROJECT_SURFACE={result['surface']}")
+    print(f"CREATED_FILES={result['created_files']}")
+    print(f"SKIPPED_EXISTING_FILES={result['skipped_existing_files']}")
+    print(f"AGENTS_MD={result['agents_policy']}")
+    print(f"SAMPLE_MATERIAL={result['sample_material']}")
+    print(f"SAMPLE_MATERIAL_ACTION={result['sample_material_action']}")
+    print(f"REGISTERED_SOURCES={result['registered_sources']}")
+    print(f"SOURCE_IDS={';'.join(result['source_ids'])}")
+    print(f"INTAKE_MATERIALS={result['intake']['materials']}")
+    print(f"INTAKE_REQUIREMENTS={result['intake']['requirements']}")
+    print(f"INTAKE_GAPS={result['intake']['gaps']}")
     print(f"DASHBOARD={dashboard}")
     print(f"DASHBOARD_OPEN={open_status}")
-    print(f"COUNCIL={overall}")
-    print(f"COUNCIL_REPORT={report}")
+    print("COUNCIL=NOT_RUN")
     print(f"NEXT_COMMAND=adco next {project}")
     print(f"STATUS_COMMAND=adco status {project}")
     print(f"VALIDATE_COMMAND=adco validate {project}")
     print("REAL_PROJECT_COMMAND=adco run <project_dir> --material <material_file_or_folder>")
-    for key, value in stats.items():
+    for key, value in result["stats"].items():
         print(f"{key.upper()}={value}")
     print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
     if errors or open_status == "CHECK":
@@ -17808,14 +17913,13 @@ def command_intake(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     ensure_project(project)
     source_ids = args.source_id or []
-    ensure_intake_work(project, source_ids, args.goal)
     stats = perform_intake(
         project,
         source_ids,
         args.goal,
         max_total_chars=args.max_total_chars,
     )
-    render_handoff(project, args.goal, source_ids)
+    content_answer = render_handoff(project, args.goal, source_ids)
     incremental = run_incremental_validation(
         project,
         changed_artifact_ids=[
@@ -17836,12 +17940,10 @@ def command_intake(args: argparse.Namespace) -> int:
         errors.append("intake total character budget exceeded")
     if stats["parser_errors"]:
         errors.append("one or more material parsers failed")
-    dashboard = render_dashboard(
-        project,
-        validation_errors=errors,
-        validation_status="SCOPED_PASS" if not errors else "SCOPED_CHECK",
-    )
+    print("CONTENT_ANSWER:")
+    print(content_answer["markdown"])
     print(f"PROJECT={project}")
+    print(f"PROJECT_SURFACE={project_surface(project)}")
     print(f"INTAKE_MATERIALS={stats['materials']}")
     print(f"INTAKE_REQUIREMENTS={stats['requirements']}")
     print(f"INTAKE_GAPS={stats['gaps']}")
@@ -17849,7 +17951,7 @@ def command_intake(args: argparse.Namespace) -> int:
     print(f"INTAKE_EVIDENCE_CHUNKS={stats['evidence_chunks']}")
     print(f"INTAKE_OVER_BUDGET_FILES={stats['over_budget_files']}")
     print(f"INTAKE_PARSER_ERRORS={stats['parser_errors']}")
-    print(f"DASHBOARD={dashboard}")
+    print("DASHBOARD=NOT_RUN")
     print("VALIDATORS_RUN=" + ";".join(incremental.validators_run))
     print("VALIDATORS_SKIPPED=" + ";".join(incremental.validators_skipped))
     print(f"VALIDATION_MS={incremental.validation_ms}")
@@ -18092,18 +18194,22 @@ def command_next(args: argparse.Namespace) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:
         print(f"PROJECT={payload['project']}")
+        print(f"PROJECT_SURFACE={payload['surface']}")
         print(f"NEXT_STATUS={payload['next_status']}")
         print(f"NEXT_ACTION={payload['next_action']}")
         print(f"VALIDATION={payload['validation']}")
-        print(f"ACTIVE_WORK={payload['active_work_count']}")
+        if payload["surface"] == DELIVERY_SURFACE:
+            print(f"ACTIVE_WORK={payload['active_work_count']}")
         print(f"OPEN_GAPS={payload['open_gap_count']}")
         print(f"BLOCKING_GAPS={payload['blocking_gap_count']}")
         print(f"PENDING_CONFIRMATIONS={payload['pending_confirmation_count']}")
-        print(f"DASHBOARD={payload['dashboard'] or 'MISSING'}")
+        print(f"DASHBOARD={payload['dashboard'] or 'NOT_RUN'}")
         if payload["next_status"] == "NEEDS_MATERIAL":
             print(f"SUGGESTED_COMMAND=adco run {payload['project']} --material <brief_file_or_folder>")
         elif payload["next_status"] == "READY_FOR_NEXT_GATE":
             print(f"SUGGESTED_COMMAND=adco goal-plan {payload['project']} --title <title> --objective <objective>")
+        elif payload["next_status"] == "READY_FOR_CONTENT_WORK":
+            print(f"SUGGESTED_ACTION={payload['next_action']}")
     return 1 if payload["next_status"] == "VALIDATION_CHECK" else 0
 
 
@@ -19088,6 +19194,7 @@ def command_final_delivery_lock(args: argparse.Namespace) -> int:
 
 def command_final_delivery_reconcile(args: argparse.Namespace) -> int:
     project = Path(args.project).expanduser().resolve()
+    ensure_delivery_project(project)
     try:
         row, lock_path = reconcile_final_delivery(
             project,
@@ -19141,6 +19248,7 @@ def command_client_pack_gate(args: argparse.Namespace) -> int:
 
 def command_client_send_readiness_gate(args: argparse.Namespace) -> int:
     project = Path(args.project).expanduser().resolve()
+    ensure_delivery_project(project)
     status, issues, report = review_client_send_readiness(project)
     print(f"CLIENT_SEND_READINESS_GATE={status}")
     print(f"REPORT={report}")
@@ -19215,6 +19323,11 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser = subparsers.add_parser("init", help="Initialize a project from packaged templates.")
     init_parser.add_argument("project", help="Project directory.")
     init_parser.add_argument("--template", default="", help="Template directory. Defaults to packaged templates.")
+    init_parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Initialize the delivery surface instead of the default content surface.",
+    )
     init_parser.set_defaults(func=command_init)
 
     goal_parser = subparsers.add_parser("goal-plan", help="Create a reusable goal iteration execution plan.")
@@ -19326,12 +19439,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser(
         "run",
-        help="Initialize, parse evidence, update facts/handoff, render one dashboard, and run scoped validation.",
+        help="Initialize the content surface, parse evidence, return a useful summary, and run scoped validation.",
     )
     run_parser.add_argument("project", help="Project directory.")
     run_parser.add_argument("--material", action="append", default=[], help="Client material file or folder. Repeatable.")
     run_parser.add_argument("--goal", default="先完成需求整理、缺口判断、客户追问、下一步建议。")
     run_parser.add_argument("--max-total-chars", type=int, default=2_000_000)
+    run_parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Render the optional dashboard after the content answer is ready.",
+    )
     run_parser.add_argument("--json", action="store_true", help="Print machine-readable output with phase timings.")
     run_parser.set_defaults(func=command_run)
 
@@ -19852,7 +19970,41 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    return args.func(args)
+    content_commands = {
+        "init",
+        "run",
+        "intake",
+        "intake-evidence",
+        "export-intake-analysis-request",
+        "import-intake-analysis",
+        "creative-brief",
+        "creative-proposal",
+        "creative-import",
+        "creative-review",
+        "sample",
+        "demo",
+        "quickstart",
+        "status",
+        "next",
+        "validate",
+        "hygiene",
+        "agency-audit",
+        "support-bundle",
+        "render-dashboard",
+        "open-dashboard",
+        "audit-dashboard",
+    }
+    project_arg = getattr(args, "project", None)
+    delivery_command = bool(
+        project_arg
+        and args.command not in content_commands
+        and not getattr(args, "dry_run", False)
+    )
+    token = DELIVERY_COMMAND_ACTIVE.set(delivery_command)
+    try:
+        return args.func(args)
+    finally:
+        DELIVERY_COMMAND_ACTIVE.reset(token)
 
 
 if __name__ == "__main__":

@@ -106,10 +106,10 @@ print -r -- "LOG=$LOG_PATH"
 print -r -- ""
 
 if [[ -n "$MATERIAL_PATH" ]]; then
-  "$PYTHON_BIN" "$SCRIPT_DIR/tools/ad_creative_operator.py" run "$PROJECT_PATH" --material "$MATERIAL_PATH" --goal "$GOAL_TEXT" 2>&1 | tee "$LOG_PATH"
+  "$PYTHON_BIN" "$SCRIPT_DIR/tools/ad_creative_operator.py" run "$PROJECT_PATH" --material "$MATERIAL_PATH" --goal "$GOAL_TEXT" --dashboard 2>&1 | tee "$LOG_PATH"
   STATUS=${pipestatus[1]}
 else
-  "$PYTHON_BIN" "$SCRIPT_DIR/tools/ad_creative_operator.py" run "$PROJECT_PATH" --goal "$GOAL_TEXT" 2>&1 | tee "$LOG_PATH"
+  "$PYTHON_BIN" "$SCRIPT_DIR/tools/ad_creative_operator.py" run "$PROJECT_PATH" --goal "$GOAL_TEXT" --dashboard 2>&1 | tee "$LOG_PATH"
   STATUS=${pipestatus[1]}
 fi
 
@@ -118,22 +118,6 @@ DASHBOARD_PATH="$PROJECT_PATH/AD-creative/handoff/操作台.html"
 if [[ "$STATUS" -ne 0 ]]; then
   fail_dialog "运行未通过。日志：$LOG_PATH"
   exit "$STATUS"
-fi
-
-print -r -- ""
-print -r -- "正在生成客户可读文本框架与提案骨架..."
-"$PYTHON_BIN" "$SCRIPT_DIR/tools/ad_creative_operator.py" creative-proposal "$PROJECT_PATH" 2>&1 | tee -a "$LOG_PATH"
-TEXT_STATUS=${pipestatus[1]}
-if [[ "$TEXT_STATUS" -ne 0 ]]; then
-  fail_dialog "文本框架生成未通过。日志：$LOG_PATH"
-  exit "$TEXT_STATUS"
-fi
-
-"$PYTHON_BIN" "$SCRIPT_DIR/tools/ad_creative_operator.py" client-outline-gate "$PROJECT_PATH" 2>&1 | tee -a "$LOG_PATH"
-OUTLINE_STATUS=${pipestatus[1]}
-if [[ "$OUTLINE_STATUS" -ne 0 ]]; then
-  fail_dialog "客户可读文本框架仍需补充；尚未进入 PPT。日志：$LOG_PATH"
-  exit "$OUTLINE_STATUS"
 fi
 
 if [[ -z "${AD_CREATIVE_NO_OPEN:-}" && -f "$DASHBOARD_PATH" ]]; then
@@ -147,4 +131,4 @@ fi
 print -r -- ""
 print -r -- "DONE"
 print -r -- "DASHBOARD=$DASHBOARD_PATH"
-print -r -- "NEXT=文本框架已生成；人工确认后再单独运行 export-pptx。PPT 未自动生成。"
+print -r -- "NEXT=先审阅内容答案；只有进入客户可见交付时，才按需生成 outline、PPT 与交付治理记录。"
