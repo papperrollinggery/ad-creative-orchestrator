@@ -5,11 +5,11 @@
 [![python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://github.com/papperrollinggery/ad-creative-orchestrator/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Turn an advertising brief into a traceable, versioned project workspace—with explicit review gates before anything becomes client-visible.
+Turn real project material into usable advertising thinking, then add traceability only when the work reaches a delivery boundary.
 
-Ad Creative Orchestrator (ADCO) is a local-first CLI and Codex control plane for creative operations. Core project state stays on disk; provider-facing generation, external uploads, and client delivery require explicit approval.
+Ad Creative Orchestrator (ADCO) is a content-first Codex Skill and local CLI for advertising projects. Its default workspace is deliberately small: understand the material, preserve evidence, expose real gaps, and produce the requested internal answer. Version, asset, PPT, approval, and delivery controls appear only when the requested action needs them.
 
-中文简介：ADCO 把广告项目的资料、方案、视觉资产、PPT、审阅与交付状态收进一个可追溯的本地工作区，并在客户可见和发送前强制停下等待人工确认。
+中文简介：ADCO 默认先读懂真实资料并完成广告内容工作；只有进入客户可见版本、PPT、资产授权或发送准备时，才按需展开完整交付治理。
 
 > **Alpha:** use version control or backups and keep a human reviewer in the loop for real client work.
 
@@ -24,9 +24,10 @@ Ad Creative Orchestrator (ADCO) is a local-first CLI and Codex control plane for
 
 Creative projects rarely fail because a team cannot make another slide. They fail because the latest brief, approved copy, image rights, deck version, and client feedback drift apart.
 
-ADCO gives each project a file-based source of truth:
+ADCO gives each project two proportional operating surfaces:
 
-- **Current state:** requirements, gaps, decisions, work items, and versions stay readable on disk.
+- **Content Surface:** material evidence, facts, requirements, real gaps, and the useful answer stay readable without a release workflow.
+- **Delivery Surface:** client-visible versions, assets, PPTX, packages, approvals, and send evidence become traceable only when needed.
 - **Versioned deliverables:** PPTX files and client packages are immutable and bound to exact-current inputs.
 - **Review gates:** copy, references, assets, layout, editability, and send readiness are checked separately.
 - **Human handoffs:** a browser dashboard and bilingual folders show non-developers what is current and what happens next.
@@ -71,33 +72,29 @@ For source installation, upgrades, Skill installation, and uninstall instruction
 ```bash
 adco init <project_dir>
 adco run <project_dir> --material <brief_or_material_folder>
+# Optional when a local status view is useful:
 adco open-dashboard <project_dir>
-adco status <project_dir>
-adco next <project_dir>
 ```
 
-`adco run` parses source material into evidence chunks, updates the fact inventory, requirements, true gaps/conflicts, and handoff files, renders the dashboard once, and runs only affected-scope validators. By default it runs no Council, Specialist Exchange, creative generation, PPT, Client Pack, or full delivery validation.
+`adco run` parses source material into evidence chunks, updates the fact inventory, requirements, true gaps/conflicts, writes a concise content answer, and runs only affected-scope validators. By default it renders no dashboard and runs no Council, Thread, Git workflow, Specialist Exchange, PPT, Client Pack, or full delivery validation. Add `--dashboard` only when that view is useful.
 
 Supported intake includes Markdown/text, CSV, JSON, YAML, DOCX, PPTX, PDF, SRT/VTT, images, and video. Long text is processed under an explicit aggregate character budget instead of silently truncating each file; media that was only registered by metadata is never presented as understood.
 
-Every new workspace includes:
+Every new Content Surface starts with only the core project files:
 
 ```text
 project/
-├── 00_项目资料_ProjectMaterials/
-├── 01_参考资料_References/
-├── 02_重要素材_KeyAssets/
-├── 03_阶段成果_WorkInProgress/
-├── 04_客户审阅_ClientReview/
-├── 05_最终交付_FinalDelivery/
 └── AD-creative/
-    ├── handoff/          # dashboard, project board, questions, next steps
-    └── orchestrator/     # requirements, gaps, versions, gates, audit trail
+    ├── AGENTS.md         # scoped, opt-in project rules
+    ├── handoff/          # content summary and genuine questions
+    └── orchestrator/     # source events, truth, requirements, gaps
 ```
 
-If the project already has an `AGENTS.md`, ADCO leaves it untouched and writes an `AGENTS.merge_suggestion.md` for manual review. The suggested policy is conditional: it applies only to a valid initialized ADCO project after explicit `$ad-creative-orchestrator` invocation, never to ADCO/DIR source maintenance or ordinary code and advertising tasks.
+Delivery-risk commands expand this workspace on demand with the six human folders and the version, artifact, Gate, asset, feedback, Thread, and FinalDelivery records required by that action. `adco init --full` explicitly starts with the Delivery Surface.
 
-## How the Workflow Stays Safe
+ADCO writes its policy to `AD-creative/AGENTS.md`; an existing project-root `AGENTS.md` is never overwritten and no manual merge is required. The scoped policy applies only after explicit `$ad-creative-orchestrator` invocation inside that initialized project.
+
+## How the Delivery Surface Stays Safe
 
 ```text
 Briefs and feedback

@@ -14,7 +14,7 @@
 
 ## 2. 启动项目
 
-项目按 P0-P8 依次推进：事实/保护基线 → 客户可读文本 → hash 确认 → 按需创意/参考/专项 → 不可变 PPT → 语言/视觉/授权/可编辑性 → fresh Client Pack → 独立审阅/发送准备（不发送）→ 反馈/下一版本。
+项目默认先进入 Content Surface：读取资料 → 事实/真实缺口 → 内容判断或内部产物。只有进入客户可见版本、PPT、资产授权、FinalDelivery 或发送准备时，才展开 P0-P8 Delivery Surface。
 
 最简单方式：
 
@@ -53,30 +53,21 @@ adco docs
 默认 `adco run` 产物：
 
 ```text
-AD-creative/handoff/操作台.html
 AD-creative/handoff/项目看板.md
 AD-creative/handoff/待你确认.md
-AD-creative/handoff/客户追问话术.md
 AD-creative/orchestrator/evidence_chunks.jsonl
 AD-creative/orchestrator/fact_inventory.jsonl
 AD-creative/orchestrator/requirements.csv
 AD-creative/orchestrator/gaps.csv
 AD-creative/orchestrator/current_truth.md
-AGENTS.md
+AD-creative/AGENTS.md
 ```
 
-默认运行只做资料解析、事实/缺口更新、handoff 刷新、一次操作台渲染和受影响范围验证；Council、画像分析、创意方向、Specialist、客户 outline、PPT、Client Pack 和全量 delivery validation 都不会自动执行。
+默认运行只做资料解析、事实/真实缺口更新、内容摘要和受影响范围验证；操作台、Council、Thread、Git、画像分析、Specialist、客户 outline、PPT、Client Pack 和全量 delivery validation 都不会自动执行。需要操作台时显式运行 `adco open-dashboard <项目目录>` 或给 `adco run` 加 `--dashboard`。
 
-`AGENTS.md` 在项目根目录。它不是客户稿，而是给 Codex 线程看的项目规则：先读哪些文件、哪些事必须停下来确认、哪些 Gate 必须跑、`VALIDATION=PASS` 不能当作客户创意质量批准。
+`AD-creative/AGENTS.md` 只约束这个广告工作区。它要求先完成广告内容判断，再按风险进入治理，并明确 `VALIDATION=PASS` 不能当作客户创意质量批准。
 
-如果项目里已经有 `AGENTS.md`，初始化不会覆盖。保留原有规则；如果生成 `AD-creative/orchestrator/AGENTS.merge_suggestion.md`，把里面的 Ad Creative Orchestrator 项目规则人工合并进根目录 `AGENTS.md`。
-合并建议会写到：
-
-```text
-AD-creative/orchestrator/AGENTS.merge_suggestion.md
-```
-
-如果根目录 `AGENTS.md` 缺失或没有合入必需规则，`adco validate` 会返回 `CHECK`。
+如果项目根目录已有 `AGENTS.md`，初始化不会覆盖，也不要求人工合并；ADCO 的规则保持在 `AD-creative/AGENTS.md`。
 
 adco 的创意控制定位：
 
@@ -102,7 +93,7 @@ docs/operating/creative_proposal_quality_standard.md
 
 ## 3. 看哪里
 
-优先看：
+优先看 CLI 返回的 `CONTENT_ANSWER` 和：
 
 ```text
 AD-creative/handoff/操作台.html
@@ -188,8 +179,8 @@ AD-creative/orchestrator/events.jsonl
 对 Codex 说：
 
 ```text
-先读取项目根目录 AGENTS.md。
-读取 AD-creative/handoff/项目看板.md 和 AD-creative/handoff/待你确认.md
+先读取 AD-creative/AGENTS.md 和真实资料。
+再读取与本轮目标直接相关的 current_truth、项目看板和待你确认。
 运行 adco status <项目目录> 获取只读状态；没有人工阻塞时再运行 adco next <项目目录>
 优先完成需求整理、缺口判断、客户追问、下一步建议。
 ```
@@ -218,54 +209,15 @@ adco next <项目目录>
 
 ## 6. 判断能不能交给别人
 
-执行：
+不要把下面的 Gate 全部跑一遍。先判断当前交接边界，只使用对应检查：
 
-```text
-adco council <项目目录> --render-dashboard
-adco intake <项目目录>
-adco profile-analyze <项目目录> --source-id <SRC-ID> --brand <品牌> --company <公司>
-adco creative-brief <项目目录>
-adco creative-import <项目目录> --file <candidate.json>
-adco creative-review <项目目录>
-adco creative-quality-gate <项目目录>
-adco search-quality-gate <项目目录>
-adco reference-pack-gate <项目目录>
-adco import-imagegen <项目目录> --slot-id <槽位> --selected
-adco visual-quality-gate <项目目录>
-adco confirm-client-outline <项目目录> --confirmed-by "<人工确认者>" --confirmed-at <iso_time> --evidence-ref "<user_confirmation:id|client_confirmation:id>"
-adco client-outline-gate <项目目录>
-adco export-pptx <项目目录>
-adco client-language-gate <项目目录>
-adco asset-current-manifest <项目目录>
-adco visual-layout-gate <项目目录>
-adco client-pack-gate <项目目录>
-adco client-send-readiness-gate <项目目录>
-adco handoff-readiness-gate <项目目录>
-adco audit-dashboard <项目目录> --render
-adco audit-dashboard <项目目录> --render --json
-adco open-dashboard <项目目录> --no-open
-adco validate <项目目录>
-adco hygiene <项目目录>
-```
+| 当前要交什么 | 最小通过标准 |
+|---|---|
+| 内部策略、文案、脚本、分镜或判断 | 内容本身可用；事实/推断/未知分开；没有把真实素材误读成事实 |
+| 内部运营交接 | 上述标准；需要时再跑 `adco handoff-readiness-gate` |
+| 客户可读 outline | exact outline 经人工确认，再跑 `adco client-outline-gate` |
+| 客户可见图片或 PPT | 对应资产授权、语言、视觉布局和可编辑性检查 |
+| Client Pack | exact-current 输入绑定后跑 `adco client-pack-gate` |
+| 准备发送 | 独立 review 与发送授权绑定同一 fresh digest，再跑 `adco client-send-readiness-gate`；命令本身不会发送 |
 
-通过标准：
-
-```text
-COUNCIL=PASS
-REQUIREMENTS>0
-GAPS>0
-SEARCH_QUALITY_GATE=PASS 或 PARTIAL_PASS
-REFERENCE_PACK_GATE=PASS 或 PARTIAL_PASS
-IMAGEGEN_IMPORT_LOG exists
-VISUAL_QUALITY_GATE=PASS
-CLIENT_OUTLINE_CONFIRMATION=hash-bound 且 CLIENT_OUTLINE_GATE=PASS
-PPTX_EDITABLE=PASS
-CLIENT_PACK_GATE=PASS
-CLIENT_SEND_READINESS_GATE=PASS（仅在本轮确实准备发送，且独立 review/发送授权绑定同一 fresh digest 时要求）
-HANDOFF_READINESS_GATE=PASS
-DASHBOARD_AUDIT=PASS
-DASHBOARD_OPEN=SKIPPED
-VALIDATION=PASS
-```
-
-`VALIDATION=PASS` 只说明必需文件、CSV/JSON 可解析、产物和 requirement/source/gate 的追溯关系成立；不说明创意方向、审美质量、客户话术或最终客户稿已经被批准。`client-pack-gate` 只到独立人工审阅入口；任何 exact-current 输入变化都会使旧 package digest 过期。只有绑定同一 fresh digest 的人工 review、发送授权和 `client-send-readiness-gate` 全部成立时，才可称为可发送，而且命令本身不会发送。`handoff-readiness-gate` 只代表可内部交接，不能替代这些 Gate。
+`VALIDATION=PASS` 只说明结构和追溯成立，不说明创意方向、审美质量、客户话术或最终客户稿已经被批准。没有触发的交付边界，不需要为了“流程完整”补跑 Gate。

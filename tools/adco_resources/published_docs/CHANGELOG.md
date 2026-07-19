@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+- Made the Content Surface the default: fresh initialization creates 9 core files, the first material run stays within 12 working files, emits a content answer, and performs zero Dashboard/Council/Thread/Git/PPT/Client Pack/full-validation operations.
+- Added risk-triggered Delivery Surface promotion for client-visible versions, assets, PPT/derivatives, FinalDelivery, external send, legacy migration, and explicit governance commands while preserving existing full projects.
+- Reduced the main Skill from 221 to 110 lines, moved detailed controls behind one-level references, scoped generated `AGENTS.md` to `AD-creative/`, and removed root-policy merge work.
+- Changed the desktop launcher to stop after content-first intake and its optional dashboard instead of automatically creating a proposal skeleton and running the client-outline Gate.
 - Replaced the fixed three-direction template path with an evidence-bound `creative-brief` → Sol/professional Specialist → independent Critic → `creative-import` contract; `creative-proposal` remains only as a deprecated brief alias.
 - Added multi-format, source-preserving ingestion plus evidence chunks and a structured fact inventory; long inputs use an explicit aggregate budget and present facts no longer invert into missing gaps.
-- Made default `adco run` lightweight and measurable: one dashboard render, no Council/Specialist/PPT/Client Pack/full validation, affected-scope validators only, and JSON phase timings/counters.
+- Made default `adco run` lightweight and measurable: no automatic dashboard, Council/Specialist/PPT/Client Pack/full validation, affected-scope validators only, and JSON phase timings/counters.
 - Added Specialist Exchange v2 highest-common-version negotiation, minimal inline handoff/receipt contracts, v1-only provider fallback, independent ADCO adoption, and rejection of nested dispatch or outer readiness claims.
 - Made source/package activation explicit-only and generated project agent policy conditional so ADCO/DIR source maintenance cannot recursively activate the ADCO project workflow.
 - Reworked chat-native key-visual review around ADCO's own advertising craft: proposal role, customer moment, product proof, brand memory, focusable region judgments, target-format placement, and creative revision intent instead of a generic status-card flow.

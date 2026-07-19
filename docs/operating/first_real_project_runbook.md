@@ -4,20 +4,15 @@
 
 ## 0. 前置
 
-在真实项目目录中准备：
+在真实项目目录中准备原始资料即可。`adco init` 默认只创建小型 Content Surface：
 
 ```text
-00_项目资料_ProjectMaterials/
-01_参考资料_References/
-02_重要素材_KeyAssets/
-03_阶段成果_WorkInProgress/
-04_客户审阅_ClientReview/
-05_最终交付_FinalDelivery/
-AD-creative/
-AGENTS.md
+AD-creative/AGENTS.md
+AD-creative/orchestrator/
+AD-creative/handoff/
 ```
 
-`00` 到 `05` 是给人看的项目目录。adco 会更新每个目录下的 `目录索引.md`，把 `AD-creative/` 深层控制面里的真实产物映射出来；不要让这些目录长期只剩 README。
+进入客户可见版本、PPT、FinalDelivery 或显式运行 `adco init --full` 时，ADCO 才展开 `00` 到 `05` 的人类工作区和完整交付账本。
 
 可从这里复制：
 
@@ -31,13 +26,13 @@ AGENTS.md
 adco init <真实项目路径>
 ```
 
-新项目根目录的 `AGENTS.md` 是项目级执行规则。它要求所有 Codex 线程先读取项目事实源、handoff 文件和安全边界，再开始执行；也会明确 `VALIDATION=PASS` 只是结构和追溯通过，不代表客户创意质量批准。
+`AD-creative/AGENTS.md` 是局部执行规则：先读资料、完成内容判断，只在真实风险边界使用 Gate/版本/PPT/Thread，并明确 `VALIDATION=PASS` 只是结构和追溯通过。
 
-如果真实项目目录已有 `AGENTS.md`，初始化会跳过已有文件，不会覆盖，并写出 `AD-creative/orchestrator/AGENTS.merge_suggestion.md`。把 Ad Creative Orchestrator 的规则人工合并到现有文件，保留客户、仓库或团队已有禁区；未合并前 `adco validate` 会返回 `CHECK`。
+真实项目目录已有根级 `AGENTS.md` 时不会被覆盖；不再生成或要求合并建议。
 
 ## 1. 放入资料
 
-运行时按 P0-P8 推进：P0 truth/lock，P1 client outline，P2 hash confirmation，P3 creative/reference/neutral specialist，P4 immutable PPT，P5 language/visual/authorization/editability，P6 fresh Client Pack binding，P7 independent review/send readiness（不发送），P8 feedback/next version。
+Content Surface 不按 P0-P8 表演流程；先完成本轮广告内容工作。P0-P8 只用于已经触发的 Delivery Surface。
 
 把资料放入：
 
@@ -58,7 +53,7 @@ adco init <真实项目路径>
 adco run <真实项目路径> --material <资料文件或文件夹>
 ```
 
-然后打开：
+需要本地状态视图时再打开：
 
 ```text
 AD-creative/handoff/操作台.html
@@ -73,7 +68,7 @@ adco status <真实项目路径>
 adco next <真实项目路径>
 ```
 
-其中 `run` 把资料解析成 evidence chunks，更新 fact inventory、requirements、真实 gaps/conflicts 和 handoff，只渲染一次操作台并运行受影响 Validator；默认 Council、Specialist、创意方向、客户 outline、PPT、Client Pack 和全量 validation 都是 0。`status` 只读；`next` 只推进到下一个安全决策点。公开官方来源搜索可在前置 Gate 满足后推进；AI 图客户可见、客户稿发送、付费/登录/上传资料前必须停。
+其中 `run` 把资料解析成 evidence chunks，更新 fact inventory、requirements、真实 gaps/conflicts，并先输出内容答案；默认 Dashboard、Council、Thread、Specialist、客户 outline、PPT、Client Pack 和全量 validation 都是 0。`status` 只读；`next` 只推进到下一个安全内容动作。AI 图客户可见、客户稿发送、付费/登录/上传资料前必须停。
 
 Codex 展开方式：
 
@@ -87,10 +82,10 @@ Codex 展开方式：
 <填真实项目路径>
 
 要求：
-1. 先读取项目根目录 AGENTS.md、AD-creative/orchestrator/ 和 AD-creative/handoff/。
+1. 先读取 AD-creative/AGENTS.md、真实资料和与本轮目标直接相关的状态文件。
 2. 如果是新项目，按模板初始化缺失文件。
-3. 不做创意生产。
-4. 只输出当前状态、缺失文件、下一步建议。
+3. 先输出可用的内容判断，不把路径、Gate 或记录当答案。
+4. 只询问真正阻塞本轮产出的缺口。
 ```
 
 ## 3. 添加资料 Prompt
@@ -104,11 +99,10 @@ Codex 应把新增资料分类为 `initial / supplement / change / feedback / ap
 ```text
 要求：
 1. 登记 source event。
-2. 抽取 requirements / gaps。
-3. 判断是否需要搜索。
-4. 如果需要客户/导演/我确认，写入 待你确认.md。
-5. 输出客户追问话术。
-6. 不直接开始创意生产。
+2. 抽取 requirements / 真实 gaps，并区分确认事实、推断和未知。
+3. 继续所有不被缺口阻塞的内容工作。
+4. 如果确实需要客户/导演/我确认，写入 待你确认.md。
+5. 返回内容结论和下一内容动作。
 ```
 
 ## 4. 推进 Prompt
@@ -121,12 +115,11 @@ adco next <真实项目路径>
 
 ```text
 要求：
-1. 读取当前 truth / work items / gate log。
-2. 如果有待确认，停下。
-3. 如果可推进，创建下一个 work item。
-4. 如果需要专项 agent，生成 handoff packet。
-5. 如果需要 Gate，先跑 Gate。
-6. 更新 项目看板.md 和 待你确认.md。
+1. 读取真实资料、当前 truth 和本轮内容目标。
+2. 只为真正阻塞本轮产出的未知停下；其余工作继续。
+3. 直接完成下一个内容动作，不默认创建 work item、Gate 或 handoff packet。
+4. 只有触发客户可见/版本/资产/PPT/FinalDelivery/发送边界时才升级治理。
+5. 更新内容摘要和真实待确认项。
 ```
 
 ## 4.1 Goal 模式 Prompt
@@ -134,17 +127,16 @@ adco next <真实项目路径>
 ```text
 先运行 `adco docs`，使用输出中的 `SKILL_DRAFT`。
 
-以 goal 模式推进。
+只有用户明确要求建立长期目标/交付计划时才进入 goal 模式；普通内容任务不需要。
 
 要求：
 1. 先读取 docs/operating/dual_lane_goal_delivery_workflow.md。
 2. 复制 templates/project/AD-creative/orchestrator/goal_iteration_plan_template.md 作为本轮执行记录。
-3. 按品牌深度研究 / 图片功能双泳道拆阶段。
-4. 每阶段写输入、产出、依赖、退出条件、下一阶段。
-5. 每个 Gate 前运行反驳性议会。
-6. 没有反对意见、反驳路径、修订决议时，Gate 最高只能 PARTIAL_PASS。
-7. 阶段完成后更新 gate_log / decisions / resolutions / 项目看板 / 待你确认。
-8. 运行 `adco validate` 后再报告结果。
+3. 只拆当前目标真正需要的任务线，不固定双泳道或角色数量。
+4. 每阶段写内容输入、产出、依赖和退出条件；记录规模与风险成比例。
+5. 议会、独立 reviewer、Gate 只在对应判断风险确有价值时使用。
+6. 阶段先交付内容结果，再附必要的治理证据。
+7. 进入 Delivery Surface 后，才按相关边界运行 `adco validate` 和对应 Gate。
 ```
 
 ## 4.2 Creative Contract Prompt
@@ -283,10 +275,9 @@ Brief Gate / Research Gate / Creative Gate / Client Outline Gate / Visual Review
 
 ## 8. 验证命令
 
-每个关键阶段后运行：
+只运行当前边界对应的命令。内部内容答案不要求 Council 或完整 Gate 链；进入 Delivery Surface 后，才从下面选择相关检查：
 
 ```text
-adco council <真实项目路径> --render-dashboard
 adco validate <真实项目路径>
 adco creative-brief <真实项目路径>
 adco creative-import <真实项目路径> --file <candidate.json>
@@ -304,19 +295,14 @@ adco handoff-readiness-gate <真实项目路径>
 
 `creative-quality-gate` 会把审核结果写入 Gate report / gate_log。证据稀疏、来源未闭合或关键假设未确认时，应接受 PARTIAL_PASS / BLOCKED，不要强行写 PASS。
 
-通过标准：
+通过标准不是“所有状态都 PASS”，而是当前交付边界所需证据齐全：
 
 ```text
-COUNCIL=PASS
 ERRORS=0
 VALIDATION=PASS
-CREATIVE_QUALITY_GATE=PASS 或 PARTIAL_PASS
-SEARCH_QUALITY_GATE=PASS 或 PARTIAL_PASS
-REFERENCE_PACK_GATE=PASS 或 PARTIAL_PASS
-VISUAL_QUALITY_GATE=PASS
-CLIENT_PACK_GATE=PASS
-CLIENT_SEND_READINESS_GATE=PASS（仅在本轮确实准备发送，且独立人工审阅和发送授权绑定同一 fresh package digest 时要求）
-HANDOFF_READINESS_GATE=PASS（仅表示内部运营可交接）
+当前边界对应的 Gate=PASS/PARTIAL_PASS（按该 Gate 语义）
+CLIENT_SEND_READINESS_GATE 仅在本轮确实准备发送时要求
+HANDOFF_READINESS_GATE 仅在需要内部运营交接时要求
 ```
 
 `VALIDATION=PASS` 只证明结构、CSV/JSON、引用链和 traceability 成立。它不批准创意质量、审美、客户话术、客户可见 AI 图或最终发送。`creative-import`/`creative-review` 通过也只证明候选契约和确定性 lint 成立，不能替代独立 Critic 或客户批准。

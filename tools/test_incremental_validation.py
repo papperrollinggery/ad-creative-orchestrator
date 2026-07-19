@@ -48,7 +48,7 @@ def test_dependency_plans_do_not_run_unaffected_delivery_validators() -> None:
     assert ppt["full_validation_required"] is True
 
 
-def test_default_run_is_single_dashboard_zero_council_and_timed() -> None:
+def test_default_run_is_content_first_zero_dashboard_and_timed() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-run-latency-") as raw:
         project = Path(raw) / "project"
         material = Path(raw) / "brief.md"
@@ -85,12 +85,16 @@ def test_default_run_is_single_dashboard_zero_council_and_timed() -> None:
             env=env,
         )
         payload = json.loads(completed.stdout)
-        assert payload["dashboard_render_count"] == 1
+        assert payload["dashboard_render_count"] == 0
+        assert payload["dashboard"] == ""
         assert payload["council_run_count"] == 0
         assert payload["specialist_handoff_count"] == 0
         assert payload["ppt_auto_generated"] == 0
         assert payload["client_pack_run_count"] == 0
         assert payload["full_validation_run_count"] == 0
+        assert payload["content_answer"]["objective"]
+        assert payload["content_answer"]["next_action"]
+        assert payload["content_answer"]["markdown"].startswith("## 当前目标")
         assert payload["intake"]["characters_read"] > 12_000
         assert payload["intake"]["evidence_chunks"] > 1
         assert "validate_final_delivery" in payload["incremental_validation"][
@@ -99,6 +103,9 @@ def test_default_run_is_single_dashboard_zero_council_and_timed() -> None:
         assert not (
             project / "AD-creative/gates/THREE-COUNCIL-READINESS_report.md"
         ).exists()
+        assert not (project / "AD-creative/handoff/操作台.html").exists()
+        assert not (project / "AD-creative/orchestrator/artifact_index.csv").exists()
+        assert len([path for path in project.rglob("*") if path.is_file()]) <= 12
         timings = payload["timings"]
         assert set(timings) == {
             "parse_ms",
@@ -114,7 +121,7 @@ def test_default_run_is_single_dashboard_zero_council_and_timed() -> None:
 
 def main() -> int:
     test_dependency_plans_do_not_run_unaffected_delivery_validators()
-    test_default_run_is_single_dashboard_zero_council_and_timed()
+    test_default_run_is_content_first_zero_dashboard_and_timed()
     print("TEST_INCREMENTAL_VALIDATION=PASS")
     return 0
 

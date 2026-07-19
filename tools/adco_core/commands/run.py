@@ -21,16 +21,17 @@ def execute_lightweight_run(
     max_total_chars: int,
     ensure_project: Callable[[Path], tuple[int, int]],
     register_materials: Callable[[Path, list[Path], str], list[str]],
-    ensure_intake_work: Callable[[Path, list[str], str], str],
+    ensure_intake_work: Callable[[Path, list[str], str], str] | None,
     perform_intake: Callable[..., dict[str, int]],
-    render_handoff: Callable[[Path, str, list[str]], None],
+    render_handoff: Callable[[Path, str, list[str]], dict[str, object]],
     render_dashboard: Callable[..., Path],
+    render_optional_dashboard: bool = False,
 ) -> dict[str, object]:
     total_started = perf_counter()
     write_started = perf_counter()
     created, skipped = ensure_project(project)
     source_ids = register_materials(project, materials, goal) if materials else []
-    if source_ids or goal:
+    if ensure_intake_work is not None and (source_ids or goal):
         ensure_intake_work(project, source_ids, goal)
     setup_write_ms = _elapsed_ms(write_started)
 
@@ -57,16 +58,19 @@ def execute_lightweight_run(
         }
 
     handoff_started = perf_counter()
-    render_handoff(project, goal, source_ids)
+    content_answer = render_handoff(project, goal, source_ids)
     handoff_write_ms = _elapsed_ms(handoff_started)
 
-    dashboard_started = perf_counter()
-    dashboard = render_dashboard(
-        project,
-        validation_errors=[],
-        validation_status="SCOPED_PENDING",
-    )
-    dashboard_ms = _elapsed_ms(dashboard_started)
+    dashboard = None
+    dashboard_ms = 0
+    if render_optional_dashboard:
+        dashboard_started = perf_counter()
+        dashboard = render_dashboard(
+            project,
+            validation_errors=[],
+            validation_status="SCOPED_PENDING",
+        )
+        dashboard_ms = _elapsed_ms(dashboard_started)
 
     changed_paths: list[str] = [
         "AD-creative/orchestrator/source_events.csv",
@@ -104,8 +108,9 @@ def execute_lightweight_run(
         "registered_sources": len(source_ids),
         "source_ids": source_ids,
         "intake": intake_stats,
-        "dashboard": str(dashboard),
-        "dashboard_render_count": 1,
+        "content_answer": content_answer,
+        "dashboard": str(dashboard) if dashboard else "",
+        "dashboard_render_count": int(dashboard is not None),
         "council_run_count": 0,
         "specialist_handoff_count": 0,
         "ppt_auto_generated": 0,

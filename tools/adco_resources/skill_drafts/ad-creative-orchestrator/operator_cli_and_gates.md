@@ -1,15 +1,23 @@
 # Operator CLI and Gate Reference
 
-Read this file when invoking ADCO, choosing the next phase/Gate, building a non-developer handoff, or interpreting status.
+Read this file only when the user explicitly asks to invoke or diagnose the ADCO
+CLI, select a command, interpret `adco status`, or inspect phase mechanics. Do
+not read it merely because a request crosses a delivery boundary. For client
+outline, PPT, Client Pack, upload, or send readiness, read
+`ppt_and_client_pack.md` instead.
 
 ## Non-developer entrypoints
 
-The local launcher prompts for a project folder, materials, and goal, then opens `AD-creative/handoff/操作台.html`. Its default `run` path stops after evidence intake, fact/gap updates, handoff refresh, one dashboard render, and affected-scope validation. It must not auto-run Council, generate creative directions, dispatch a specialist, build a client outline/PPT/Client Pack, or run full delivery validation.
+The default `run` path stops after evidence intake, fact/gap updates, a concise
+content answer, and affected-scope validation. It creates no Dashboard unless
+`--dashboard` is explicitly requested. It must not auto-run Council, generate
+creative directions, dispatch a specialist, build a client outline/PPT/Client
+Pack, or run full delivery validation.
 
 Installed and source CLI behavior must match. Core commands:
 
 ```text
-adco init <project>
+adco init <project> [--full]
 adco quickstart [project] [--json]
 adco sample <project>
 adco demo [project]
@@ -17,7 +25,7 @@ adco status <project> [--json]
 adco next <project> [--json]
 adco validate <project> [--json] [--strict-legacy]
 adco check
-adco run <project> --material <path> [--material <path> ...] [--max-total-chars <n>] [--json]
+adco run <project> --material <path> [--material <path> ...] [--max-total-chars <n>] [--dashboard] [--json]
 adco migrate-control-plane <project> [--dry-run] [--json]
 adco agency-audit <project>
 adco creative-brief <project> [--work-id <id>] [--json]
@@ -61,6 +69,12 @@ Thread and specialist commands are documented in their dedicated references.
 
 ## Phase/Gate order
 
+New projects start on the Content Surface. Commands for client-visible versions,
+PPT/Client Pack/FinalDelivery, asset authorization, legacy migration, or Thread
+work materialize the Delivery Surface before executing. `adco init --full` is an
+explicit alternative for operators who already know the project begins at a
+delivery boundary. Existing full projects remain Delivery Surface projects.
+
 Do not merge immutable export, Client Pack binding, and send readiness into one stage.
 
 | Phase | Required fact/evidence | Exit condition |
@@ -93,13 +107,14 @@ subcommands. Use these command mappings when operating through `adco`:
 
 ### `run`
 
-1. Initialize only missing template files without overwriting existing files.
+1. Initialize only the small Content Surface without overwriting existing files.
 2. Register materials as initial/supplement/change/feedback/approval/rejection/director note/unknown.
 3. Parse supported formats into source-preserving evidence chunks without the old 12,000-character/16-line truncation path.
-4. Update the fact inventory, requirements, true gaps/conflicts, handoff files, and all six human indexes.
-5. Render the dashboard exactly once.
-6. Run only validators affected by changed evidence/fact/requirement/gap artifacts and report the scoped plan plus phase timings.
-7. Stop with the next safe command. Do not run Council, Specialist Exchange, creative generation/import, PPT, Client Pack, or full `adco validate` automatically.
+4. Update the fact inventory, requirements, true gaps/conflicts, and two handoff files.
+5. Emit the useful content answer before metrics or file paths.
+6. Render no Dashboard unless `--dashboard` was requested.
+7. Run only validators affected by changed evidence/fact/requirement/gap artifacts and report the scoped plan plus phase timings.
+8. Stop with the next content action. Do not run Council, Specialist Exchange, creative generation/import, PPT, Client Pack, or full `adco validate` automatically.
 
 ### `start` / `status`
 
@@ -107,7 +122,9 @@ Read project.yml, current truth, work items, artifacts, versions, Gates, board, 
 
 ### `add-materials`
 
-Register the source event, classify it, update requirements/gaps/truth/decisions/resolutions, mark conflicts/deprecated facts, update client questions, refresh human indexes, board, and pending confirmations.
+Register the source event, classify it, update evidence/facts/requirements/true
+gaps and current truth, then refresh the content summary and pending questions.
+Do not create delivery ledgers or six-folder indexes on the Content Surface.
 
 ### `next`
 
@@ -117,20 +134,29 @@ Stop when a human decision blocks. Otherwise plan search if needed, advance one 
 
 Review the exact stage/artifact without directly editing production output. Return report, status, blockers, revisions, questions, affected artifacts, and next state.
 
-## Required control-plane files
+## Required runtime files
 
-The template must include at least:
+The default Content Surface includes:
 
 ```text
+AD-creative/AGENTS.md
 AD-creative/orchestrator/project.yml
 AD-creative/orchestrator/control_plane_schema.json
-AD-creative/orchestrator/events.jsonl
 AD-creative/orchestrator/source_events.csv
-AD-creative/orchestrator/evidence_chunks.jsonl
-AD-creative/orchestrator/fact_inventory.jsonl
 AD-creative/orchestrator/current_truth.md
 AD-creative/orchestrator/requirements.csv
 AD-creative/orchestrator/gaps.csv
+AD-creative/handoff/项目看板.md
+AD-creative/handoff/待你确认.md
+```
+
+Evidence/fact JSONL files are created when material is parsed. The Delivery
+Surface expands the project with the version, artifact, Gate, Thread, asset,
+feedback, specialist, Human Workspace, and FinalDelivery records required by the
+relevant command, including:
+
+```text
+AD-creative/orchestrator/events.jsonl
 AD-creative/orchestrator/decisions.csv
 AD-creative/orchestrator/resolutions.csv
 AD-creative/orchestrator/work_items.csv
@@ -143,8 +169,6 @@ AD-creative/orchestrator/final_delivery_lock.csv
 AD-creative/orchestrator/specialist_exchange/exchange_index.csv
 AD-creative/visual_assets/asset_current_manifest.csv
 AD-creative/visual_assets/asset_authorizations.csv
-AD-creative/handoff/项目看板.md
-AD-creative/handoff/待你确认.md
 ```
 
 Migration manifests are written only when legacy evidence exists. They are immutable evidence, not a replacement for current control-plane rows.

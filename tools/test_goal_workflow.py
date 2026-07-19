@@ -28,6 +28,7 @@ from ad_creative_operator import (
     contained_thread_scope_baseline_path,
     create_specialist_handoff,
     creative_doctor_report,
+    ensure_delivery_project,
     ensure_project,
     ensure_profile_work,
     export_editable_pptx,
@@ -74,7 +75,7 @@ from ad_creative_operator import (
     write_csv_rows,
     write_json_object,
 )
-from init_project import AGENTS_MERGE_SUGGESTION_REL, agents_policy_status
+from init_project import AGENTS_REL, agents_policy_status
 from run_checks import cleanup_python_caches
 from validate_project import (
     final_delivery_human_identity_valid as validator_final_delivery_human_identity_valid,
@@ -385,15 +386,13 @@ def test_project_agents_policy_created_and_validated() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-agents-policy-") as raw_project:
         project = Path(raw_project)
         ensure_project(project)
-        agents = project / "AGENTS.md"
+        agents = project / AGENTS_REL
         assert agents.exists()
         text = agents.read_text(encoding="utf-8")
         assert "$ad-creative-orchestrator" in text
-        assert "apply only when" in text
-        assert "Paperrolling-DIRcreative-SKILL" in text
-        assert "VALIDATION=PASS" in text
-        assert "creative-quality-gate" in text
-        assert "client-pack-gate" in text
+        assert "content surface" in text
+        assert "delivery governance" in text
+        assert "structural validation" in text
         assert_valid(project)
 
 
@@ -401,9 +400,9 @@ def test_validate_rejects_missing_project_agents_policy() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-agents-missing-") as raw_project:
         project = Path(raw_project)
         ensure_project(project)
-        (project / "AGENTS.md").unlink()
+        (project / AGENTS_REL).unlink()
         errors, _ = validate(project)
-        assert any("missing required file: AGENTS.md" in error for error in errors), errors
+        assert any("missing required file: AD-creative/AGENTS.md" in error for error in errors), errors
 
 
 def test_existing_agents_policy_is_not_overwritten() -> None:
@@ -413,16 +412,16 @@ def test_existing_agents_policy_is_not_overwritten() -> None:
         custom_agents.write_text("# Custom Project Rules\n", encoding="utf-8")
         ensure_project(project)
         assert custom_agents.read_text(encoding="utf-8") == "# Custom Project Rules\n"
-        suggestion = project / "AD-creative/orchestrator/AGENTS.merge_suggestion.md"
-        assert suggestion.exists()
+        assert (project / AGENTS_REL).is_file()
+        assert not (project / "AD-creative/orchestrator/AGENTS.merge_suggestion.md").exists()
         errors, _ = validate(project)
-        assert any("AGENTS.md missing required policy" in error for error in errors), errors
+        assert not errors, errors
 
 
 def test_human_workspace_indexes_mirror_control_plane() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-human-index-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         material = project / "incoming_client_brief.md"
         material.write_text("客户希望输出一版客户审阅 PPT。", encoding="utf-8")
         source_ids = register_materials(project, [material], "整理客户资料")
@@ -490,7 +489,7 @@ def test_human_workspace_indexes_mirror_control_plane() -> None:
 def test_human_workspace_v2_is_current_first_deduped_clickable_and_scans_all_folders() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-human-v2-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         folders = [
             "00_项目资料_ProjectMaterials",
             "01_参考资料_References",
@@ -659,15 +658,14 @@ def test_human_workspace_v2_is_current_first_deduped_clickable_and_scans_all_fol
         )
 
 
-def test_agents_policy_status_clears_after_manual_merge() -> None:
-    with tempfile.TemporaryDirectory(prefix="adco-agents-merged-") as raw_project:
+def test_agents_policy_status_is_scoped_and_independent_of_root_policy() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-agents-scoped-") as raw_project:
         project = Path(raw_project)
         custom_agents = project / "AGENTS.md"
         custom_agents.write_text("# Custom Project Rules\n", encoding="utf-8")
         ensure_project(project)
-        assert agents_policy_status(project).startswith("MERGE_REQUIRED:"), agents_policy_status(project)
-        custom_agents.write_text((project / AGENTS_MERGE_SUGGESTION_REL).read_text(encoding="utf-8"), encoding="utf-8")
-        assert agents_policy_status(project) == "PRESENT"
+        assert agents_policy_status(project) == "SCOPED_PRESENT"
+        assert custom_agents.read_text(encoding="utf-8") == "# Custom Project Rules\n"
         assert_valid(project)
 
 
@@ -715,7 +713,7 @@ def test_pptx_export_uses_immutable_version_transaction() -> None:
         return
     with tempfile.TemporaryDirectory(prefix="adco-ppt-version-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         material = project / "brief.md"
         material.write_text(
             "客户需要面向城市通勤人群的广告创意提案，强调轻便产品优势，并保留可编辑文本。",
@@ -783,7 +781,7 @@ def test_pptx_export_blocks_unconfirmed_generated_outline() -> None:
         return
     with tempfile.TemporaryDirectory(prefix="adco-ppt-unconfirmed-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         material = project / "brief.md"
         material.write_text(
             "客户需要一份城市轻户外广告创意提案，先确认客户可读文本，再制作可编辑演示稿。",
@@ -807,7 +805,7 @@ def test_pptx_export_blocks_unconfirmed_generated_outline() -> None:
 def test_outline_confirmation_binds_presented_bytes_and_stable_content_digest() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-outline-confirmation-basis-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         material = project / "brief.md"
         material.write_text(
             "客户需要城市轻户外广告提案，先确认客户可读文本，再制作可编辑演示稿。",
@@ -845,7 +843,7 @@ def test_outline_confirmation_binds_presented_bytes_and_stable_content_digest() 
 def test_gate_downgrades_without_adversarial_record() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-goal-no-adv-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_clean_reference(project)
         status, findings, _ = review_reference_pack(project)
         assert status == "PARTIAL_PASS", status
@@ -856,7 +854,7 @@ def test_gate_downgrades_without_adversarial_record() -> None:
 def test_independent_adversarial_review_allows_clean_gate_pass() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-goal-with-adv-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         add_clean_reference(project)
         add_independent_adversarial_review(
             project,
@@ -872,7 +870,7 @@ def test_independent_adversarial_review_allows_clean_gate_pass() -> None:
 def test_goal_run_stops_without_material() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-goal-run-empty-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         result = run_goal(project, goal_id="latest", max_steps=1, allow_generate=False)
         assert result["stop_reason"] == "NEEDS_MATERIAL", result
         assert (project / "AD-creative/handoff/操作台.html").exists()
@@ -882,7 +880,7 @@ def test_goal_run_stops_without_material() -> None:
 def test_thread_plan_creates_control_plane() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-plan-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         payload = render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-001",
@@ -961,7 +959,7 @@ def test_thread_plan_creates_control_plane() -> None:
 def test_dispatch_receipts_are_immutable_per_lane() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-dispatch-per-lane-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         render_thread_execution_plan(
             project,
             goal_id="GOAL-DISPATCH-PROOF",
@@ -1056,7 +1054,7 @@ def test_dispatch_receipts_are_immutable_per_lane() -> None:
 def test_same_lane_redispatch_preserves_attempt_proof_and_specialist_identity() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-redispatch-immutable-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         payload = render_thread_execution_plan(
             project,
             goal_id="GOAL-REDISPATCH-IMMUTABLE",
@@ -1300,7 +1298,7 @@ def test_same_lane_redispatch_preserves_attempt_proof_and_specialist_identity() 
 def test_thread_scope_baseline_paths_reject_lexical_symlink_components() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-baseline-symlink-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         source_dir = project / "AD-creative/orchestrator/baseline-source"
         source_dir.mkdir(parents=True, exist_ok=True)
         source = source_dir / "WORK-001_LANE-001.json"
@@ -1496,7 +1494,7 @@ def test_brief_evidence_is_label_aware_and_ignores_deliverables() -> None:
 def test_thread_plan_includes_harness_loop_and_adoption_contracts() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-harness-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         payload = render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-HARNESS",
@@ -1566,7 +1564,7 @@ def test_thread_plan_includes_harness_loop_and_adoption_contracts() -> None:
 def test_thread_progress_invalidates_stale_convergence_reminder() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-stale-reminder-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         payload = render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-STALE-REMINDER",
@@ -1644,7 +1642,7 @@ def test_thread_progress_invalidates_stale_convergence_reminder() -> None:
 def test_invalid_and_dead_threads_fail_closed_with_one_bounded_rescue() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-dead-rescue-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         payload = render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-DEAD-RESCUE",
@@ -1794,7 +1792,7 @@ def test_invalid_and_dead_threads_fail_closed_with_one_bounded_rescue() -> None:
 def test_execution_worker_receipt_cannot_be_prompt_only() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-receipt-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         payload = render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-RECEIPT",
@@ -1818,7 +1816,7 @@ def test_execution_worker_receipt_cannot_be_prompt_only() -> None:
 def test_threadops_validation_allows_pending_execution_worker_receipt_template() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-pending-receipt-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         payload = render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-PENDING-RECEIPT",
@@ -1837,7 +1835,7 @@ def test_threadops_validation_allows_pending_execution_worker_receipt_template()
 def test_threadops_validation_rejects_prompt_only_received_execution_receipt() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-prompt-receipt-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-PROMPT-RECEIPT",
@@ -1870,7 +1868,7 @@ Completed the prompt and recommend adoption.
 def test_thread_reconcile_rejects_failed_or_out_of_scope_self_report() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-reconcile-forged-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         payload = render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-FORGED",
@@ -1938,7 +1936,7 @@ evidence_refs: made-up
 def test_thread_worker_cannot_write_host_attestation_even_if_scope_declares_it() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-host-attestation-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         payload = render_thread_execution_plan(
             project,
             goal_id="GOAL-HOST-ATTESTATION-SCOPE",
@@ -2005,7 +2003,7 @@ evidence_refs: host scope fixture
 def test_threadops_validation_rejects_missing_helper_evidence() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-helper-missing-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-HELPER-MISSING",
@@ -2054,7 +2052,7 @@ Worker claims a helper was used but did not record helper evidence.
 def test_threadops_validation_rejects_helper_thread_id_claim() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-helper-thread-id-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-HELPER-THREAD-ID",
@@ -2094,7 +2092,7 @@ worker_synthesis: Worker used the helper output as bounded reference evidence an
 def test_threadops_validation_rejects_observation_only_evidence_refs() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-observation-evidence-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-OBSERVATION-EVIDENCE",
@@ -2133,7 +2131,7 @@ Reviewed validator behavior and found this receipt has a non-empty observation s
 def test_threadops_validation_rejects_adopt_without_file_output() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-adopt-no-files-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-ADOPT-NO-FILES",
@@ -2171,7 +2169,7 @@ The worker recommends adoption but did not produce file output.
 def test_threadops_validation_accepts_received_execution_receipt_with_proof() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-proof-receipt-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-PROOF-RECEIPT",
@@ -2206,7 +2204,7 @@ Production worker returned file-level proof and validation evidence.
 def test_threadops_validation_accepts_received_execution_receipt_with_helper_proof() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-helper-proof-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-HELPER-PROOF",
@@ -2250,7 +2248,7 @@ Production worker returned file-level proof, helper evidence, and validation evi
 def test_threadops_validation_rejects_invalid_execution_worker_contract() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-contract-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-CONTRACT",
@@ -2274,7 +2272,7 @@ def test_threadops_validation_rejects_invalid_execution_worker_contract() -> Non
 def test_thread_plan_production_roles_use_isolated_workspaces() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-production-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         payload = render_thread_execution_plan(
             project,
             goal_id="GOAL-THREAD-PRODUCTION",
@@ -2355,7 +2353,7 @@ def test_thread_plan_rejects_empty_roles_before_init() -> None:
 def test_thread_plan_rejects_existing_plan_before_schema_upgrade() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-plan-existing-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         plan_path = project / "AD-creative/orchestrator/thread_lane_plan.md"
         plan_path.write_text("# Existing plan\n", encoding="utf-8")
         registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
@@ -2413,7 +2411,7 @@ def test_thread_plan_invalid_role_returns_check() -> None:
 def test_profile_analyze_creates_knowledge_base() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-profile-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         material = project / "00_项目资料_ProjectMaterials/01_客户资料_ClientMaterials/meeting_notes.md"
         material.parent.mkdir(parents=True, exist_ok=True)
         material.write_text(
@@ -2450,7 +2448,7 @@ def test_profile_analyze_creates_knowledge_base() -> None:
 def test_workspace_hygiene_detects_cache_pollution() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-hygiene-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         cache_dir = project / "tools/__pycache__"
         cache_dir.mkdir(parents=True)
         (cache_dir / "stale.pyc").write_bytes(b"cache")
@@ -2498,7 +2496,7 @@ def test_import_creative_production_run_registers_assets() -> None:
 
     with tempfile.TemporaryDirectory(prefix="adco-cp-import-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         run_dir = project / "cp-run"
         run_dir.mkdir()
         image_path = run_dir / "01-hero.png"
@@ -2529,7 +2527,7 @@ def test_import_creative_production_run_registers_assets() -> None:
 def test_film_quality_gate_writes_report() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-film-gate-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         status, findings, report = review_film_quality(project)
         assert status == "BLOCKED", (status, findings)
         assert report.exists()
@@ -2539,7 +2537,7 @@ def test_film_quality_gate_writes_report() -> None:
 def test_film_gate_scans_adopted_artifact_type_schema_and_excludes_domain_qa() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-film-adopted-schema-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         film_artifacts = [
             ("ART-FILM-STORY", "film.story_package", "adopted_story.md"),
             ("ART-FILM-TREATMENT", "film.treatment", "adopted_treatment.md"),
@@ -2607,7 +2605,7 @@ def test_film_gate_scans_adopted_artifact_type_schema_and_excludes_domain_qa() -
 def test_film_gate_scans_active_local_rows_and_skips_planned_rows() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-film-active-lifecycle-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         active_path = project / "AD-creative/film/active_local_story.md"
         active_path.parent.mkdir(parents=True, exist_ok=True)
         active_path.write_text("# Active local film artifact\n", encoding="utf-8")
@@ -2685,7 +2683,7 @@ def test_duffy_hardening_cli_commands_are_exposed() -> None:
 def test_client_outline_gate_blocks_until_page_framework_exists() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-client-outline-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         status, findings, _ = review_client_outline(project)
         assert status == "BLOCKED"
         assert any("客户可读文本框架" in item for item in findings)
@@ -2719,7 +2717,7 @@ def test_client_outline_gate_blocks_until_page_framework_exists() -> None:
 def test_client_language_gate_blocks_internal_execution_terms() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-client-language-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         append_csv_row(
             project / "AD-creative/client_review/client_outline.csv",
             {
@@ -2749,7 +2747,7 @@ def test_asset_current_manifest_and_visual_layout_gate_use_real_assets() -> None
 
     with tempfile.TemporaryDirectory(prefix="adco-asset-current-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         source = project / "source.png"
         Image.new("RGB", (1200, 800), color=(100, 120, 160)).save(source)
         asset_id, _ = add_visual_asset(
@@ -2776,7 +2774,7 @@ def test_asset_current_manifest_and_visual_layout_gate_use_real_assets() -> None
 def test_final_delivery_lock_protects_user_placed_files() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-final-lock-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         final_file = project / "05_最终交付_FinalDelivery/client_final.pdf"
         final_file.write_bytes(b"%PDF-1.4\n")
         errors, _ = validate(project)
@@ -2821,7 +2819,7 @@ def test_final_delivery_lock_protects_user_placed_files() -> None:
 def test_final_delivery_lock_ids_are_unicode_safe_unique_and_required() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-final-lock-id-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         final_root = project / "05_最终交付_FinalDelivery"
         paths = [
             final_root / "客户终稿.pdf",
@@ -2886,7 +2884,7 @@ def test_final_delivery_human_identity_rejects_automation_names_consistently() -
 def test_final_delivery_inventory_persists_pending_before_missing_baseline_blocker() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-final-inventory-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         final_root = project / "05_最终交付_FinalDelivery"
         old_file = final_root / "client_final_v1.pdf"
         old_file.write_bytes(b"same-deliverable")
@@ -2962,7 +2960,7 @@ def test_final_delivery_inventory_persists_pending_before_missing_baseline_block
 def test_final_delivery_different_hash_supersession_requires_explicit_bound_evidence() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-final-supersession-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         final_root = project / "05_最终交付_FinalDelivery"
         old_file = final_root / "client_final_v1.pptx"
         old_file.write_bytes(b"immutable-version-one")
@@ -3359,7 +3357,7 @@ def test_final_delivery_different_hash_supersession_requires_explicit_bound_evid
 def test_final_delivery_inventory_rejects_symlinked_files() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-final-symlink-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         outside = project / "outside-final.pdf"
         outside.write_bytes(b"must-not-be-inventoried-through-a-link")
         linked = project / "05_最终交付_FinalDelivery/linked-final.pdf"
@@ -3379,7 +3377,7 @@ def test_final_delivery_inventory_rejects_symlinked_files() -> None:
 def test_final_delivery_metadata_classifier_does_not_exclude_real_deliverables() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-final-metadata-name-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         final_root = project / "05_最终交付_FinalDelivery"
         real_names = [
             "Brand_Manifesto_Final.pdf",
@@ -3414,7 +3412,7 @@ def test_final_delivery_metadata_classifier_does_not_exclude_real_deliverables()
 def test_final_delivery_pending_inventory_recovers_after_old_blocker_is_fixed() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-final-pending-recovery-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         final_root = project / "05_最终交付_FinalDelivery"
         old_file = final_root / "original_final.pdf"
         old_file.write_bytes(b"original-baseline")
@@ -3529,7 +3527,7 @@ def test_install_skill_syncs_complete_managed_tree_without_deleting_unrelated_fi
 def test_migrate_control_plane_creates_new_gate_files() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-migrate-control-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         for rel_path in [
             "AD-creative/client_review/client_outline.csv",
             "AD-creative/visual_assets/asset_current_manifest.csv",
@@ -3549,7 +3547,7 @@ def test_migrate_control_plane_creates_new_gate_files() -> None:
 def test_fresh_v2_template_migration_has_no_unreported_schema_write() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-fresh-v2-schema-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         schema_path = project / "AD-creative/orchestrator/control_plane_schema.json"
         before = file_sha256(schema_path)
         dry = migrate_control_plane(project, dry_run=True)
@@ -3563,7 +3561,7 @@ def test_fresh_v2_template_migration_has_no_unreported_schema_write() -> None:
 def test_forged_legacy_error_baseline_cannot_hide_current_active_error() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-forged-legacy-baseline-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         append_csv_row(
             project / "AD-creative/orchestrator/gate_log.csv",
             {
@@ -3672,7 +3670,7 @@ def test_forged_legacy_error_baseline_cannot_hide_current_active_error() -> None
 def test_migrate_control_plane_normalizes_legacy_short_rows() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-migrate-short-row-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
         legacy_fields = ARTIFACT_INDEX_FIELDS[:-4]
         legacy_row = {field: "" for field in legacy_fields}
@@ -3709,7 +3707,7 @@ def test_migrate_control_plane_normalizes_legacy_short_rows() -> None:
 def test_migration_keeps_cleanup_tombstone_original_path_unknown() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-tombstone-migrate-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         cleanup_summary = project / "AD-creative/gates/cleanup_summary.md"
         cleanup_summary.write_text("legacy cleanup evidence", encoding="utf-8")
         append_csv_row(
@@ -3757,7 +3755,7 @@ def test_migration_keeps_cleanup_tombstone_original_path_unknown() -> None:
 def test_pre_v2_full_header_thread_row_is_hash_bound_quarantined() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-quarantine-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         (project / "AD-creative/orchestrator/control_plane_schema.json").unlink()
         project_yml = project / "AD-creative/orchestrator/project.yml"
         project_yml.write_text(
@@ -3815,7 +3813,7 @@ def test_pre_v2_full_header_thread_row_is_hash_bound_quarantined() -> None:
 def test_legacy_current_package_backfills_exact_current_truth_or_blocks_ambiguity() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-current-package-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         pptx = project / "AD-creative/ppt/exports/legacy_current_v7.pptx"
         pptx.parent.mkdir(parents=True, exist_ok=True)
         pptx.write_bytes(b"legacy-current-pptx")
@@ -3872,7 +3870,7 @@ pptx_path: AD-creative/ppt/exports/legacy_current_v7.pptx
 
     with tempfile.TemporaryDirectory(prefix="adco-current-package-ambiguous-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         truth_path = project / "AD-creative/orchestrator/current_truth.md"
         truth = truth_path.read_text(encoding="utf-8")
         start = truth.index("## Current Version Truth")
@@ -3988,7 +3986,7 @@ pptx_path: AD-creative/ppt/exports/shared.pptx
 def test_realistic_legacy_forward_fixture_prioritizes_current_p0_and_groups_debt() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-realistic-legacy-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         folders = [
             "00_项目资料_ProjectMaterials",
             "01_参考资料_References",
@@ -4298,7 +4296,7 @@ pptx_path: 05_最终交付_FinalDelivery/current legacy (v9).pptx
 def test_v2_unclassified_imported_thread_row_is_hash_bound_quarantined() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-v2-thread-import-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         row = {field: "" for field in THREADOPS_REGISTRY_FIELDS}
         row.update(
             {
@@ -4349,7 +4347,7 @@ def test_v2_unclassified_imported_thread_row_is_hash_bound_quarantined() -> None
 def test_migrate_control_plane_adds_missing_current_truth_keys_without_overwrite() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-migrate-truth-keys-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         truth_path = project / "AD-creative/orchestrator/current_truth.md"
         truth = truth_path.read_text(encoding="utf-8").replace(
             "version_map_status:\n", "version_map_status: legacy-preserve\n"
@@ -4383,7 +4381,7 @@ def test_migrate_control_plane_adds_missing_current_truth_keys_without_overwrite
 def test_duffy_v2_regression_allows_long_low_density_client_outline() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-duffy-v2-outline-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         rows = []
         for index in range(1, 25):
             rows.append(
@@ -4433,7 +4431,7 @@ def test_browser_asset_current_manifest_records_platform_conversation_and_qa_fla
 
     with tempfile.TemporaryDirectory(prefix="adco-browser-asset-current-") as raw_project:
         project = Path(raw_project)
-        ensure_project(project)
+        ensure_delivery_project(project)
         source = project / "grok_candidate.png"
         Image.new("RGB", (1600, 900), color=(180, 150, 120)).save(source)
         asset_id, _ = add_visual_asset(
@@ -4467,7 +4465,7 @@ def main() -> int:
     test_pptx_export_uses_immutable_version_transaction()
     test_pptx_export_blocks_unconfirmed_generated_outline()
     test_outline_confirmation_binds_presented_bytes_and_stable_content_digest()
-    test_agents_policy_status_clears_after_manual_merge()
+    test_agents_policy_status_is_scoped_and_independent_of_root_policy()
     test_gate_downgrades_without_adversarial_record()
     test_independent_adversarial_review_allows_clean_gate_pass()
     test_goal_run_stops_without_material()

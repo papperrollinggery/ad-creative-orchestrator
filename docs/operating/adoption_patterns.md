@@ -24,19 +24,18 @@ current_truth.md
 evidence_chunks.jsonl
 fact_inventory.jsonl
 待你确认.md
-操作台.html
 NEXT_ACTION
 NEXT_STATUS
 DOCS_MODE
 ```
 
-This default route renders one dashboard and runs affected-scope validators only. It does not run Council, generate creative directions, dispatch a specialist, create a client outline/PPT/Client Pack, or run full validation.
+The default route emits a content answer and runs affected-scope validators only.
+It renders no dashboard unless requested and does not run Council, create a
+Thread, dispatch a specialist, create a client outline/PPT/Client Pack, or run
+full validation.
 
-Gate:
-
-```text
-Brief Gate must be non-BLOCKED before reference planning.
-```
+No Gate is required for an internal intake answer. Add a Gate only when the
+requested output crosses the corresponding delivery boundary.
 
 ## Pattern 2: Brand Research Lane
 

@@ -15,7 +15,7 @@ handoff 文件负责给用户看
 
 ## 用户入口
 
-运行时阶段固定为：`P0 truth/lock → P1 client outline → P2 hash confirmation → P3 creative/reference/neutral specialist → P4 immutable PPT → P5 language/visual/authorization/editability → P6 fresh Client Pack binding → P7 independent review/send readiness（不发送）→ P8 feedback/next version`。P4/P6/P7 不得合并。
+默认运行不是固定阶段流水线，而是 Content Surface：真实资料 → 事实/缺口 → 广告内容判断或内部产物。只有进入客户可见交付时才升级到 `P0 truth/lock → ... → P8 feedback/next version`；此时 P4/P6/P7 不得合并。
 
 ### 启动广告创意项目.command
 
@@ -42,18 +42,16 @@ adco run <项目目录> --material <资料文件或文件夹>
 默认 `adco run` 生成或更新：
 
 ```text
-AD-creative/handoff/操作台.html
 AD-creative/handoff/项目看板.md
 AD-creative/handoff/待你确认.md
-AD-creative/handoff/客户追问话术.md
 AD-creative/orchestrator/evidence_chunks.jsonl
 AD-creative/orchestrator/fact_inventory.jsonl
 AD-creative/orchestrator/requirements.csv
 AD-creative/orchestrator/gaps.csv
-AGENTS.md
+AD-creative/AGENTS.md
 ```
 
-默认不会运行 Council、画像分析、创意生成、Specialist Exchange、客户 outline、PPT、Client Pack 或全量 delivery validation。
+默认不会运行 Dashboard、Council、Thread、Git、画像分析、Specialist Exchange、客户 outline、PPT、Client Pack 或全量 delivery validation。CLI 先返回 `CONTENT_ANSWER`；需要操作台时运行 `adco open-dashboard` 或给 `run` 加 `--dashboard`。
 
 检查状态：
 
@@ -118,13 +116,13 @@ execution_worker 必须先写清 exact write_scope。
 客户可见稿不得出现 prompt、thread、worker、lane plan、执行步骤等内部语言。
 ```
 
-项目级 AGENTS.md：
+项目级局部规则：
 
 ```text
-新项目根目录会生成 AGENTS.md。
+新项目生成 AD-creative/AGENTS.md。
 它是给 Codex 线程看的项目规则，不是客户稿。
-所有新线程先读 AGENTS.md，再读 AD-creative/orchestrator/ 和 AD-creative/handoff/。
-它固定人工停点、客户可见限制、ThreadOps 分工、Gate 顺序和验证边界。
+先读真实资料和与本轮目标相关的状态，再按风险读取交付细则。
+它要求广告内容优先，并固定客户可见和不可逆动作的安全边界。
 复制或交接项目时必须一起保留。
 ```
 
@@ -132,10 +130,9 @@ execution_worker 必须先写清 exact write_scope。
 
 ```text
 adco init 按文件创建缺失模板。
-如果目标目录已有 AGENTS.md，不覆盖、不重写。
-写出 AD-creative/orchestrator/AGENTS.merge_suggestion.md。
-把本项目规则人工合并到现有 AGENTS.md，并保留客户、仓库或团队已有禁区。
-未合并必需规则前，adco validate 返回 CHECK。
+默认只创建 Content Surface；`adco init --full` 显式创建 Delivery Surface。
+如果目标目录已有根级 AGENTS.md，不覆盖、不重写，也不要求合并。
+ADCO 规则保留在 AD-creative/AGENTS.md。
 ```
 
 Gate 规则：

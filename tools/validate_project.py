@@ -15,7 +15,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
-from runtime_paths import is_initialized_adco_project
+from runtime_paths import (
+    CONTENT_SURFACE,
+    is_initialized_adco_project,
+    project_surface,
+    project_surface_conflict,
+)
 from adco_core.specialist_exchange import validate_v2_exchange_row
 
 from specialist_schema_validation import (
@@ -533,70 +538,33 @@ PROFILE_DECISION_LEVELS = {"high", "medium", "low", "unknown", ""}
 
 AGENTS_REQUIRED_SNIPPETS = [
     "$ad-creative-orchestrator",
-    "apply only when",
-    "project.yml",
-    "control_plane_schema.json",
-    "explicitly invokes",
-    "ad-creative-orchestrator source repository",
-    "Paperrolling-DIRcreative-SKILL",
-    "Skill maintenance",
-    "Skill Benchmark",
-    "AGENTS/SKILL/Schema/test changes",
-    "ordinary code refactoring",
-    "ordinary advertising requests",
-    "not explicitly invoked",
-    "valid Specialist handoff",
-    "AD-creative/orchestrator/",
-    "AD-creative/handoff/",
-    "current_truth.md",
-    "version_map.csv",
-    "artifact_index.csv",
-    "requirements.csv",
-    "gaps.csv",
-    "gate_log.csv",
-    "internal comments",
-    "prompts",
-    "thread names",
-    "worker names",
-    "lane plans",
-    "fake logos",
-    "fake packaging copy",
-    "imagegen",
-    "untraceable references",
-    "unapproved AI images",
-    "archive",
-    "version_archive",
-    "VALIDATION=PASS",
-    "does not mean creative quality",
-    "explicit authorization",
-    "Public official-source research",
-    "final send",
-    "dircreative",
-    "adco.specialist-exchange",
-    "asset_authorizations.csv",
-    "client-send-readiness-gate",
-    "Default to no Thread",
-    "active_with_progress",
-    "finalizing_receipt",
-    "adco validate",
-    "stage gates",
-    "search-quality-gate",
-    "reference-pack-gate",
-    "creative-quality-gate",
-    "visual-quality-gate",
-    "client-pack-gate",
-    "handoff-readiness-gate",
-    "Codex Threads",
-    "main thread",
-    "write scope",
-    "receipts containing their real thread_id",
-    "clean up",
-    "thread_cleanup",
+    "content surface",
+    "advertising reasoning",
+    "client-visible versions",
+    "delivery governance",
+    "structural validation",
+    "creative quality",
+    "never overwrite",
+    "never send",
+    "install globally",
+]
+
+
+CONTENT_REQUIRED_FILES = [
+    "AD-creative/AGENTS.md",
+    "AD-creative/orchestrator/project.yml",
+    "AD-creative/orchestrator/control_plane_schema.json",
+    "AD-creative/orchestrator/source_events.csv",
+    "AD-creative/orchestrator/current_truth.md",
+    "AD-creative/orchestrator/requirements.csv",
+    "AD-creative/orchestrator/gaps.csv",
+    "AD-creative/handoff/项目看板.md",
+    "AD-creative/handoff/待你确认.md",
 ]
 
 
 REQUIRED_FILES = [
-    "AGENTS.md",
+    "AD-creative/AGENTS.md",
     "AD-creative/orchestrator/source_events.csv",
     "AD-creative/orchestrator/current_truth.md",
     "AD-creative/orchestrator/requirements.csv",
@@ -772,7 +740,7 @@ def check_agents_policy(project: Path, errors: list[str]) -> bool:
             "project is not an initialized ADCO runtime project with matching project.yml and control_plane_schema.json"
         )
         return False
-    path = project / "AGENTS.md"
+    path = project / "AD-creative/AGENTS.md"
     if not path.exists():
         return False
     text = path.read_text(encoding="utf-8")
@@ -3156,9 +3124,87 @@ def validate_client_delivery_readiness(
     return errors
 
 
-def _validate_strings(project: Path) -> tuple[list[str], dict[str, int]]:
+def _validate_content_strings(project: Path) -> tuple[list[str], dict[str, int]]:
     errors: list[str] = []
     project = project.resolve()
+    for rel_path in CONTENT_REQUIRED_FILES:
+        if not (project / rel_path).exists():
+            errors.append(f"missing required file: {rel_path}")
+    agents_policy_ok = check_agents_policy(project, errors)
+    check_structured_files(project, errors)
+    ad_root = project / "AD-creative"
+    current_truth_path = ad_root / "orchestrator/current_truth.md"
+    if current_truth_path.is_file():
+        errors.extend(
+            current_truth_structure_errors(
+                current_truth_path.read_text(encoding="utf-8")
+            )
+        )
+    source_path = ad_root / "orchestrator/source_events.csv"
+    requirement_path = ad_root / "orchestrator/requirements.csv"
+    gap_path = ad_root / "orchestrator/gaps.csv"
+    source_events = load_csv(source_path, errors)
+    requirements = load_csv(requirement_path, errors)
+    gaps = load_csv(gap_path, errors)
+    check_required_columns(
+        errors,
+        "source_events.csv",
+        source_path,
+        ["source_event_id", "declared_semantics", "file_paths"],
+    )
+    check_required_columns(
+        errors,
+        "requirements.csv",
+        requirement_path,
+        ["requirement_id", "source_event_id", "statement", "status"],
+    )
+    check_required_columns(
+        errors,
+        "gaps.csv",
+        gap_path,
+        ["gap_id", "impact", "status", "description", "recommended_action"],
+    )
+    source_ids = id_set(source_events, "source_event_id")
+    for row in requirements:
+        source_id = row.get("source_event_id", "").strip()
+        if source_id and source_id not in source_ids:
+            errors.append(
+                f"requirement {row.get('requirement_id', '')} unknown source_event {source_id}"
+            )
+    return errors, {
+        "source_events": len(source_events),
+        "requirements": len(requirements),
+        "gaps": len(gaps),
+        "work_items": 0,
+        "agent_runs": 0,
+        "artifacts": 0,
+        "gates": 0,
+        "versions": 0,
+        "threads": 0,
+        "references": 0,
+        "assets": 0,
+        "asset_current_manifest": 0,
+        "asset_authorizations": 0,
+        "specialist_exchanges": 0,
+        "client_outline": 0,
+        "final_delivery_locks": 0,
+        "feedback": 0,
+        "profile_subjects": 0,
+        "profile_insights": 0,
+        "profile_conflicts": 0,
+        "agents_policy": int(agents_policy_ok),
+        "errors": len(errors),
+    }
+
+
+def _validate_strings(project: Path) -> tuple[list[str], dict[str, int]]:
+    if project_surface(project) == CONTENT_SURFACE:
+        return _validate_content_strings(project)
+    errors: list[str] = []
+    project = project.resolve()
+    surface_conflict = project_surface_conflict(project)
+    if surface_conflict:
+        errors.append(surface_conflict)
     ad_root = project / "AD-creative"
     schema_v2 = False
     schema_path = project / CONTROL_PLANE_SCHEMA_REL
@@ -4117,12 +4163,14 @@ def validate_issues(
     project: Path, *, strict_legacy: bool = False
 ) -> tuple[list[ValidationIssue], dict[str, int]]:
     string_errors, stats = _validate_strings(project)
-    legacy_baseline = migration_legacy_error_messages(project)
+    content_surface = project_surface(project) == CONTENT_SURFACE
+    legacy_baseline = set() if content_surface else migration_legacy_error_messages(project)
     issues = [
         classify_string_issue(message, legacy_baseline=legacy_baseline)
         for message in string_errors
     ]
-    issues.extend(supplemental_validation_issues(project))
+    if not content_surface:
+        issues.extend(supplemental_validation_issues(project))
     deduped: dict[tuple[str, str, str], ValidationIssue] = {}
     for issue in issues:
         deduped.setdefault((issue.scope, issue.code, issue.message), issue)

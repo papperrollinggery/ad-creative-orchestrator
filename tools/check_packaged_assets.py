@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PAIRS = [
     (ROOT / "templates/project", ROOT / "tools/adco_resources/templates/project"),
+    (ROOT / "tools/fixtures", ROOT / "tools/adco_resources/fixtures"),
     (
         ROOT / "skill_drafts/ad-creative-orchestrator",
         ROOT / "tools/adco_resources/skill_drafts/ad-creative-orchestrator",
@@ -47,7 +48,7 @@ CHAT_NATIVE_FORBIDDEN_SNIPPETS = [
 SKILL_METADATA_REL = Path("agents/openai.yaml")
 SKILL_METADATA_REQUIRED_SNIPPETS = [
     'display_name: "Ad Creative Orchestrator"',
-    'default_prompt: "Use $ad-creative-orchestrator to operate this initialized ADCO project."',
+    'default_prompt: "Use $ad-creative-orchestrator to reason from this project\'s real materials and produce the requested advertising outcome."',
     "allow_implicit_invocation: false",
 ]
 

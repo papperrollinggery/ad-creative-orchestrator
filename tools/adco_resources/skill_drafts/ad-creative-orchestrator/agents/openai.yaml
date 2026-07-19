@@ -1,7 +1,7 @@
 interface:
   display_name: "Ad Creative Orchestrator"
-  short_description: "Traceable advertising project, asset, version and delivery control plane"
-  default_prompt: "Use $ad-creative-orchestrator to operate this initialized ADCO project."
+  short_description: "Content-first advertising work with risk-triggered delivery controls"
+  default_prompt: "Use $ad-creative-orchestrator to reason from this project's real materials and produce the requested advertising outcome."
 
 policy:
   allow_implicit_invocation: false
