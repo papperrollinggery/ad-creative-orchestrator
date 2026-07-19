@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "adco.specialist-exchange/receipt/2.0",
+  "title": "ADCO specialist provider receipt v2",
+  "type": "object",
+  "required": [
+    "protocol_id",
+    "contract_version",
+    "status",
+    "outputs",
+    "domain_qa",
+    "open_questions"
+  ],
+  "properties": {
+    "protocol_id": {"const": "adco.specialist-exchange"},
+    "contract_version": {"const": "2.0"},
+    "status": {"enum": ["completed", "needs_user", "blocked", "failed"]},
+    "outputs": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/output"}
+    },
+    "domain_qa": {
+      "type": "object",
+      "required": ["status", "checks", "limitations"],
+      "properties": {
+        "status": {"enum": ["pass", "fail", "blocked", "needs_user"]},
+        "checks": {"type": "array"},
+        "limitations": {"type": "array"}
+      },
+      "additionalProperties": true
+    },
+    "open_questions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/openQuestion"}
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "completed"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {"outputs": {"minItems": 1}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"status": {"const": "needs_user"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {"open_questions": {"minItems": 1}}
+      }
+    }
+  ],
+  "$defs": {
+    "safeToken": {
+      "type": "string",
+      "pattern": "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "output": {
+      "type": "object",
+      "required": ["output_id", "type", "path", "sha256"],
+      "properties": {
+        "output_id": {"$ref": "#/$defs/safeToken"},
+        "type": {"$ref": "#/$defs/safeToken"},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "openQuestion": {
+      "type": "object",
+      "required": ["id", "question"],
+      "properties": {
+        "id": {"$ref": "#/$defs/safeToken"},
+        "question": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

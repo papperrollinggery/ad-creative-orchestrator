@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Iterable
 
 from runtime_paths import is_initialized_adco_project
+from adco_core.specialist_exchange import validate_v2_exchange_row
 
 from specialist_schema_validation import (
     specialist_control_plane_errors,
@@ -1837,7 +1838,11 @@ def validate_specialist_exchange_index(
         if handoff_id in seen_handoffs:
             errors.append(f"specialist_exchange duplicate handoff_id: {handoff_id}")
         seen_handoffs.add(handoff_id)
-        if (row.get("contract_version") or "").strip() != "1.0":
+        contract_version = (row.get("contract_version") or "").strip()
+        if contract_version == "2.0":
+            errors.extend(validate_v2_exchange_row(project, row))
+            continue
+        if contract_version != "1.0":
             errors.append(f"specialist_exchange {handoff_id} unsupported contract_version")
         if (row.get("attempt") or "").strip() not in {"1", "2"}:
             errors.append(f"specialist_exchange {handoff_id} attempt must be 1 or 2")

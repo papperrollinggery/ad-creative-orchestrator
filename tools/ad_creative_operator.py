@@ -53,6 +53,17 @@ from adco_core.creative_contract import (
 from adco_core.commands.run import execute_lightweight_run
 from adco_core.ingestion import ingest_source_rows
 from adco_core.incremental_validation import run_incremental_validation
+from adco_core.specialist_exchange import (
+    V2_CONTRACT_VERSION,
+    build_v2_handoff,
+    contained_project_path as contained_v2_project_path,
+    current_scope_manifest as v2_scope_manifest,
+    manifest_digest as v2_manifest_digest,
+    negotiate_contract_version,
+    validate_v2_exchange_row,
+    validate_v2_receipt_outputs,
+    v2_boundary_errors,
+)
 from init_project import agents_policy_status, copy_template
 from runtime_paths import published_docs_root, repo_or_module_root, skill_draft_dir, source_root, template_root
 from specialist_schema_validation import (
@@ -10409,17 +10420,21 @@ def validate_specialist_descriptor(
     *,
     profile_id: str,
     required_capabilities: list[str],
+    contract_version: str | None = None,
 ) -> tuple[str, dict[str, object]]:
     if descriptor.get("protocol_id") != SPECIALIST_EXCHANGE_PROTOCOL:
         raise ValueError("descriptor protocol_id mismatch")
     if descriptor.get("message_type") != "descriptor":
         raise ValueError("descriptor message_type mismatch")
     descriptor_version = str(descriptor.get("descriptor_version", ""))
-    if not re.fullmatch(r"1\.\d+", descriptor_version):
+    if not re.fullmatch(r"[12]\.\d+", descriptor_version):
         raise ValueError("unsupported descriptor_version")
+    selected_version = contract_version or negotiate_contract_version(descriptor)
     supported = descriptor.get("supported_contract_versions")
-    if not isinstance(supported, list) or SPECIALIST_EXCHANGE_VERSION not in supported:
-        raise ValueError("descriptor does not support contract_version 1.0")
+    if not isinstance(supported, list) or selected_version not in supported:
+        raise ValueError(
+            f"descriptor does not support contract_version {selected_version}"
+        )
     provider = descriptor.get("provider")
     if not isinstance(provider, dict) or not str(provider.get("id", "")).strip():
         raise ValueError("descriptor provider.id missing")
@@ -10474,7 +10489,9 @@ def validate_specialist_descriptor(
             raise ValueError("receipt_extension.version must be major.minor")
         if not isinstance(receipt_extension.get("required"), bool):
             raise ValueError("receipt_extension.required must be boolean")
-    validate_specialist_payload("descriptor", descriptor)
+    validate_specialist_payload(
+        "descriptor", descriptor, schema_version=selected_version
+    )
     return provider_id, profile
 
 
@@ -10520,6 +10537,211 @@ def create_specialist_handoff(
     return result, path
 
 
+def _create_specialist_handoff_v2_locked(
+    project: Path,
+    *,
+    descriptor: dict[str, object],
+    work_id: str,
+    profile_id: str,
+    objective: str,
+    input_artifact_ids: list[str],
+    expected_output_kinds: list[str],
+    required_capabilities: list[str],
+    execution_mode: str,
+    lane_id: str,
+    generation_mode: str,
+    generation_authorized: bool,
+    authorization_ref: str,
+) -> tuple[dict[str, object], Path]:
+    """Persist a minimal provider-facing v2 handoff and ADCO-local control data."""
+    if execution_mode != "inline" or lane_id:
+        raise ValueError("specialist exchange v2 supports inline execution only")
+    if generation_mode != "prompt_only" or generation_authorized or authorization_ref:
+        raise ValueError(
+            "specialist exchange v2 does not carry real-media authorization; use v1"
+        )
+    if not work_id.strip() or not objective.strip():
+        raise ValueError("work_id and objective are required")
+    if not input_artifact_ids or not expected_output_kinds:
+        raise ValueError("at least one input artifact and expected output kind are required")
+
+    work_id = validate_specialist_token(work_id, "work_id")
+    profile_id = validate_specialist_token(profile_id, "profile_id")
+    input_artifact_ids = list(
+        dict.fromkeys(
+            validate_specialist_token(item, "input_artifact_id")
+            for item in input_artifact_ids
+        )
+    )
+    expected_output_kinds = list(
+        dict.fromkeys(
+            validate_specialist_token(item, "expected_output_kind")
+            for item in expected_output_kinds
+        )
+    )
+    required_capabilities = list(
+        dict.fromkeys(
+            validate_specialist_token(item, "required_capability")
+            for item in [*required_capabilities, *expected_output_kinds]
+        )
+    )
+    provider_id, profile = validate_specialist_descriptor(
+        descriptor,
+        profile_id=profile_id,
+        required_capabilities=required_capabilities,
+        contract_version=V2_CONTRACT_VERSION,
+    )
+    modes = {str(item) for item in profile.get("execution_modes", [])}
+    if "inline" not in modes:
+        raise ValueError("descriptor does not support inline execution")
+
+    _, work_items = read_csv_rows(
+        project / "AD-creative/orchestrator/work_items.csv"
+    )
+    if work_id not in {row.get("work_id", "") for row in work_items}:
+        raise ValueError(f"specialist handoff work_id is not registered: {work_id}")
+    _, artifacts = read_csv_rows(
+        project / "AD-creative/orchestrator/artifact_index.csv"
+    )
+    artifact_by_id = {
+        row.get("artifact_id", ""): row
+        for row in artifacts
+        if row.get("artifact_id", "")
+    }
+    locked_decisions: list[dict[str, object]] = []
+    for artifact_id in input_artifact_ids:
+        row = artifact_by_id.get(artifact_id)
+        if row is None:
+            raise ValueError(f"input artifact is not indexed: {artifact_id}")
+        rel_path = row.get("path", "").strip()
+        path = contained_project_path(project, rel_path, f"input artifact {artifact_id}")
+        if not path.is_file():
+            raise ValueError(f"input artifact file missing: {artifact_id}: {rel_path}")
+        actual_sha = file_sha256(path)
+        registered_sha = row.get("sha256", "").strip()
+        if registered_sha and registered_sha != actual_sha:
+            raise ValueError(f"stale_input_artifact: {artifact_id}")
+        artifact_type = validate_specialist_token(
+            row.get("artifact_type", "").strip() or "input",
+            "input artifact type",
+        )
+        locked_decisions.append(
+            {
+                "artifact_id": artifact_id,
+                "type": artifact_type,
+                "path": canonical_project_relative(project, path),
+                "sha256": actual_sha,
+            }
+        )
+
+    index_path = (
+        project
+        / "AD-creative/orchestrator/specialist_exchange/exchange_index.csv"
+    )
+    index_fields, index_rows = read_csv_rows(index_path)
+    exchange_id = next_id(index_rows, "exchange_id", "SPX")
+    handoff_id = "SPH-" + exchange_id.rsplit("-", 1)[-1]
+    output_root_rel = (
+        f"AD-creative/workspaces/{work_id}/specialists/{handoff_id}/outputs"
+    )
+    receipt_rel = (
+        f"AD-creative/workspaces/{work_id}/specialists/{handoff_id}/receipt.json"
+    )
+    baseline_rel = (
+        f"AD-creative/orchestrator/specialist_exchange/baselines/{handoff_id}.json"
+    )
+    handoff_rel = (
+        f"AD-creative/orchestrator/specialist_exchange/handoffs/{handoff_id}.json"
+    )
+    requested_outputs = [
+        {
+            "output_id": f"OUT-{number:02d}",
+            "type": kind,
+            "path_root": output_root_rel,
+        }
+        for number, kind in enumerate(expected_output_kinds, start=1)
+    ]
+    handoff = build_v2_handoff(
+        task=objective,
+        brief_snapshot=str(locked_decisions[0]["path"]),
+        locked_decisions=locked_decisions,
+        requested_outputs=requested_outputs,
+        quality_targets=required_capabilities,
+        execution_mode=execution_mode,
+    )
+    validate_specialist_payload(
+        "handoff", handoff, schema_version=V2_CONTRACT_VERSION
+    )
+
+    descriptor_canonical = json.dumps(
+        descriptor, ensure_ascii=False, sort_keys=True
+    ).encode("utf-8")
+    descriptor_sha = hashlib.sha256(descriptor_canonical).hexdigest()
+    descriptor_snapshot = (
+        project
+        / "AD-creative/orchestrator/specialist_exchange/descriptors"
+        / f"descriptor_{descriptor_sha}.json"
+    )
+    baseline_exclusions = [
+        "AD-creative/orchestrator/specialist_exchange",
+        output_root_rel,
+        receipt_rel,
+    ]
+    baseline_files = v2_scope_manifest(
+        project, excluded_roots=baseline_exclusions
+    )
+    created_at = now_iso()
+    baseline_payload: dict[str, object] = {
+        "protocol_id": SPECIALIST_EXCHANGE_PROTOCOL,
+        "contract_version": V2_CONTRACT_VERSION,
+        "message_type": "host_scope_baseline",
+        "handoff_id": handoff_id,
+        "excluded_roots": baseline_exclusions,
+        "files": baseline_files,
+        "manifest_sha256": v2_manifest_digest(baseline_files),
+        "created_at": created_at,
+    }
+    baseline_path = project / baseline_rel
+    write_json_object(baseline_path, baseline_payload)
+    baseline_sha = file_sha256(baseline_path)
+    if not descriptor_snapshot.exists():
+        write_json_object(descriptor_snapshot, descriptor)
+    handoff_path = project / handoff_rel
+    write_json_object(handoff_path, handoff)
+    handoff_sha = file_sha256(handoff_path)
+    index_rows.append(
+        {
+            "exchange_id": exchange_id,
+            "handoff_id": handoff_id,
+            "attempt": "1",
+            "work_id": work_id,
+            "provider_id": provider_id,
+            "profile_id": profile_id,
+            "contract_version": V2_CONTRACT_VERSION,
+            "descriptor_sha256": descriptor_sha,
+            "handoff_sha256": handoff_sha,
+            "baseline_path": baseline_rel,
+            "baseline_sha256": baseline_sha,
+            "compatibility_status": "compatible",
+            "execution_mode": "inline",
+            "lane_id": "",
+            "thread_id": "",
+            "handoff_path": handoff_rel,
+            "receipt_path": receipt_rel,
+            "receipt_sha256": "",
+            "outcome": "pending",
+            "adoption_path": "",
+            "adoption_sha256": "",
+            "adoption_decision": "",
+            "thread_reconciliation_ref": "",
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+    )
+    write_csv_rows(index_path, index_fields, index_rows)
+    return handoff, handoff_path
+
+
 def _create_specialist_handoff_locked(
     project: Path,
     *,
@@ -10538,6 +10760,24 @@ def _create_specialist_handoff_locked(
     authorization_ref: str = "",
 ) -> tuple[dict[str, object], Path]:
     migrate_control_plane(project)
+    if descriptor_path:
+        descriptor = read_json_object(descriptor_path, "descriptor")
+        if negotiate_contract_version(descriptor) == V2_CONTRACT_VERSION:
+            return _create_specialist_handoff_v2_locked(
+                project,
+                descriptor=descriptor,
+                work_id=work_id,
+                profile_id=profile_id,
+                objective=objective,
+                input_artifact_ids=input_artifact_ids,
+                expected_output_kinds=expected_output_kinds,
+                required_capabilities=required_capabilities,
+                execution_mode=execution_mode,
+                lane_id=lane_id,
+                generation_mode=generation_mode,
+                generation_authorized=generation_authorized,
+                authorization_ref=authorization_ref,
+            )
     if not work_id.strip() or not objective.strip():
         raise ValueError("work_id and objective are required")
     if not input_artifact_ids or not expected_output_kinds:
@@ -10958,6 +11198,259 @@ def adopt_specialist_receipt(
     )
 
 
+def _adopt_specialist_receipt_v2_locked(
+    project: Path,
+    *,
+    handoff: dict[str, object],
+    handoff_path: Path,
+    receipt_path: Path,
+    decision: str,
+    reason: str,
+    output_mappings: dict[str, str],
+    dry_run: bool,
+) -> tuple[dict[str, object], Path | None]:
+    """Validate a minimal provider receipt and persist ADCO adoption separately."""
+    validate_specialist_payload(
+        "handoff", handoff, schema_version=V2_CONTRACT_VERSION
+    )
+    boundary_errors = v2_boundary_errors(handoff, message_type="handoff")
+    if boundary_errors:
+        raise ValueError("; ".join(boundary_errors))
+
+    index_path = (
+        project
+        / "AD-creative/orchestrator/specialist_exchange/exchange_index.csv"
+    )
+    index_fields, index_rows = read_csv_rows(index_path)
+    handoff_rel = canonical_project_relative(project, handoff_path)
+    matches = [row for row in index_rows if row.get("handoff_path") == handoff_rel]
+    if len(matches) != 1:
+        raise ValueError("specialist exchange v2 index identity is missing or ambiguous")
+    exchange_row = matches[0]
+    handoff_id = exchange_row.get("handoff_id", "")
+    if exchange_row.get("contract_version") != V2_CONTRACT_VERSION:
+        raise ValueError("specialist exchange v2 index contract mismatch")
+    if exchange_row.get("execution_mode") != "inline":
+        raise ValueError("specialist exchange v2 index execution must be inline")
+    if exchange_row.get("lane_id") or exchange_row.get("thread_id"):
+        raise ValueError("specialist exchange v2 must not bind nested dispatch")
+    if exchange_row.get("compatibility_status") != "compatible":
+        raise ValueError("specialist exchange v2 descriptor is unverified")
+    if file_sha256(handoff_path) != exchange_row.get("handoff_sha256"):
+        raise ValueError("handoff_hash_mismatch")
+    control_errors = specialist_control_plane_errors(project, index_rows)
+    if control_errors:
+        raise ValueError(
+            "specialist_control_plane_write: " + "; ".join(control_errors)
+        )
+
+    receipt_rel = exchange_row.get("receipt_path", "")
+    expected_receipt = contained_v2_project_path(
+        project, receipt_rel, "v2 receipt"
+    )
+    if canonical_project_relative(project, receipt_path) != receipt_rel:
+        raise ValueError("receipt path does not match v2 exchange index")
+    if receipt_path.resolve() != expected_receipt or not expected_receipt.is_file():
+        raise ValueError("specialist receipt file is missing")
+    receipt_stat = expected_receipt.stat()
+    if receipt_stat.st_size == 0 or receipt_stat.st_nlink != 1:
+        raise ValueError("specialist receipt must be non-empty and not hardlinked")
+    receipt = read_json_object(expected_receipt, "receipt")
+    validate_specialist_payload(
+        "receipt", receipt, schema_version=V2_CONTRACT_VERSION
+    )
+    output_by_id, output_errors = validate_v2_receipt_outputs(
+        project, handoff, receipt
+    )
+    if output_errors:
+        raise ValueError("; ".join(output_errors))
+
+    status = str(receipt.get("status", ""))
+    if decision == "adopt" and status != "completed":
+        raise ValueError("only a completed v2 receipt can be fully adopted")
+    if decision in {"adopt", "partial_adopt"}:
+        if status in {"blocked", "failed"}:
+            raise ValueError("blocked/failed v2 receipt cannot be adopted")
+        domain_qa = receipt.get("domain_qa")
+        if not isinstance(domain_qa, dict) or domain_qa.get("status") != "pass":
+            raise ValueError("v2 adoption requires domain_qa.status=pass")
+
+    if decision == "adopt" and set(output_mappings) != set(output_by_id):
+        raise ValueError("full adoption requires a target mapping for every v2 output")
+    if decision == "partial_adopt" and not output_mappings:
+        raise ValueError("partial adoption requires at least one v2 output mapping")
+    if decision in {"reject", "defer"} and output_mappings:
+        raise ValueError("reject/defer adoption must not map v2 outputs")
+    unknown_mappings = set(output_mappings) - set(output_by_id)
+    if unknown_mappings:
+        raise ValueError(
+            "mapping references unknown v2 output: "
+            + ",".join(sorted(unknown_mappings))
+        )
+
+    baseline_path = contained_v2_project_path(
+        project, exchange_row.get("baseline_path", ""), "v2 host scope baseline"
+    )
+    if not baseline_path.is_file() or file_sha256(baseline_path) != exchange_row.get(
+        "baseline_sha256", ""
+    ):
+        raise ValueError("v2 host scope baseline is missing or stale")
+    baseline = read_json_object(baseline_path, "v2 host scope baseline")
+    baseline_files = baseline.get("files")
+    excluded_roots = baseline.get("excluded_roots")
+    if not isinstance(baseline_files, dict) or not isinstance(excluded_roots, list):
+        raise ValueError("v2 host scope baseline is malformed")
+    current_files = v2_scope_manifest(
+        project, excluded_roots=[str(item) for item in excluded_roots]
+    )
+    if current_files != {str(key): str(value) for key, value in baseline_files.items()}:
+        raise ValueError("specialist_scope_violation: host files changed outside v2 scope")
+    observed_manifest_sha = v2_manifest_digest(current_files)
+
+    forbidden_roots = [
+        contained_project_path(project, value, "v2 adoption forbidden scope")
+        for value in [
+            "AD-creative/orchestrator",
+            "AD-creative/ppt/exports",
+            "05_最终交付_FinalDelivery",
+        ]
+    ]
+    prepared: list[tuple[str, dict[str, object], Path, Path]] = []
+    prepared_targets: set[Path] = set()
+    for output_id, target_rel in output_mappings.items():
+        target = contained_project_path(project, target_rel, "v2 adoption target")
+        if any(target == root or root in target.parents for root in forbidden_roots):
+            raise ValueError(f"v2 adoption target is forbidden: {target_rel}")
+        if target in prepared_targets:
+            raise ValueError(f"multiple v2 outputs map to one target: {target_rel}")
+        if target.exists():
+            raise ValueError(f"v2 adoption target already exists: {target_rel}")
+        prepared_targets.add(target)
+        item, source = output_by_id[output_id]
+        prepared.append((output_id, item, source, target))
+
+    receipt_sha = file_sha256(expected_receipt)
+    adoption_id = "SPA-" + safe_artifact_suffix(handoff_id)
+    adoption_rel = (
+        Path("AD-creative/orchestrator/specialist_exchange/adoptions")
+        / f"{adoption_id}.json"
+    )
+    adoption_path = project / adoption_rel
+    adopted_outputs: list[dict[str, object]] = []
+    for number, (output_id, item, _, target) in enumerate(prepared, start=1):
+        adopted_outputs.append(
+            {
+                "output_id": output_id,
+                "target_artifact_id": f"ART-{safe_artifact_suffix(adoption_id)}-{number:02d}",
+                "type": item.get("type"),
+                "target_path": safe_rel(project, target),
+                "sha256": item.get("sha256"),
+                "visibility": "internal_only",
+            }
+        )
+    adoption: dict[str, object] = {
+        "protocol_id": "adco.specialist-adoption",
+        "version": "1.0",
+        "contract_version": V2_CONTRACT_VERSION,
+        "adoption_id": adoption_id,
+        "handoff_id": handoff_id,
+        "receipt_sha256": receipt_sha,
+        "decision_owner": "adco",
+        "decision": decision,
+        "reason": reason,
+        "adopted_outputs": adopted_outputs,
+        "rejected_outputs": sorted(set(output_by_id) - set(output_mappings)),
+        "limitations_carried_forward": (
+            receipt.get("domain_qa", {}).get("limitations", [])
+            if isinstance(receipt.get("domain_qa"), dict)
+            else []
+        ),
+        "adco_validation": ["path", "hash", "type", "domain_qa", "scope"],
+        "host_scope_proof": {
+            "baseline_path": exchange_row.get("baseline_path", ""),
+            "baseline_sha256": exchange_row.get("baseline_sha256", ""),
+            "baseline_manifest_sha256": baseline.get("manifest_sha256", ""),
+            "observed_manifest_sha256": observed_manifest_sha,
+            "changed_paths": [],
+        },
+        "gate_effect": {
+            "advance_allowed": status == "completed"
+            and decision in {"adopt", "partial_adopt"},
+            "next_gate": "creative-quality-gate",
+        },
+        "created_at": now_iso(),
+    }
+    if dry_run:
+        return adoption, None
+    if adoption_path.exists():
+        raise FileExistsError(
+            f"specialist adoption already exists for handoff: {adoption_rel}"
+        )
+
+    artifact_path = project / "AD-creative/orchestrator/artifact_index.csv"
+    artifact_snapshot = artifact_path.read_bytes()
+    index_snapshot = index_path.read_bytes()
+    created_targets: list[Path] = []
+    try:
+        artifact_fields, artifact_rows = read_csv_rows(artifact_path)
+        for adopted, (_, item, source, target) in zip(adopted_outputs, prepared):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("xb") as handle:
+                handle.write(source.read_bytes())
+            created_targets.append(target)
+            artifact_rows.append(
+                {
+                    "artifact_id": str(adopted["target_artifact_id"]),
+                    "artifact_type": str(item.get("type", "specialist_output")),
+                    "path": safe_rel(project, target),
+                    "stage": "specialist_adoption",
+                    "version": "1",
+                    "status": "internal_review",
+                    "visibility": "internal_only",
+                    "source_event_ids": "",
+                    "linked_requirements": "",
+                    "linked_work_items": exchange_row.get("work_id", ""),
+                    "linked_references": "",
+                    "linked_assets": "",
+                    "gate_status": "NOT_RUN",
+                    "supersedes_artifact_id": "",
+                    "created_at": now_iso(),
+                    "updated_at": now_iso(),
+                    "sha256": str(item.get("sha256", "")),
+                    "size_bytes": str(target.stat().st_size),
+                    "derived_from_artifact_id": "",
+                    "derived_from_sha256": "",
+                }
+            )
+        write_csv_rows(artifact_path, artifact_fields, artifact_rows)
+        write_json_object(adoption_path, adoption)
+        exchange_row.update(
+            {
+                "receipt_sha256": receipt_sha,
+                "outcome": status,
+                "adoption_path": str(adoption_rel),
+                "adoption_sha256": file_sha256(adoption_path),
+                "adoption_decision": decision,
+                "updated_at": now_iso(),
+            }
+        )
+        write_csv_rows(index_path, index_fields, index_rows)
+        validation_errors = validate_v2_exchange_row(project, exchange_row)
+        if validation_errors:
+            raise ValueError(
+                "specialist v2 adoption would be invalid: "
+                + "; ".join(validation_errors[:12])
+            )
+    except Exception:
+        artifact_path.write_bytes(artifact_snapshot)
+        index_path.write_bytes(index_snapshot)
+        adoption_path.unlink(missing_ok=True)
+        for target in created_targets:
+            target.unlink(missing_ok=True)
+        raise
+    return adoption, adoption_path
+
+
 def _adopt_specialist_receipt_locked(
     project: Path,
     *,
@@ -10983,6 +11476,17 @@ def _adopt_specialist_receipt_locked(
     if not reason.strip():
         raise ValueError("adoption reason is required")
     handoff = read_json_object(handoff_path, "handoff")
+    if handoff.get("contract_version") == V2_CONTRACT_VERSION:
+        return _adopt_specialist_receipt_v2_locked(
+            project,
+            handoff=handoff,
+            handoff_path=handoff_path,
+            receipt_path=receipt_path,
+            decision=decision,
+            reason=reason,
+            output_mappings=output_mappings,
+            dry_run=dry_run,
+        )
     validate_specialist_payload("handoff", handoff)
     receipt_scope = handoff.get("scope")
     if not isinstance(receipt_scope, dict):
@@ -18194,11 +18698,29 @@ def command_specialist_handoff(args: argparse.Namespace) -> int:
         print("SPECIALIST_HANDOFF=BLOCKED")
         print(f"ERROR={exc}")
         return 1
+    if handoff.get("contract_version") == V2_CONTRACT_VERSION:
+        _, exchange_rows = read_csv_rows(
+            project
+            / "AD-creative/orchestrator/specialist_exchange/exchange_index.csv"
+        )
+        row = next(
+            item
+            for item in exchange_rows
+            if item.get("handoff_path") == safe_rel(project, path)
+        )
+        handoff_id = row.get("handoff_id", "")
+        compatibility = row.get("compatibility_status", "")
+        execution_mode = row.get("execution_mode", "")
+    else:
+        handoff_id = str(handoff["handoff_id"])
+        compatibility = "compatible" if handoff.get("descriptor_ref") else "unverified"
+        execution_mode = str((handoff.get("execution") or {}).get("mode"))
     print("SPECIALIST_HANDOFF=PASS")
-    print(f"HANDOFF_ID={handoff['handoff_id']}")
+    print(f"HANDOFF_ID={handoff_id}")
     print(f"HANDOFF={path}")
-    print(f"COMPATIBILITY={'compatible' if handoff.get('descriptor_ref') else 'unverified'}")
-    print(f"EXECUTION_MODE={(handoff.get('execution') or {}).get('mode')}")
+    print(f"CONTRACT_VERSION={handoff.get('contract_version')}")
+    print(f"COMPATIBILITY={compatibility}")
+    print(f"EXECUTION_MODE={execution_mode}")
     return 0
 
 

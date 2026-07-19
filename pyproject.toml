@@ -78,5 +78,6 @@ adco_resources = [
   "skill_drafts/ad-creative-orchestrator/*",
   "skill_drafts/ad-creative-orchestrator/**/*",
   "published_docs/**/*",
-  "contracts/specialist_exchange/v1/*.schema.json"
+  "contracts/specialist_exchange/v1/*.schema.json",
+  "contracts/specialist_exchange/v2/*.schema.json"
 ]

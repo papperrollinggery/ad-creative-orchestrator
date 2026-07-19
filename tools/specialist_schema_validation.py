@@ -15,21 +15,28 @@ from runtime_paths import packaged_assets_root, source_root
 
 
 SCHEMA_NAMES = {"descriptor", "handoff", "receipt", "adoption"}
+SCHEMA_NAMES_BY_VERSION = {
+    "1.0": SCHEMA_NAMES,
+    "2.0": {"descriptor", "handoff", "receipt"},
+}
 GENERATION_AUTHORIZATION_PROTOCOL = "adco.specialist-generation-authorization"
 GENERATION_AUTHORIZATION_VERSION = "1.0"
 SPECIALIST_CONTROL_ROOT = Path("AD-creative/orchestrator/specialist_exchange")
 
 
-def specialist_schema_path(name: str) -> Path:
-    if name not in SCHEMA_NAMES:
+def specialist_schema_path(name: str, *, schema_version: str = "1.0") -> Path:
+    if name not in SCHEMA_NAMES_BY_VERSION.get(schema_version, set()):
         raise ValueError(f"unknown specialist schema: {name}")
     root = source_root()
     asset_root = root / "tools/adco_resources" if root else packaged_assets_root()
-    return asset_root / "contracts/specialist_exchange/v1" / f"{name}.schema.json"
+    major = schema_version.split(".", 1)[0]
+    return asset_root / f"contracts/specialist_exchange/v{major}" / f"{name}.schema.json"
 
 
-def load_specialist_schema(name: str) -> dict[str, object]:
-    path = specialist_schema_path(name)
+def load_specialist_schema(
+    name: str, *, schema_version: str = "1.0"
+) -> dict[str, object]:
+    path = specialist_schema_path(name, schema_version=schema_version)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -37,6 +44,21 @@ def load_specialist_schema(name: str) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError(f"canonical specialist schema is not an object: {name}")
     return payload
+
+
+def infer_specialist_schema_version(name: str, payload: object) -> str:
+    """Infer a schema line without changing legacy v1 call behavior."""
+    if name == "adoption":
+        return "1.0"
+    if not isinstance(payload, dict):
+        return "1.0"
+    if name == "descriptor":
+        versions = payload.get("supported_contract_versions")
+        if isinstance(versions, list) and "2.0" in versions:
+            return "2.0"
+        return "1.0"
+    contract_version = payload.get("contract_version")
+    return "2.0" if contract_version == "2.0" else "1.0"
 
 
 def _path_has_symlink_component(project: Path, raw_path: str) -> bool:
@@ -440,8 +462,10 @@ def specialist_schema_errors(
     payload: object,
     *,
     force_builtin: bool = False,
+    schema_version: str | None = None,
 ) -> list[str]:
-    schema = load_specialist_schema(name)
+    selected_version = schema_version or infer_specialist_schema_version(name, payload)
+    schema = load_specialist_schema(name, schema_version=selected_version)
     if not force_builtin and not os.environ.get("ADCO_FORCE_BUILTIN_SCHEMA_VALIDATOR"):
         try:
             from jsonschema import Draft202012Validator, FormatChecker
@@ -459,8 +483,12 @@ def specialist_schema_errors(
     return _builtin_errors(payload, schema, schema, "$")
 
 
-def validate_specialist_payload(name: str, payload: object) -> None:
-    errors = specialist_schema_errors(name, payload)
+def validate_specialist_payload(
+    name: str, payload: object, *, schema_version: str | None = None
+) -> None:
+    errors = specialist_schema_errors(
+        name, payload, schema_version=schema_version
+    )
     if errors:
         raise ValueError(
             f"{name} schema validation failed: " + "; ".join(errors[:12])

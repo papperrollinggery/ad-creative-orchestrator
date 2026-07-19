@@ -12,11 +12,12 @@ from runtime_paths import source_root
 
 SOURCE_ROOT = source_root()
 ROOT = SOURCE_ROOT or Path(__file__).resolve().parent
-SCHEMA_ROOT = (
+V1_SCHEMA_ROOT = (
     ROOT / "tools/adco_resources/contracts/specialist_exchange/v1"
     if SOURCE_ROOT
     else ROOT / "adco_resources/contracts/specialist_exchange/v1"
 )
+V2_SCHEMA_ROOT = V1_SCHEMA_ROOT.parent / "v2"
 SCHEMA_NAMES = ("descriptor", "handoff", "receipt", "adoption")
 RESERVED_CLAIMS = {
     "client_ready",
@@ -28,14 +29,15 @@ RESERVED_CLAIMS = {
 }
 
 
-def load_schema(name: str) -> dict[str, object]:
-    path = SCHEMA_ROOT / f"{name}.schema.json"
+def load_schema(name: str, *, version: str = "1.0") -> dict[str, object]:
+    root = V2_SCHEMA_ROOT if version == "2.0" else V1_SCHEMA_ROOT
+    path = root / f"{name}.schema.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise AssertionError(f"schema must be a JSON object: {path}")
     if payload.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
         raise AssertionError(f"schema draft drift: {path}")
-    if payload.get("$id") != f"adco.specialist-exchange/{name}/1.0":
+    if payload.get("$id") != f"adco.specialist-exchange/{name}/{version}":
         raise AssertionError(f"schema id drift: {path}")
     return payload
 
@@ -315,12 +317,68 @@ def check_adoption(schema: dict[str, object]) -> None:
         raise AssertionError("adoption Thread reconciliation proof drifted")
 
 
+def check_v2_schemas(schemas: dict[str, dict[str, object]]) -> None:
+    descriptor = schemas["descriptor"]
+    if object_at(
+        descriptor, "properties", "supported_contract_versions"
+    ).get("contains") != {"const": "2.0"}:
+        raise AssertionError("v2 descriptor must advertise contract 2.0")
+    authority = object_at(
+        descriptor, "$defs", "profile", "properties", "authority"
+    )
+    if object_at(authority, "properties", "nested_dispatch").get("const") is not False:
+        raise AssertionError("v2 descriptor must forbid nested dispatch")
+
+    handoff = schemas["handoff"]
+    expected_handoff = {
+        "protocol_id",
+        "contract_version",
+        "task",
+        "brief_snapshot",
+        "locked_decisions",
+        "requested_outputs",
+        "quality_targets",
+        "execution_mode",
+    }
+    if required_set(handoff) != expected_handoff:
+        raise AssertionError("v2 handoff is not the minimal controller contract")
+    if object_at(handoff, "properties", "execution_mode").get("const") != "inline":
+        raise AssertionError("v2 handoff must use inline execution")
+    if handoff.get("additionalProperties") is not False:
+        raise AssertionError("v2 handoff must reject repeated controller fields")
+
+    receipt = schemas["receipt"]
+    expected_receipt = {
+        "protocol_id",
+        "contract_version",
+        "status",
+        "outputs",
+        "domain_qa",
+        "open_questions",
+    }
+    if required_set(receipt) != expected_receipt:
+        raise AssertionError("v2 receipt is not the minimal provider contract")
+    if receipt.get("additionalProperties") is not False:
+        raise AssertionError("v2 receipt must reject outer readiness claims")
+    serialized = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
+    if any(f'"{claim}"' in serialized for claim in RESERVED_CLAIMS):
+        raise AssertionError("v2 receipt schema must not contain ADCO readiness claims")
+    output = object_at(receipt, "$defs", "output")
+    if required_set(output) != {"output_id", "type", "path", "sha256"}:
+        raise AssertionError("v2 output must bind identity, type, path, and hash")
+
+
 def main() -> int:
     schemas = {name: load_schema(name) for name in SCHEMA_NAMES}
     check_descriptor(schemas["descriptor"])
     check_handoff(schemas["handoff"])
     check_receipt(schemas["receipt"])
     check_adoption(schemas["adoption"])
+    v2_schemas = {
+        name: load_schema(name, version="2.0")
+        for name in ("descriptor", "handoff", "receipt")
+    }
+    check_v2_schemas(v2_schemas)
     print("SPECIALIST_SCHEMA_CHECK=PASS")
     return 0
 

@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "adco.specialist-exchange/descriptor/2.0",
+  "title": "ADCO specialist provider descriptor v2",
+  "type": "object",
+  "required": [
+    "protocol_id",
+    "message_type",
+    "descriptor_version",
+    "supported_contract_versions",
+    "provider",
+    "profiles"
+  ],
+  "properties": {
+    "protocol_id": {"const": "adco.specialist-exchange"},
+    "message_type": {"const": "descriptor"},
+    "descriptor_version": {
+      "type": "string",
+      "pattern": "^[12]\\.[0-9]+$"
+    },
+    "supported_contract_versions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9]+\\.[0-9]+$"
+      },
+      "contains": {"const": "2.0"},
+      "minContains": 1
+    },
+    "provider": {
+      "type": "object",
+      "required": ["id", "display_name"],
+      "properties": {
+        "id": {"$ref": "#/$defs/safeToken"},
+        "display_name": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/profile"}
+    }
+  },
+  "$defs": {
+    "safeToken": {
+      "type": "string",
+      "pattern": "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "profile": {
+      "type": "object",
+      "required": [
+        "profile_id",
+        "capabilities",
+        "execution_modes",
+        "authority"
+      ],
+      "properties": {
+        "profile_id": {"$ref": "#/$defs/safeToken"},
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/safeToken"}
+        },
+        "execution_modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["inline", "codex_thread", "external_handoff"]
+          },
+          "contains": {"const": "inline"},
+          "minContains": 1
+        },
+        "workspace_modes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": ["read_only", "isolated_workspace", "worktree"]
+          }
+        },
+        "generation_modes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["prompt_only"]}
+        },
+        "authority": {
+          "type": "object",
+          "required": [
+            "client_interaction",
+            "artifact_adoption",
+            "client_readiness",
+            "final_export",
+            "nested_dispatch"
+          ],
+          "properties": {
+            "client_interaction": {"const": false},
+            "artifact_adoption": {"const": false},
+            "client_readiness": {"const": false},
+            "final_export": {"const": false},
+            "nested_dispatch": {"const": false}
+          },
+          "additionalProperties": {"const": false}
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

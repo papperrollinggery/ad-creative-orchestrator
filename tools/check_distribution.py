@@ -65,6 +65,9 @@ REQUIRED_PATHS = [
     "adco_resources/contracts/specialist_exchange/v1/handoff.schema.json",
     "adco_resources/contracts/specialist_exchange/v1/receipt.schema.json",
     "adco_resources/contracts/specialist_exchange/v1/adoption.schema.json",
+    "adco_resources/contracts/specialist_exchange/v2/descriptor.schema.json",
+    "adco_resources/contracts/specialist_exchange/v2/handoff.schema.json",
+    "adco_resources/contracts/specialist_exchange/v2/receipt.schema.json",
     "adco_resources/published_docs/docs/operating/openai_visualizations.md",
 ] + [
     f"adco_resources/published_docs/{path.as_posix()}"
@@ -86,6 +89,7 @@ REQUIRED_PYPROJECT_SNIPPETS = [
     '"check_specialist_schemas",',
     '"specialist_schema_validation",',
     '"contracts/specialist_exchange/v1/*.schema.json"',
+    '"contracts/specialist_exchange/v2/*.schema.json"',
     '"skill_drafts/ad-creative-orchestrator/**/*"',
     '"published_docs/**/*"',
 ]
