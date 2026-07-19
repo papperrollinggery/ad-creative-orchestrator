@@ -34,7 +34,9 @@ classifiers = [
 ]
 dependencies = [
   "Pillow>=10.0",
-  "python-pptx>=0.6.23"
+  "python-pptx>=0.6.23",
+  "python-docx>=1.1.0",
+  "pypdf>=4.0"
 ]
 
 [project.urls]
@@ -51,7 +53,7 @@ adco-check = "run_checks:main"
 
 [tool.setuptools]
 package-dir = { "" = "tools" }
-packages = ["adco_resources"]
+packages = ["adco_resources", "adco_core", "adco_core.commands"]
 py-modules = [
   "ad_creative_operator",
   "check_docs_commands",

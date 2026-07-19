@@ -30,6 +30,12 @@ import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
 
+from adco_core.facts import (
+    export_intake_analysis_request,
+    import_intake_analysis,
+    run_evidence_intake,
+)
+from adco_core.ingestion import ingest_source_rows
 from init_project import agents_policy_status, copy_template
 from runtime_paths import published_docs_root, repo_or_module_root, skill_draft_dir, source_root, template_root
 from specialist_schema_validation import (
@@ -3244,77 +3250,9 @@ def extract_requirement_statements(materials: list[tuple[Path, str]]) -> list[tu
 
 
 def gap_templates(requirements: list[dict[str, str]], all_text: str) -> list[dict[str, str]]:
-    lowered = all_text.lower()
-    gaps: list[dict[str, str]] = []
-
-    def linked_req(*tokens: str) -> str:
-        for req in requirements:
-            statement = req.get("statement", "")
-            if any(token in statement for token in tokens):
-                return req.get("requirement_id", "")
-        return requirements[0].get("requirement_id", "") if requirements else ""
-
-    if any(token in all_text for token in ["logo", "Logo", "品牌 logo", "品牌规范"]):
-        gaps.append(
-            {
-                "linked_requirement_id": linked_req("logo", "Logo", "品牌"),
-                "impact": "blocking",
-                "description": "缺少品牌 logo / 字体 / 包装 / 视觉规范，不能进入客户可见稿。",
-                "recommended_action": "向客户索取品牌资产包；没有资产前只做内部方向稿。",
-                "question_for_client": "请提供品牌 logo、字体、包装或产品露出规范。",
-            }
-        )
-    if any(token in all_text for token in ["产品高清", "产品图", "包装", "实拍", "产品素材"]):
-        gaps.append(
-            {
-                "linked_requirement_id": linked_req("产品", "包装"),
-                "impact": "high_impact",
-                "description": "缺少产品高清图或实拍素材，产品细节不能准确呈现。",
-                "recommended_action": "向客户索取产品高清图、包装图、颜色版本和使用限制。",
-                "question_for_client": "是否有产品高清图、包装图、颜色版本和不可改动的产品细节？",
-            }
-        )
-    if any(token in lowered for token in ["ai", "image_gen", "生成图"]) or "AI" in all_text:
-        gaps.append(
-            {
-                "linked_requirement_id": linked_req("AI", "生成图", "视觉"),
-                "impact": "high_impact",
-                "description": "AI 图客户可见性未锁定。",
-                "recommended_action": "默认 internal_only；客户可见前必须单独 Gate。",
-                "question_for_client": "AI 生成图是否允许进入客户审阅稿？是否需要标注？",
-            }
-        )
-    else:
-        gaps.append(
-            {
-                "linked_requirement_id": linked_req("视觉", "画面", "关键帧"),
-                "impact": "medium",
-                "description": "AI 参考图使用边界未声明。",
-                "recommended_action": "默认 internal_only，只用于内部方向草图。",
-                "question_for_client": "是否允许 AI 参考图用于内部方向草图？",
-            }
-        )
-    if any(token in all_text for token in ["参考", "视频链接", "moodboard", "摄影参考"]):
-        gaps.append(
-            {
-                "linked_requirement_id": linked_req("参考", "视频", "moodboard"),
-                "impact": "high_impact",
-                "description": "需要公开可追溯参考来源，否则参考包不能客户可见。",
-                "recommended_action": "三方议会 PASS 后自动做公开官方/公开视频资料搜索计划。",
-                "question_for_client": "是否有客户指定参考片、竞品、禁用参考或必须避开的风格？",
-            }
-        )
-    if any(token in all_text for token in ["PPT", "ppt", "可编辑"]):
-        gaps.append(
-            {
-                "linked_requirement_id": linked_req("PPT", "可编辑", "交付"),
-                "impact": "medium",
-                "description": "PPT 可编辑性和交付精度未最终确认。",
-                "recommended_action": "先做结构和 SlideSpec，PPTX 前跑 PPT Gate。",
-                "question_for_client": "本轮需要看结构、关键帧，还是需要接近可发送 PPT？",
-            }
-        )
-    return gaps
+    """Deprecated legacy heuristic; production gaps come only from Fact Inventory."""
+    del requirements, all_text
+    return []
 
 
 def normalize_profile_key(value: str) -> str:
@@ -6349,84 +6287,30 @@ def append_imagegen_import_log(
     return path
 
 
-def perform_intake(project: Path, source_ids: list[str], goal: str) -> dict[str, int]:
+def perform_intake(
+    project: Path,
+    source_ids: list[str],
+    goal: str,
+    *,
+    max_total_chars: int = 2_000_000,
+) -> dict[str, int]:
     source_path = project / "AD-creative/orchestrator/source_events.csv"
     _, source_rows = read_csv_rows(source_path)
     source_id_set = set(source_ids)
     target_sources = [
         row for row in source_rows if not source_id_set or row.get("source_event_id") in source_id_set
     ]
-    materials: list[tuple[Path, str]] = []
-    source_by_file: dict[Path, str] = {}
-    for source in target_sources:
-        raw_path = source.get("file_paths", "")
-        path = Path(raw_path)
-        if not path.is_absolute():
-            path = project / raw_path
-        for file_path in material_files(path):
-            materials.append((file_path, read_material_text(file_path)))
-            source_by_file[file_path] = source.get("source_event_id", "")
-
+    intake_result = run_evidence_intake(
+        project,
+        target_sources,
+        max_total_chars=max_total_chars,
+    )
     requirement_path = project / "AD-creative/orchestrator/requirements.csv"
-    req_fields, requirement_rows = read_csv_rows(requirement_path)
-    existing_statements = unique_rows(requirement_rows, "statement")
-    requirement_statements = extract_requirement_statements(materials)
-    new_requirements: list[dict[str, str]] = []
-    allocate_req_id = id_allocator(requirement_rows, "requirement_id", "REQ")
-    for file_path, statement in requirement_statements:
-        if statement in existing_statements:
-            continue
-        req_id = allocate_req_id()
-        req_type, priority, affected_stage = classify_requirement(statement)
-        row = {
-            "requirement_id": req_id,
-            "source_event_id": source_by_file.get(file_path, source_ids[0] if source_ids else ""),
-            "owner": owner_for_statement(statement),
-            "statement": statement,
-            "requirement_type": req_type,
-            "priority": priority,
-            "status": "extracted",
-            "confidence": "0.72",
-            "scope": "project",
-            "affected_stage": affected_stage,
-            "linked_artifacts": "",
-            "supersedes_requirement_id": "",
-            "open_questions": "",
-        }
-        new_requirements.append(row)
-        existing_statements.add(statement)
-    if new_requirements:
-        requirement_rows.extend(new_requirements)
-        write_csv_rows(requirement_path, req_fields, requirement_rows)
-
-    all_text = "\n".join(text for _, text in materials)
+    _, requirement_rows = read_csv_rows(requirement_path)
+    new_requirements = intake_result.new_requirements
     gap_path = project / "AD-creative/orchestrator/gaps.csv"
-    gap_fields, gap_rows = read_csv_rows(gap_path)
-    existing_descriptions = unique_rows(gap_rows, "description")
-    new_gaps: list[dict[str, str]] = []
-    allocate_gap_id = id_allocator(gap_rows, "gap_id", "GAP")
-    for template in gap_templates(requirement_rows, all_text):
-        if template["description"] in existing_descriptions:
-            continue
-        gap_id = allocate_gap_id()
-        new_gaps.append(
-            {
-                "gap_id": gap_id,
-                "linked_requirement_id": template.get("linked_requirement_id", ""),
-                "impact": template.get("impact", "medium"),
-                "status": "open",
-                "description": template["description"],
-                "recommended_action": template["recommended_action"],
-                "owner": "client" if template.get("question_for_client") else "operator",
-                "question_for_user": "",
-                "question_for_client": template.get("question_for_client", ""),
-                "question_for_director": "",
-            }
-        )
-        existing_descriptions.add(template["description"])
-    if new_gaps:
-        gap_rows.extend(new_gaps)
-        write_csv_rows(gap_path, gap_fields, gap_rows)
+    _, gap_rows = read_csv_rows(gap_path)
+    new_gaps = intake_result.new_gaps
 
     linked_req_ids = ";".join(row["requirement_id"] for row in new_requirements) or ";".join(
         row.get("requirement_id", "") for row in requirement_rows[:8]
@@ -6544,7 +6428,7 @@ def perform_intake(project: Path, source_ids: list[str], goal: str) -> dict[str,
             "summary": f"Extracted {len(new_requirements)} requirements and {len(new_gaps)} gaps from local materials.",
         },
     )
-    return {"requirements": len(new_requirements), "gaps": len(new_gaps), "materials": len(materials)}
+    return intake_result.stats()
 
 
 def render_handoff(project: Path, goal: str, source_ids: list[str]) -> None:
@@ -17100,7 +16984,12 @@ def command_intake(args: argparse.Namespace) -> int:
     ensure_project(project)
     source_ids = args.source_id or []
     ensure_intake_work(project, source_ids, args.goal)
-    stats = perform_intake(project, source_ids, args.goal)
+    stats = perform_intake(
+        project,
+        source_ids,
+        args.goal,
+        max_total_chars=args.max_total_chars,
+    )
     render_handoff(project, args.goal, source_ids)
     dashboard = render_dashboard(project)
     errors, validate_stats = validate(project)
@@ -17108,6 +16997,10 @@ def command_intake(args: argparse.Namespace) -> int:
     print(f"INTAKE_MATERIALS={stats['materials']}")
     print(f"INTAKE_REQUIREMENTS={stats['requirements']}")
     print(f"INTAKE_GAPS={stats['gaps']}")
+    print(f"INTAKE_CHARACTERS_READ={stats['characters_read']}")
+    print(f"INTAKE_EVIDENCE_CHUNKS={stats['evidence_chunks']}")
+    print(f"INTAKE_OVER_BUDGET_FILES={stats['over_budget_files']}")
+    print(f"INTAKE_PARSER_ERRORS={stats['parser_errors']}")
     print(f"DASHBOARD={dashboard}")
     for key, value in validate_stats.items():
         print(f"{key.upper()}={value}")
@@ -17117,6 +17010,110 @@ def command_intake(args: argparse.Namespace) -> int:
         for error in errors:
             print(f"- {error}")
         return 1
+    return 0
+
+
+def selected_source_rows(project: Path, source_ids: list[str]) -> list[dict[str, str]]:
+    _, source_rows = read_csv_rows(
+        project / "AD-creative/orchestrator/source_events.csv"
+    )
+    selected = set(source_ids)
+    return [
+        row
+        for row in source_rows
+        if not selected or row.get("source_event_id", "") in selected
+    ]
+
+
+def command_intake_evidence(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    report = ingest_source_rows(
+        project,
+        selected_source_rows(project, args.source_id or []),
+        max_total_chars=args.max_total_chars,
+    )
+    payload = report.as_dict()
+    payload["intake_evidence"] = (
+        "PASS" if not report.over_budget and not report.parser_errors else "CHECK"
+    )
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"INTAKE_EVIDENCE={payload['intake_evidence']}")
+        print(f"EVIDENCE_PATH={project / payload['evidence_path']}")
+        print(f"FILES_PROCESSED={payload['files_processed']}")
+        print(f"CHARACTERS_READ={payload['characters_read']}")
+        print(f"EVIDENCE_CHUNKS={payload['evidence_chunks']}")
+        print(f"OVER_BUDGET_FILES={len(report.over_budget)}")
+        print(f"PARSER_ERRORS={len(report.parser_errors)}")
+        for item in report.over_budget:
+            print(
+                "OVER_BUDGET="
+                + json.dumps(item, ensure_ascii=False, sort_keys=True)
+            )
+        for item in report.parser_errors:
+            print(
+                "PARSER_ERROR="
+                + json.dumps(item, ensure_ascii=False, sort_keys=True)
+            )
+    return 0 if payload["intake_evidence"] == "PASS" else 1
+
+
+def command_export_intake_analysis_request(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    try:
+        payload, path = export_intake_analysis_request(project)
+    except ValueError as exc:
+        print("INTAKE_ANALYSIS_REQUEST=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "intake_analysis_request": "PASS",
+                    "path": str(path),
+                    "evidence_chunks": len(payload["evidence_chunks"]),
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        print("INTAKE_ANALYSIS_REQUEST=PASS")
+        print(f"PATH={path}")
+        print(f"EVIDENCE_CHUNKS={len(payload['evidence_chunks'])}")
+    return 0
+
+
+def command_import_intake_analysis(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    try:
+        facts, gaps, path = import_intake_analysis(
+            project,
+            Path(args.file).expanduser().resolve(),
+        )
+    except ValueError as exc:
+        print("INTAKE_ANALYSIS_IMPORT=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    payload = {
+        "intake_analysis_import": "PASS",
+        "fact_inventory": str(path),
+        "facts": len(facts),
+        "new_gaps": len(gaps),
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print("INTAKE_ANALYSIS_IMPORT=PASS")
+        print(f"FACT_INVENTORY={path}")
+        print(f"FACTS={len(facts)}")
+        print(f"NEW_GAPS={len(gaps)}")
     return 0
 
 
@@ -18524,7 +18521,35 @@ def build_parser() -> argparse.ArgumentParser:
     intake_parser.add_argument("project", help="Project directory.")
     intake_parser.add_argument("--source-id", action="append", default=[], help="Registered source_event_id to process. Repeatable.")
     intake_parser.add_argument("--goal", default="先完成需求整理、缺口判断、客户追问、下一步建议。")
+    intake_parser.add_argument("--max-total-chars", type=int, default=2_000_000, help="Maximum total extracted characters; overflow is reported by file and media type.")
     intake_parser.set_defaults(func=command_intake)
+
+    intake_evidence_parser = subparsers.add_parser(
+        "intake-evidence",
+        help="Parse registered materials into provenance-bound evidence chunks.",
+    )
+    intake_evidence_parser.add_argument("project", help="Project directory.")
+    intake_evidence_parser.add_argument("--source-id", action="append", default=[])
+    intake_evidence_parser.add_argument("--max-total-chars", type=int, default=2_000_000)
+    intake_evidence_parser.add_argument("--json", action="store_true")
+    intake_evidence_parser.set_defaults(func=command_intake_evidence)
+
+    analysis_export_parser = subparsers.add_parser(
+        "export-intake-analysis-request",
+        help="Export the evidence snapshot and schema for GPT-5.6 Sol fact analysis.",
+    )
+    analysis_export_parser.add_argument("project", help="Project directory.")
+    analysis_export_parser.add_argument("--json", action="store_true")
+    analysis_export_parser.set_defaults(func=command_export_intake_analysis_request)
+
+    analysis_import_parser = subparsers.add_parser(
+        "import-intake-analysis",
+        help="Import evidence-bound fact analysis and derive only supported gaps.",
+    )
+    analysis_import_parser.add_argument("project", help="Project directory.")
+    analysis_import_parser.add_argument("--file", required=True)
+    analysis_import_parser.add_argument("--json", action="store_true")
+    analysis_import_parser.set_defaults(func=command_import_intake_analysis)
 
     profile_parser = subparsers.add_parser(
         "profile-analyze",
