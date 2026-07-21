@@ -11,10 +11,9 @@ Help the user make better advertising work from real project material. Lead with
 the useful content answer; use files and governance only to preserve evidence or
 protect a real delivery boundary.
 
-This Skill is opt-in. Activate only after explicit
-`$ad-creative-orchestrator` invocation. Never activate it while maintaining,
-refactoring, testing, or benchmarking the ADCO source repository or the
-DIRcreative source repository.
+This Skill is opt-in: activate only after explicit `$ad-creative-orchestrator`
+invocation, never during ADCO source repository or DIRcreative source repository
+maintenance or testing.
 
 ## Default: Content Surface
 
@@ -32,30 +31,37 @@ briefs, concepts, scripts, storyboards, visual analysis, and ordinary revision.
 5. Return a decision-readable answer: conclusion/artifact first, evidence and
    real blockers second, next content action last.
 
+Before returning a creative artifact, silently map every explicit hard constraint
+to the draft and repair violations: locations/sub-locations, cast, duration,
+claims, product exposure, and any ban on invented facts or data. Treat the last
+one literally: do not invent numeric schedules, timestamps, prices, places,
+metrics, testimonials, or product facts as story devices. Only supplied facts and
+clearly labeled production timecodes/runtime/cast may use numbers. Avoid close
+synonyms of prohibited outcomes (for example, sober/clear-headed/low-burden for a
+sobering or health ban), not only the exact banned words. Treat each allowed
+location as physically exact: a living room does not authorize kitchen/fridge
+retrieval; a store entrance does not authorize interior fridges, shelves, or
+checkout. Scene labels cannot cure a mismatch. Make alternatives differ in causal
+mechanism, and revise any idea an adjacent substitute can replace unchanged. For
+named channels, change the hook, pacing, participation, or proof behavior, not
+merely crop or caption. State replacement risk when evidence cannot support
+exclusive ownership. Make no lowest/easiest/safest production claim without a
+visible comparison against every alternative. Do not expose a checklist or create
+records unless needed.
+
 For a new project, use:
 
 ```text
 adco run <project> --material <path> --goal "<requested outcome>"
 ```
 
-The default run creates a small content workspace, evidence/fact records, and a
-content summary. It runs no Dashboard, Council, Thread, Git workflow, PPT,
-Client Pack, FinalDelivery lock, or full delivery validation. Do not add those
+The default run creates a small workspace, evidence/fact records, and an intake
+summary labeled as intake, not creative output. It runs no Dashboard, Council,
+Thread, Git workflow, PPT, Client Pack, FinalDelivery lock, or full validation. Do not add those
 manually merely to make the process look complete.
 
-Keep durable state proportional to the task. The core records are:
-
-```text
-AD-creative/orchestrator/current_truth.md
-AD-creative/orchestrator/source_events.csv
-AD-creative/orchestrator/requirements.csv
-AD-creative/orchestrator/gaps.csv
-AD-creative/handoff/项目看板.md
-AD-creative/handoff/待你确认.md
-```
-
-Chat is the primary human decision surface. Project files preserve evidence;
-they do not outrank the requested creative outcome.
+Keep durable state proportional to the task. Chat is the primary human decision
+surface; project records preserve evidence but never outrank the creative outcome.
 
 ## Escalate only at a Delivery Boundary
 

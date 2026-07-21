@@ -92,9 +92,10 @@ def test_default_run_is_content_first_zero_dashboard_and_timed() -> None:
         assert payload["ppt_auto_generated"] == 0
         assert payload["client_pack_run_count"] == 0
         assert payload["full_validation_run_count"] == 0
-        assert payload["content_answer"]["objective"]
-        assert payload["content_answer"]["next_action"]
-        assert payload["content_answer"]["markdown"].startswith("## 当前目标")
+        assert payload["intake_summary"]["objective"]
+        assert payload["intake_summary"]["next_action"]
+        assert payload["intake_summary"]["markdown"].startswith("## 当前目标")
+        assert payload["content_answer"] == payload["intake_summary"]
         assert payload["intake"]["characters_read"] > 12_000
         assert payload["intake"]["evidence_chunks"] > 1
         assert "validate_final_delivery" in payload["incremental_validation"][

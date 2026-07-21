@@ -68,7 +68,7 @@ adco status <真实项目路径>
 adco next <真实项目路径>
 ```
 
-其中 `run` 把资料解析成 evidence chunks，更新 fact inventory、requirements、真实 gaps/conflicts，并先输出内容答案；默认 Dashboard、Council、Thread、Specialist、客户 outline、PPT、Client Pack 和全量 validation 都是 0。`status` 只读；`next` 只推进到下一个安全内容动作。AI 图客户可见、客户稿发送、付费/登录/上传资料前必须停。
+其中 `run` 把资料解析成 evidence chunks，更新 fact inventory、requirements、真实 gaps/conflicts，并输出明确标为 intake、不能冒充创意推理的 `INTAKE_SUMMARY`；当前 Agent 再据此完成用户真正要的内容答案。默认 Dashboard、Council、Thread、Specialist、客户 outline、PPT、Client Pack 和全量 validation 都是 0。`status` 只读；`next` 只推进到下一个安全内容动作。AI 图客户可见、客户稿发送、付费/登录/上传资料前必须停。
 
 Codex 展开方式：
 
@@ -147,19 +147,22 @@ Goal 模式默认仍由单一主控 inline 推进，不因“复杂”自动开 
 
 ```text
 adco creative-brief <真实项目路径> [--work-id <id>] [--json]
+adco creative-requirement-confirm <真实项目路径> --requirement-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> [--evidence-ref <chunk>] [--json]
+adco creative-constraint-resolve <真实项目路径> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> --decision <approved|rejected> --note <依据> [--json]
 adco creative-import <真实项目路径> --file <candidate.json> [--json]
 adco creative-review <真实项目路径> [--json]
 ```
 
 ```text
-creative-brief -> Sol/专业 Specialist -> independent Critic -> creative-import
+creative-brief -> Sol/专业 Specialist -> [按决策边界选择 Critic] -> creative-import
 
 要求：
-1. creative-brief 只冻结 evidence/fact/requirement/gap，生成 contract/schema/request，不生成方向或客户稿。
-2. GPT-5.6 Sol 或明确选择的专业 Specialist 基于 exact brief snapshot 生成 4-6 个机制不同的候选。
-3. 独立 Critic 检查 brief adherence、insight、brand ownership、机制差异、key visual、shootability、production risk 和 brand replacement，保留 2-3 个。
-4. creative-import 要求每个候选绑定现有 evidence chunk；无证据、stale snapshot 或重复机制直接拒绝，品牌专属性弱会被标记。
-5. creative-review 是确定性结构/语言 lint，不能替代独立 Critic；creative-proposal 仅是 creative-brief 的弃用 alias。
+1. creative-brief 只冻结 evidence/fact/requirement/gap，生成 hash-bound manifest/snapshot/contract/schema/request，不生成方向或客户稿。
+2. GPT-5.6 Sol 或明确选择的专业 Specialist 基于 exact brief snapshot 按用户要求生成机制不同的候选；未指定数量时只生成最小充分集合（1-6 个）。
+3. 只有明确要求或进入高后果决策边界时，独立 Critic 才检查 brief adherence、insight、brand ownership、机制差异、key visual、shootability、production risk 和 brand replacement；不为满足流程仪式而增加候选或审查。
+4. parser 发现的硬要求只有经 creative-requirement-confirm 绑定原始 source/evidence 与 typed user/client confirmation event 后才有耐久权威；事件必须精确绑定 requirement，直接改 CSV 或填写人名无效。无法机器判断的单个约束可用 creative-constraint-resolve 绑定 typed approval/rejection event；其 candidate payload、brief、direction、constraint 任一变化都会使裁决失效。
+5. creative-import 要求每个候选绑定现有 evidence chunk，并检查完整 brief manifest/self-hash、结构、硬约束与裁决；无证据、stale/corrupt brief、冲突方向数量、重复机制、未确认/未裁决要求或实际违规直接拒绝。通过后先写 version/派生视图/receipt，最后原子切换 current。evidence refs 只证明 provenance，不证明语义支持。
+6. creative-review 重新核对 current/version/import receipt/brief/派生视图后才运行确定性 lint；它不能替代独立 Critic。creative-proposal 仅是 creative-brief 的弃用 alias。
 6. 不复制 Cannes / Effie / System1 / Google / TikTok / WARC / Ipsos 案例措辞。
 7. 视频脚本、分镜、video prompt 使用 `adco specialist-handoff` 的 `dircreative.film-preproduction` profile；Controller 选择双方最高共同版本，provider 仅支持 v1 时回退 v1，v2 只允许 inline 且拒绝 nested dispatch 和外层 readiness claims。
 8. image / KV / 背景图交给 imagegen 或 Creative Production；固定 PPT / DOCX / XLSX 模板交给对应文档流程。

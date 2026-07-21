@@ -9,7 +9,7 @@ outline, PPT, Client Pack, upload, or send readiness, read
 ## Non-developer entrypoints
 
 The default `run` path stops after evidence intake, fact/gap updates, a concise
-content answer, and affected-scope validation. It creates no Dashboard unless
+intake summary explicitly distinct from creative output, and affected-scope validation. It creates no Dashboard unless
 `--dashboard` is explicitly requested. It must not auto-run Council, generate
 creative directions, dispatch a specialist, build a client outline/PPT/Client
 Pack, or run full delivery validation.
@@ -29,6 +29,8 @@ adco run <project> --material <path> [--material <path> ...] [--max-total-chars 
 adco migrate-control-plane <project> [--dry-run] [--json]
 adco agency-audit <project>
 adco creative-brief <project> [--work-id <id>] [--json]
+adco creative-requirement-confirm <project> --requirement-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> [--evidence-ref <chunk>] [--json]
+adco creative-constraint-resolve <project> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> --decision <approved|rejected> --note <reason> [--json]
 adco creative-import <project> --file <candidate.json> [--json]
 adco creative-review <project> [--json]
 adco creative-proposal <project> [--work-id <id>] [--json]
@@ -124,7 +126,8 @@ subcommands. Use these command mappings when operating through `adco`:
 2. Register materials as initial/supplement/change/feedback/approval/rejection/director note/unknown.
 3. Parse supported formats into source-preserving evidence chunks without the old 12,000-character/16-line truncation path.
 4. Update the fact inventory, requirements, true gaps/conflicts, and two handoff files.
-5. Emit the useful content answer before metrics or file paths.
+5. Emit the useful `INTAKE_SUMMARY` before metrics or file paths, and never
+   present that evidence summary as creative reasoning or a finished artifact.
 6. Render no Dashboard unless `--dashboard` was requested.
 7. Run only validators affected by changed evidence/fact/requirement/gap artifacts and report the scoped plan plus phase timings.
 8. Stop with the next content action. Do not run Council, Specialist Exchange, creative generation/import, PPT, Client Pack, or full `adco validate` automatically.
@@ -188,8 +191,8 @@ Migration manifests are written only when legacy evidence exists. They are immut
 
 ## Gate semantics
 
-- `creative-import`: structural and provenance validation for 2-3 selected candidates; rejects stale/unbound evidence and duplicate mechanisms, and flags weak brand ownership.
-- `creative-review`: deterministic structure/language lint; Content returns it read-only without a receipt, while Delivery may persist an exact-bound Critic receipt.
+- `creative-import`: pre-write structural, hard-constraint, and provenance validation for one to six candidates matching the brief's requested count; rejects stale/unbound evidence, unconfirmed or unsupported hard requirements, semantic violations, and duplicate mechanisms before changing current/version artifacts, then binds the receipt to exact persisted bytes. Evidence refs prove provenance only, not semantic claim support; weak brand ownership is flagged.
+- `creative-review`: deterministic structure/semantic/language lint; Content returns it read-only without a receipt, while Delivery may persist an exact-bound Critic receipt.
 - `creative-quality-gate`: downstream legacy proposal completeness and client-safety checks; it is not Sol generation, independent Critic judgment, or client approval.
 - `client-outline-gate`: complete page framework plus explicit hash-bound human/client confirmation.
 - `client-language-gate`: blocks prompts, execution/Thread language, internal notes, fake/unsupported claims.

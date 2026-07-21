@@ -73,12 +73,15 @@ adco 的创意控制定位：
 
 ```text
 adco creative-brief <项目目录> [--work-id <id>] [--json]
+adco creative-requirement-confirm <项目目录> --requirement-id <id> --confirmation-ref <user_confirmation:source_event_id|client_confirmation:source_event_id> [--evidence-ref <chunk>] [--json]
+adco creative-constraint-resolve <项目目录> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <user_confirmation:source_event_id|client_confirmation:source_event_id> --decision <approved|rejected> --note <依据> [--json]
 adco creative-import <项目目录> --file <candidate.json> [--json]
 adco creative-review <项目目录> [--json]
 
 creative-brief 只冻结 evidence/fact/requirement/gap，并生成 brief contract、candidate schema 和 generation request；它不生成创意方向。
-GPT-5.6 Sol 或明确选择的专业 Specialist 基于该 contract 生成 4-6 个候选；独立 Critic 做品牌替换测试和机制去重后保留 2-3 个，再交给 creative-import。
-creative-import 拒绝无证据、stale snapshot 和重复机制；品牌专属性弱会被标记。creative-review 只是确定性结构/语言 lint，不能替代独立 Critic、客户或创意负责人判断。
+GPT-5.6 Sol 或明确选择的专业 Specialist 基于该 contract 按用户要求生成候选；未指定数量时只生成最小充分集合（1-6 个）。只有明确要求或进入高后果决策边界时才加入独立 Critic，再交给 creative-import。
+需要把 parser 发现的硬要求用于耐久导入时，只确认对应 requirement：`--confirmation-ref` 必须指向已登记的 typed `user_confirmation` / `client_confirmation` source event；事件的 owner、trust、`creative_requirement_confirmation` 语义、单一证据文件和 exact requirement ID 必须一致，名字字符串或直接改 CSV 都不生效。无法安全机器判断的单个约束，用 creative-constraint-resolve 绑定 typed approval/rejection event；该事件还必须精确绑定 candidate payload、brief、direction 和 constraint，不需要 Council、Thread 或完整 Gate。
+creative-import 拒绝无证据、stale/corrupt brief、重复机制、未确认/未裁决的硬要求和实际约束违规；brief manifest、snapshot 自哈希、candidate version/current/import receipt、directions 和 matrix 必须逐字节匹配。`candidate_sha256` 绑定落盘文件的精确字节。evidence refs 只证明来源存在，不证明语义支持。品牌专属性弱会被标记。creative-review 只是确定性结构/语义/语言 lint，不能替代独立 Critic、客户或创意负责人判断。
 creative-proposal 仅为 creative-brief 的弃用兼容 alias。
 视频/分镜/video prompt 通过协商后的 `adco.specialist-exchange` 交给 `dircreative.film-preproduction`；ADCO 保留采用、版本、PPT 和客户准备权。
 image / KV / 背景图交给 imagegen 或 Creative Production。
@@ -93,7 +96,7 @@ docs/operating/creative_proposal_quality_standard.md
 
 ## 3. 看哪里
 
-优先看 CLI 返回的 `CONTENT_ANSWER` 和：
+优先看 CLI 返回的 `INTAKE_SUMMARY`（只是资料整理，不是创意成品）和：
 
 ```text
 AD-creative/handoff/操作台.html

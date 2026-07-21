@@ -45,6 +45,7 @@ from adco_core.facts import (
 )
 from adco_core.creative_contract import (
     BRIEF_CONTRACT_REL,
+    BRIEF_MANIFEST_REL,
     BRIEF_SNAPSHOT_REL,
     CANDIDATE_IMPORT_RECEIPT_REL,
     CANDIDATE_SCHEMA_REL,
@@ -54,8 +55,10 @@ from adco_core.creative_contract import (
     GENERATION_REQUEST_REL,
     OPEN_GAPS_REL,
     OPTION_MATRIX_REL,
+    confirm_creative_requirement,
     create_creative_brief,
     import_creative_candidate,
+    resolve_creative_constraint,
     review_creative_candidate,
 )
 from adco_core.commands.run import RunPreflightError, execute_lightweight_run
@@ -70,6 +73,7 @@ from adco_core.ingestion import (
     source_row_material_roots,
 )
 from adco_core.incremental_validation import run_incremental_validation
+from adco_core.safe_write import atomic_write_text, read_project_text
 from adco_core.specialist_exchange import (
     V2_CONTRACT_VERSION,
     build_v2_handoff,
@@ -113,7 +117,7 @@ REPO_ROOT = repo_or_module_root()
 TEMPLATE_ROOT = template_root()
 SKILL_DRAFT_DIR = skill_draft_dir()
 PACKAGE_NAME = "ad-creative-orchestrator"
-FALLBACK_VERSION = "0.3.2"
+FALLBACK_VERSION = "0.3.3"
 CONTROL_PLANE_SCHEMA_VERSION = "2.0"
 CONTROL_PLANE_SCHEMA_REL = Path("AD-creative/orchestrator/control_plane_schema.json")
 CONTROL_PLANE_MIGRATION_MANIFEST_REL = Path(
@@ -1291,29 +1295,49 @@ def ensure_delivery_project(project: Path) -> tuple[int, int]:
 def read_csv_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     if not path.exists():
         return [], []
-    with path.open(newline="", encoding="utf-8") as handle:
+    project = _artifact_project_root(path)
+    text = read_project_text(project, path) if project is not None else path.read_text(encoding="utf-8")
+    with io.StringIO(text, newline="") as handle:
         reader = csv.DictReader(handle)
         return list(reader.fieldnames or []), list(reader)
 
 
+def _artifact_project_root(path: Path) -> Path | None:
+    absolute = Path(os.path.abspath(os.fspath(path)))
+    markers = [
+        index for index, part in enumerate(absolute.parts) if part == "AD-creative"
+    ]
+    if not markers:
+        return None
+    marker = markers[-1]
+    return Path(*absolute.parts[:marker])
+
+
 def write_csv_rows(path: Path, fieldnames: list[str], rows: Iterable[dict[str, str]]) -> None:
+    handle = io.StringIO(newline="")
+    writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({key: row.get(key, "") for key in fieldnames})
+    project = _artifact_project_root(path)
+    if project is not None:
+        atomic_write_text(project, path, handle.getvalue())
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
             "w",
-            newline="",
             encoding="utf-8",
             dir=path.parent,
             prefix=f".{path.name}.",
             suffix=".tmp",
             delete=False,
-        ) as handle:
-            temp_path = Path(handle.name)
-            writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
-            writer.writeheader()
-            for row in rows:
-                writer.writerow({key: row.get(key, "") for key in fieldnames})
+        ) as temp_handle:
+            temp_path = Path(temp_handle.name)
+            temp_handle.write(handle.getvalue())
+            temp_handle.flush()
+            os.fsync(temp_handle.fileno())
         os.replace(temp_path, path)
     finally:
         if temp_path is not None:
@@ -5518,7 +5542,7 @@ client real objective: {context['client_objective']}
 2. 受众与行为阻力
 3. 产品功能到传播利益
 4. 策略路径
-5. 2-3 条创意方向对比
+5. {len(rows)} 条创意方向对比（数量来自当前 brief/候选，不补齐固定配额）
 6. 推荐方向与选择理由
 7. 风险、缺口、待确认问题
 
@@ -5549,7 +5573,7 @@ def render_slide_spec_content(rows: list[dict[str, str]]) -> str:
         ("1", "Problem", "Business problem + client real objective", "none", "internal_only"),
         ("2", "Audience Insight", "Target audience + behavior barrier + consumer insight", "none", "internal_only"),
         ("3", "Feature To Benefit", "Product feature translated to communication benefit", "none", "internal_only"),
-        ("4", "Direction Matrix", "2-3 differentiated directions with why choose", "none", "internal_only"),
+        ("4", "Direction Matrix", f"{len(rows)} differentiated directions with why choose", "none", "internal_only"),
     ]
     for index, row in enumerate(rows, start=5):
         slide_rows.append(
@@ -5783,6 +5807,7 @@ def render_creative_brief(project: Path, *, work_id: str = "") -> dict[str, obje
         )
     result = create_creative_brief(project)
     brief_artifacts = [
+        ("ART-AUTO-CREATIVE-BRIEF-MANIFEST", "creative_brief_manifest", BRIEF_MANIFEST_REL),
         ("ART-AUTO-CREATIVE-BRIEF-SNAPSHOT", "creative_brief_snapshot", BRIEF_SNAPSHOT_REL),
         ("ART-AUTO-CREATIVE-BRIEF-CONTRACT", "creative_brief_contract", BRIEF_CONTRACT_REL),
         ("ART-AUTO-CREATIVE-CANDIDATE-SCHEMA", "creative_candidate_schema", CANDIDATE_SCHEMA_REL),
@@ -6099,7 +6124,9 @@ def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
 
     if candidate_mode:
         try:
-            critic_result = review_creative_candidate(project)
+            critic_result = review_creative_candidate(
+                project, independent_critic_required=True
+            )
         except ValueError as exc:
             reason_codes.append("CRITIC_RECEIPT_INVALID")
             issues.append(f"Critic Receipt could not be produced: {exc}")
@@ -19049,11 +19076,16 @@ def command_import_creative_production(args: argparse.Namespace) -> int:
 
 def _command_creative_brief(args: argparse.Namespace, *, deprecated: bool) -> int:
     project = Path(args.project).resolve()
-    payload = (
-        render_creative_proposal(project, work_id=args.work_id)
-        if deprecated
-        else render_creative_brief(project, work_id=args.work_id)
-    )
+    try:
+        payload = (
+            render_creative_proposal(project, work_id=args.work_id)
+            if deprecated
+            else render_creative_brief(project, work_id=args.work_id)
+        )
+    except (OSError, ValueError) as exc:
+        print("CREATIVE_BRIEF=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
     incremental = run_incremental_validation(
         project,
         changed_artifact_ids=payload["artifact_ids"],
@@ -19102,6 +19134,85 @@ def command_creative_brief(args: argparse.Namespace) -> int:
 
 def command_creative_proposal(args: argparse.Namespace) -> int:
     return _command_creative_brief(args, deprecated=True)
+
+
+def command_creative_requirement_confirm(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    try:
+        result = confirm_creative_requirement(
+            project,
+            args.requirement_id,
+            confirmation_ref=args.confirmation_ref,
+            evidence_ref=args.evidence_ref,
+        )
+    except ValueError as exc:
+        print("CREATIVE_REQUIREMENT_CONFIRM=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    payload = {
+        "creative_requirement_confirm": "PASS",
+        "requirement_id": result.requirement_id,
+        "confirmation_receipt": str(result.path),
+        "confirmed_by": result.receipt["confirmed_by"],
+        "confirmation_ref": result.receipt["confirmation_ref"],
+        "source_event_id": result.receipt["source_event_id"],
+        "evidence_ref": result.receipt["evidence_ref"],
+        "next_action": f"adco creative-brief {project}",
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print("CREATIVE_REQUIREMENT_CONFIRM=PASS")
+        print(f"REQUIREMENT_ID={result.requirement_id}")
+        print(f"CONFIRMATION_RECEIPT={result.path}")
+        print(f"CONFIRMED_BY={result.receipt['confirmed_by']}")
+        print(f"CONFIRMATION_REF={result.receipt['confirmation_ref']}")
+        print(f"EVIDENCE_REF={result.receipt['evidence_ref']}")
+        print(f"NEXT_ACTION=adco creative-brief {project}")
+    return 0
+
+
+def command_creative_constraint_resolve(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    candidate_file = Path(args.file).expanduser().resolve()
+    try:
+        result = resolve_creative_constraint(
+            project,
+            candidate_file,
+            direction_id=args.direction_id,
+            constraint_id=args.constraint_id,
+            confirmation_ref=args.confirmation_ref,
+            decision=args.decision,
+            note=args.note,
+        )
+    except ValueError as exc:
+        print("CREATIVE_CONSTRAINT_RESOLVE=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    payload = {
+        "creative_constraint_resolve": "PASS",
+        "constraint_id": result.constraint_id,
+        "direction_id": result.direction_id,
+        "decision": result.resolution["decision"],
+        "reviewed_by": result.resolution["reviewed_by"],
+        "confirmation_ref": result.resolution["confirmation_ref"],
+        "resolution_path": str(result.path),
+        "next_action": f"adco creative-import {project} --file {candidate_file}",
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print("CREATIVE_CONSTRAINT_RESOLVE=PASS")
+        print(f"CONSTRAINT_ID={result.constraint_id}")
+        print(f"DIRECTION_ID={result.direction_id}")
+        print(f"DECISION={result.resolution['decision']}")
+        print(f"REVIEWED_BY={result.resolution['reviewed_by']}")
+        print(f"CONFIRMATION_REF={result.resolution['confirmation_ref']}")
+        print(f"RESOLUTION_PATH={result.path}")
+        print(f"NEXT_ACTION=adco creative-import {project} --file {candidate_file}")
+    return 0
 
 
 def command_creative_import(args: argparse.Namespace) -> int:
@@ -19336,8 +19447,8 @@ def command_run(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if not errors else 1
-    print("CONTENT_ANSWER:")
-    print(result["content_answer"]["markdown"])
+    print("INTAKE_SUMMARY:")
+    print(result["intake_summary"]["markdown"])
     print(f"PROJECT={project}")
     print(f"PROJECT_SURFACE={project_surface(project)}")
     print(f"CREATED_FILES={result['created_files']}")
@@ -19384,7 +19495,8 @@ def _run_sample_content(project: Path, *, force_material: bool) -> dict[str, obj
     if project_surface(project) == DELIVERY_SURFACE:
         ensure_intake_work(project, source_ids, SAMPLE_GOAL)
     intake_stats = perform_intake(project, source_ids, SAMPLE_GOAL)
-    content_answer = render_handoff(project, SAMPLE_GOAL, source_ids)
+    intake_summary = render_handoff(project, SAMPLE_GOAL, source_ids)
+    intake_summary["artifact_role"] = "intake_summary_not_creative_output"
     errors, stats = validate(project)
     return {
         "project": str(project),
@@ -19397,7 +19509,8 @@ def _run_sample_content(project: Path, *, force_material: bool) -> dict[str, obj
         "registered_sources": registered_sources,
         "source_ids": source_ids,
         "intake": intake_stats,
-        "content_answer": content_answer,
+        "intake_summary": intake_summary,
+        "content_answer": intake_summary,
         "stats": stats,
         "errors": errors,
     }
@@ -19408,8 +19521,8 @@ def command_sample(args: argparse.Namespace) -> int:
     result = _run_sample_content(project, force_material=args.force_material)
     errors = result["errors"]
     print(f"SAMPLE={'PASS' if not errors else 'CHECK'}")
-    print("CONTENT_ANSWER:")
-    print(result["content_answer"]["markdown"])
+    print("INTAKE_SUMMARY:")
+    print(result["intake_summary"]["markdown"])
     print(f"PROJECT={result['project']}")
     print(f"PROJECT_SURFACE={result['surface']}")
     print(f"CREATED_FILES={result['created_files']}")
@@ -19444,8 +19557,8 @@ def command_demo(args: argparse.Namespace) -> int:
         open_status = "PASS" if webbrowser.open(dashboard.as_uri()) else "CHECK"
     errors = result["errors"]
     print(f"DEMO={'PASS' if not errors and open_status != 'CHECK' else 'CHECK'}")
-    print("CONTENT_ANSWER:")
-    print(result["content_answer"]["markdown"])
+    print("INTAKE_SUMMARY:")
+    print(result["intake_summary"]["markdown"])
     print(f"PROJECT={result['project']}")
     print(f"PROJECT_SURFACE={result['surface']}")
     print(f"CREATED_FILES={result['created_files']}")
@@ -19498,8 +19611,8 @@ def command_quickstart(args: argparse.Namespace) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if quickstart_status == "PASS" else 1
     print(f"QUICKSTART={quickstart_status}")
-    print("CONTENT_ANSWER:")
-    print(result["content_answer"]["markdown"])
+    print("INTAKE_SUMMARY:")
+    print(result["intake_summary"]["markdown"])
     print(f"PROJECT={result['project']}")
     print(f"PROJECT_SURFACE={result['surface']}")
     print(f"CREATED_FILES={result['created_files']}")
@@ -19571,7 +19684,8 @@ def command_intake(args: argparse.Namespace) -> int:
         args.goal,
         max_total_chars=args.max_total_chars,
     )
-    content_answer = render_handoff(project, args.goal, source_ids)
+    intake_summary = render_handoff(project, args.goal, source_ids)
+    intake_summary["artifact_role"] = "intake_summary_not_creative_output"
     incremental = run_incremental_validation(
         project,
         changed_artifact_ids=[
@@ -19592,8 +19706,8 @@ def command_intake(args: argparse.Namespace) -> int:
         errors.append("intake total character budget exceeded")
     if stats["parser_errors"]:
         errors.append("one or more material parsers failed")
-    print("CONTENT_ANSWER:")
-    print(content_answer["markdown"])
+    print("INTAKE_SUMMARY:")
+    print(intake_summary["markdown"])
     print(f"PROJECT={project}")
     print(f"PROJECT_SURFACE={project_surface(project)}")
     print(f"INTAKE_MATERIALS={stats['materials']}")
@@ -21090,9 +21204,48 @@ def build_parser() -> argparse.ArgumentParser:
     creative_brief_parser.add_argument("--json", action="store_true")
     creative_brief_parser.set_defaults(func=command_creative_brief)
 
+    creative_requirement_confirm_parser = subparsers.add_parser(
+        "creative-requirement-confirm",
+        help="Confirm one requirement against source evidence and a typed user/client authority event.",
+    )
+    creative_requirement_confirm_parser.add_argument("project", help="Project directory.")
+    creative_requirement_confirm_parser.add_argument("--requirement-id", required=True)
+    creative_requirement_confirm_parser.add_argument(
+        "--confirmation-ref",
+        required=True,
+        help="Typed user_confirmation:<source_event_id> or client_confirmation:<source_event_id>.",
+    )
+    creative_requirement_confirm_parser.add_argument("--evidence-ref", default="")
+    creative_requirement_confirm_parser.add_argument("--json", action="store_true")
+    creative_requirement_confirm_parser.set_defaults(
+        func=command_creative_requirement_confirm
+    )
+
+    creative_constraint_resolve_parser = subparsers.add_parser(
+        "creative-constraint-resolve",
+        help="Record a typed user/client decision for one REVIEW_REQUIRED candidate constraint.",
+    )
+    creative_constraint_resolve_parser.add_argument("project", help="Project directory.")
+    creative_constraint_resolve_parser.add_argument("--file", required=True)
+    creative_constraint_resolve_parser.add_argument("--direction-id", required=True)
+    creative_constraint_resolve_parser.add_argument("--constraint-id", required=True)
+    creative_constraint_resolve_parser.add_argument(
+        "--confirmation-ref",
+        required=True,
+        help="Typed user_confirmation:<source_event_id> or client_confirmation:<source_event_id>.",
+    )
+    creative_constraint_resolve_parser.add_argument(
+        "--decision", choices=["approved", "rejected"], required=True
+    )
+    creative_constraint_resolve_parser.add_argument("--note", required=True)
+    creative_constraint_resolve_parser.add_argument("--json", action="store_true")
+    creative_constraint_resolve_parser.set_defaults(
+        func=command_creative_constraint_resolve
+    )
+
     creative_candidate_parser = subparsers.add_parser(
         "creative-import",
-        help="Import 2-3 evidence-bound post-Critic creative candidates.",
+        help="Import 1-6 evidence-bound creative candidates matching the brief request.",
     )
     creative_candidate_parser.add_argument("project", help="Project directory.")
     creative_candidate_parser.add_argument("--file", required=True)
@@ -21655,6 +21808,8 @@ def main() -> int:
         "import-intake-analysis",
         "creative-brief",
         "creative-proposal",
+        "creative-requirement-confirm",
+        "creative-constraint-resolve",
         "creative-import",
         "creative-review",
         "sample",

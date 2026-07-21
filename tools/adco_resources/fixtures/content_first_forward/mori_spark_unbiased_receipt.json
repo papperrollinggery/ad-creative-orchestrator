@@ -1,0 +1,98 @@
+{
+  "artifacts": {
+    "brief": {
+      "path": "tools/fixtures/content_first_forward/mori_spark_unbiased_brief.md",
+      "sha256": "fb63f10e8466cdd5867eb6374569a4ec34db1c9fd154aac765681c716951e12a"
+    },
+    "creative_contract": {
+      "path": "tools/adco_core/creative_contract.py",
+      "sha256": "43d665083c45b15ccf5b3733261b1e4c3dc84b4e3d85cb8d285f88513fb1187a"
+    },
+    "creative_reference": {
+      "path": "skill_drafts/ad-creative-orchestrator/creative_contract.md",
+      "sha256": "8880b887faca7954b3b161fbc0bf212e448debe9c5c734f3f1ad0f0056b8c6f8"
+    },
+    "facts": {
+      "path": "tools/adco_core/facts.py",
+      "sha256": "6331bce75424d6f5c60d73fd2a1bd790126732bd84ec008df78aeb1a7505fe27"
+    },
+    "full_pptx_fixture": {
+      "path": "skill_drafts/ad-creative-orchestrator/fixtures/chat-visualization/sample-deck.pptx",
+      "sha256": "036516b5f14fa595f81b4e88f3fea0c3f36d8fcd9fb86167c1c43c3e880138f4"
+    },
+    "output": {
+      "path": "tools/fixtures/content_first_forward/mori_spark_unbiased_output.md",
+      "sha256": "aa6634913f335b9e29618341b8d9f1fb0572c95751dd96082a5aed83663b5f28"
+    },
+    "semantic_test": {
+      "path": "tools/test_creative_contract.py",
+      "sha256": "cf431945a0d6a8bff409e96bb6eca2db79f41bf3387ebcb4dc5cb4135d679d1f"
+    },
+    "skill": {
+      "path": "skill_drafts/ad-creative-orchestrator/SKILL.md",
+      "sha256": "3be8d86fcd8383d5ed906ae0ff3b0141ab0a1aeb0172d3b4ef12dd3e22133e0f"
+    },
+    "skill_tree": {
+      "managed_file_count": 43,
+      "path": "skill_drafts/ad-creative-orchestrator",
+      "sha256": "2094819f0904f2639d77f4357859c180ee93df7804d566cb8bee441e393bc262"
+    }
+  },
+  "captured_at": "2026-07-22T06:37:47+08:00",
+  "conversation": {
+    "browser": "Chrome",
+    "fresh_conversation": true,
+    "mode_ui_confirmed": true,
+    "provider": "ChatGPT",
+    "reasoning_mode": "极高",
+    "url": "https://chatgpt.com/c/6a5ff32f-56a0-83e8-9238-9f7d7f185b7e"
+  },
+  "evidence_type": "manual_browser_readback_with_hash_bound_artifacts",
+  "observed_result": {
+    "answer_character_count": 4066,
+    "answer_nonempty": true,
+    "control_surface_operations": 0,
+    "fixture_character_count": 4066,
+    "fixture_transcription": "Normalized Markdown preserving the assistant answer content; Chrome attachment-card UI labels were excluded."
+  },
+  "schema_version": 1,
+  "verification_scope": {
+    "automated_conversation_attestation": false,
+    "status": "MANUAL_READBACK_ONLY",
+    "verified_by_automation": [
+      "artifact_hashes",
+      "output_nonempty",
+      "receipt_structure"
+    ],
+    "verified_by_manual_browser_readback": [
+      "fresh_conversation",
+      "reasoning_mode_ui",
+      "submitted_material_scope",
+      "conversation_url"
+    ],
+    "limitation": "Repository tests validate this receipt and its bound artifacts; they do not independently read the live ChatGPT conversation or attest the Chrome UI."
+  },
+  "unbiased_protocol": {
+    "excluded_materials": [
+      "prior_answers",
+      "prior_findings",
+      "evaluation_rubric",
+      "desired_direction",
+      "desired_verdict"
+    ],
+    "included_materials": [
+      "current_SKILL.md",
+      "current_creative_contract.md",
+      "task_brief"
+    ],
+    "material_character_counts": {
+      "current_SKILL.md": 6588,
+      "current_creative_contract.md": 9992,
+      "task_brief": 320
+    },
+    "submitted_message_dom_character_count": 17093,
+    "submitted_message_dom_readback_includes_ui_expand_label": true,
+    "task_request": "请按照所附的当前 Skill、创意契约参考与项目 brief，直接完成本轮广告创意任务，给出可供内部评审的完整答案。",
+    "task_request_character_count": 58
+  }
+}

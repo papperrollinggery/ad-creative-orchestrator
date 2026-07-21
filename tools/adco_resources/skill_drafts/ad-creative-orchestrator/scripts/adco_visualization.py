@@ -12,6 +12,7 @@ import html
 import json
 import re
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -128,6 +129,14 @@ class VisualizationError(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class VerifiedArtifact:
+    """Immutable bytes captured by the same read that passed SHA verification."""
+
+    path: Path
+    data: bytes
+
+
 def load_json(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -144,7 +153,18 @@ def _is_nonempty(value: Any) -> bool:
 
 def frontstage_term_errors(values: list[Any], context: str = "customer-visible content") -> list[str]:
     lowered = "\n".join(str(value) for value in values).lower()
-    return [f"{context} contains backstage term: {token}" for token in FRONTSTAGE_FORBIDDEN if token in lowered]
+    errors: list[str] = []
+    for token in FRONTSTAGE_FORBIDDEN:
+        if re.fullmatch(r"[a-z0-9_. -]+", token):
+            found = re.search(
+                rf"(?<![a-z0-9_]){re.escape(token)}(?![a-z0-9_])",
+                lowered,
+            )
+        else:
+            found = token in lowered
+        if found:
+            errors.append(f"{context} contains backstage term: {token}")
+    return errors
 
 
 def validate_spec(document: dict[str, Any]) -> list[str]:
@@ -631,9 +651,9 @@ def mermaid_label(value: Any) -> str:
 
 def verify_physical_artifacts(
     document: dict[str, Any], project_root: Path, artifact_ids: set[str] | None = None
-) -> tuple[dict[str, Path], list[str]]:
+) -> tuple[dict[str, VerifiedArtifact], list[str]]:
     root = project_root.expanduser().resolve()
-    verified: dict[str, Path] = {}
+    verified: dict[str, VerifiedArtifact] = {}
     errors: list[str] = []
     for artifact in document["source_truth"]["artifacts"]:
         artifact_id = artifact["artifact_id"]
@@ -648,11 +668,16 @@ def verify_physical_artifacts(
         if not candidate.is_file():
             errors.append(f"artifact {artifact_id} is missing")
             continue
-        digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+        try:
+            data = candidate.read_bytes()
+        except OSError:
+            errors.append(f"artifact {artifact_id} cannot be read")
+            continue
+        digest = hashlib.sha256(data).hexdigest()
         if digest != artifact["sha256"]:
             errors.append(f"artifact {artifact_id} physical SHA-256 mismatch")
             continue
-        verified[artifact_id] = candidate
+        verified[artifact_id] = VerifiedArtifact(path=candidate, data=data)
     return verified, errors
 
 
@@ -701,7 +726,7 @@ def _current_version_truth_values(text: str) -> dict[str, str] | None:
 
 
 def validate_adco_control_plane_binding(
-    document: dict[str, Any], project_root: Path | None, verified_artifacts: dict[str, Path],
+    document: dict[str, Any], project_root: Path | None, verified_artifacts: dict[str, VerifiedArtifact],
     json_records: dict[str, dict[str, Any]],
 ) -> list[str]:
     if document["source_truth"].get("binding_mode") != "adco-control-plane":
@@ -809,34 +834,28 @@ def validate_adco_control_plane_binding(
                     semantics = confirmation.get("declared_semantics", "").strip().lower()
                     trust = confirmation.get("trust_level", "").strip().lower()
                     owner = confirmation.get("source_owner", "").strip().lower()
+                    expected_owner = "user" if evidence_ref.startswith("user_confirmation:") else "client"
+                    expected_type = f"{expected_owner}_confirmation"
+                    expected_trust = f"{expected_owner}_confirmed"
                     evidence_ok = (
-                        confirmation_type in {"decision", "user_confirmation", "client_confirmation"}
-                        and semantics in {"approval", "authorization", "direct_use_authorization"}
-                        and trust in {"high", "user_confirmed", "client_confirmed"}
+                        confirmation_type == expected_type
+                        and semantics == "direct_use_authorization"
+                        and trust == expected_trust
                         and bool(confirmation.get("received_at", "").strip())
-                        and owner in {"user", "client", row.get("approved_by", "").strip().lower()}
+                        and owner == expected_owner
+                        and row.get("approved_by", "").strip().lower() == expected_owner
                         and (
                             preview_id in confirmation.get("affects_artifacts", "")
                             or preview["path"] in confirmation.get("file_paths", "")
                         )
                     )
-            elif evidence_ref:
-                evidence_path = (root / evidence_ref).resolve()
-                try:
-                    evidence_path.relative_to(root)
-                    evidence_ok = (
-                        evidence_path.is_file()
-                        and row.get("evidence_sha256", "").strip() == hashlib.sha256(evidence_path.read_bytes()).hexdigest()
-                    )
-                except ValueError:
-                    evidence_ok = False
             valid = (
                 row.get("asset_id", "").strip() == preview_id
                 and row.get("asset_sha256", "").strip() == preview["sha256"]
                 and row.get("approval_scope", "").strip().lower() in {"client_review", "client_delivery", "client_visible"}
                 and row.get("status", "").strip().lower() == "approved"
                 and not row.get("revoked_at", "").strip()
-                and row.get("approved_by", "").strip().lower() not in {"", "automation", "worker", "main controller", "ad_creative_operator"}
+                and row.get("approved_by", "").strip().lower() in {"user", "client"}
                 and bool(row.get("approved_at", "").strip())
                 and evidence_ok
             )
@@ -857,7 +876,7 @@ def validate_adco_control_plane_binding(
 
 
 def validate_asset_physical_bindings(
-    document: dict[str, Any], verified_artifacts: dict[str, Path], project_root: Path | None = None,
+    document: dict[str, Any], verified_artifacts: dict[str, VerifiedArtifact], project_root: Path | None = None,
 ) -> list[str]:
     if document.get("surface", {}).get("kind") != "asset-review":
         return []
@@ -879,17 +898,17 @@ def validate_asset_physical_bindings(
         if not isinstance(artifact, dict) or artifact.get("lifecycle") != "current" or artifact.get("version") != current_version:
             errors.append(f"{context} must reference a current-version artifact")
             return None, UNRESOLVED
-        path = verified_artifacts.get(artifact_id)
-        if path is None:
+        verified = verified_artifacts.get(artifact_id)
+        if verified is None:
             errors.append(f"{context} source artifact was not physically verified")
             return None, UNRESOLVED
-        if path.suffix.lower() != ".json":
+        if verified.path.suffix.lower() != ".json":
             errors.append(f"{context} must reference a structured JSON record")
             return None, UNRESOLVED
         if artifact_id not in json_cache:
             try:
-                record = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+                record = json.loads(verified.data.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
                 errors.append(f"{context} structured source cannot be read")
                 return None, UNRESOLVED
             if not isinstance(record, dict):
@@ -973,12 +992,12 @@ def validate_asset_physical_bindings(
     return errors
 
 
-def image_data_uri(path: Path) -> str:
-    suffix = path.suffix.lower()
+def image_data_uri(artifact: VerifiedArtifact) -> str:
+    suffix = artifact.path.suffix.lower()
     mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}.get(suffix)
     if not mime:
         raise VisualizationError(f"preview format is not supported: {suffix}")
-    raw = path.read_bytes()
+    raw = artifact.data
     if suffix == ".svg":
         lowered = raw.lower()
         if any(token in lowered for token in (b"<script", b"onload=", b"javascript:", b'href="http', b"href='http")):
@@ -1015,15 +1034,15 @@ def render_fields(document: dict[str, Any]) -> str:
     return '<dl class="adco-fields">' + "".join(fields) + "</dl>"
 
 
-def render_previews(document: dict[str, Any], verified_artifacts: dict[str, Path]) -> str:
+def render_previews(document: dict[str, Any], verified_artifacts: dict[str, VerifiedArtifact]) -> str:
     previews = document["presentation"].get("previews", [])
     if not previews:
         return ""
     figures = []
     artifact_by_id = {item["artifact_id"]: item for item in document["source_truth"]["artifacts"]}
     for preview in previews:
-        path = verified_artifacts.get(preview["artifact_id"])
-        if path is None:
+        verified = verified_artifacts.get(preview["artifact_id"])
+        if verified is None:
             raise VisualizationError(f"preview artifact is not physically verified: {preview['artifact_id']}")
         findings = []
         hotspots = []
@@ -1061,7 +1080,7 @@ def render_previews(document: dict[str, Any], verified_artifacts: dict[str, Path
         figures.append(
             '<div class="adco-preview-layout"><figure class="adco-preview">'
             f'{classification_html}<div class="adco-image-stage">'
-            f'<img src="{image_data_uri(path)}" alt="{escape(preview["alt"])}">'
+            f'<img src="{image_data_uri(verified)}" alt="{escape(preview["alt"])}">'
             f'{"".join(hotspots)}</div>'
             f'<figcaption><strong>{escape(preview["label"])}</strong> · {escape(preview["caption"])}</figcaption>'
             f'</figure>{annotation_html}</div>'
@@ -1138,7 +1157,7 @@ def render_options(document: dict[str, Any]) -> str:
 
 
 def render_fragment(
-    document: dict[str, Any], verified_artifacts: dict[str, Path] | None = None,
+    document: dict[str, Any], verified_artifacts: dict[str, VerifiedArtifact] | None = None,
     project_root: Path | None = None,
 ) -> str:
     errors = validate_spec(document)
@@ -1262,7 +1281,7 @@ def write_fragment(
     previews = document["presentation"].get("previews", [])
     if not test_output and project_root is None:
         raise VisualizationError("production render requires --project-root for physical source verification")
-    verified: dict[str, Path] = {}
+    verified: dict[str, VerifiedArtifact] = {}
     if project_root is not None:
         required_ids = None if (not test_output or document["surface"]["kind"] == "asset-review") else {
             item["artifact_id"] for item in previews
@@ -1509,9 +1528,7 @@ def self_test() -> list[str]:
             visible = re.sub(r"<script[\s\S]*?</script>", "", text, flags=re.IGNORECASE)
             visible = re.sub(r"<style[\s\S]*?</style>", "", visible, flags=re.IGNORECASE).lower()
             visible = re.sub(r"<[^>]+>", " ", visible)
-            for token in FRONTSTAGE_FORBIDDEN:
-                if token in visible:
-                    failures.append(f"{filename}: customer-visible fragment contains backstage term {token}")
+            failures.extend(frontstage_term_errors([visible], filename))
             payload_match = re.search(r'<script type="application/json"[^>]*>(.*?)</script>', text, flags=re.DOTALL)
             if not payload_match or any(token in payload_match.group(1) for token in ('"sha256"', '"path"', '"target_gate"', '"write_boundary"')):
                 failures.append(f"{filename}: client payload contains backstage fields")
@@ -1533,6 +1550,8 @@ def self_test() -> list[str]:
     backstage_action["interactions"]["actions"][0]["label"] = "写入 Gate 回执"
     if not any("customer-visible content contains backstage term" in item for item in validate_spec(backstage_action)):
         failures.append("action label backstage terminology was not rejected")
+    if frontstage_term_errors(["Investigate the idea, then navigate the options."]):
+        failures.append("frontstage term filter matched gate inside an ordinary English word")
     unsafe_second_action = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
     unsafe_second_action["interactions"]["actions"][1].update({
         "label": "Send now", "conversation_intent": "Send now to the client",
@@ -1562,6 +1581,29 @@ def self_test() -> list[str]:
     _, physical_errors = verify_physical_artifacts(physical, SKILL_ROOT)
     if not any("physical SHA-256 mismatch" in item for item in physical_errors):
         failures.append("physical artifact hash mismatch was not rejected")
+    with tempfile.TemporaryDirectory(prefix="adco-verified-bytes-") as byte_temp:
+        byte_root = Path(byte_temp)
+        relative = "preview.svg"
+        original = b'<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>'
+        replacement = b'<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>'
+        (byte_root / relative).write_bytes(original)
+        immutable_document = copy.deepcopy(physical)
+        immutable_document["source_truth"]["artifacts"][0].update({
+            "path": relative,
+            "sha256": hashlib.sha256(original).hexdigest(),
+        })
+        immutable_verified, immutable_errors = verify_physical_artifacts(
+            immutable_document, byte_root
+        )
+        (byte_root / relative).write_bytes(replacement)
+        if immutable_errors:
+            failures.append(f"immutable byte fixture failed verification: {immutable_errors}")
+        else:
+            uri = image_data_uri(immutable_verified["physical-fixture"])
+            if base64.b64encode(original).decode("ascii") not in uri:
+                failures.append("render did not retain the exact bytes that passed SHA verification")
+            if base64.b64encode(replacement).decode("ascii") in uri:
+                failures.append("render re-read a replaced file after SHA verification")
     real_candidate = copy.deepcopy(load_json(FIXTURE_ROOT / "valid-asset-review.json"))
     real_candidate["source_truth"]["binding_mode"] = "adco-control-plane"
     real_artifact = real_candidate["source_truth"]["artifacts"][0]
@@ -1642,7 +1684,7 @@ def self_test() -> list[str]:
             "source_event_id,received_at,source_owner,source_type,declared_semantics,file_paths,trust_level,affects_artifacts\n"
             "SRC-FIXTURE-001,2026-07-14T00:00:00Z,fixture-human,asset_source,registration,"
             "fixtures/chat-visualization/hero-asset-preview.svg,high,hero-visual\n"
-            "CONF-FIXTURE-001,2026-07-14T00:00:00Z,fixture-human,decision,approval,"
+            "CONF-FIXTURE-001,2026-07-14T00:00:00Z,user,user_confirmation,direct_use_authorization,"
             "fixtures/chat-visualization/hero-asset-preview.svg,user_confirmed,hero-visual\n",
             encoding="utf-8",
         )
@@ -1652,7 +1694,7 @@ def self_test() -> list[str]:
         )
         (visual_assets / "asset_authorizations.csv").write_text(
             "authorization_id,asset_id,asset_sha256,approval_scope,status,approved_by,approved_at,evidence_ref,revoked_at\n"
-            f'AUTH-FIXTURE-001,hero-visual,{real_artifact["sha256"]},client_visible,approved,fixture-human,'
+            f'AUTH-FIXTURE-001,hero-visual,{real_artifact["sha256"]},client_visible,approved,user,'
             "2026-07-14T00:00:00Z,user_confirmation:CONF-FIXTURE-001,\n",
             encoding="utf-8",
         )
@@ -1681,12 +1723,16 @@ def self_test() -> list[str]:
         )
         authorization_path = visual_assets / "asset_authorizations.csv"
         valid_authorization_csv = authorization_path.read_text(encoding="utf-8")
-        authorization_path.write_text(valid_authorization_csv.replace("fixture-human", "automation"), encoding="utf-8")
-        if not any(
-            "human/client authorization" in item
-            for item in validate_asset_physical_bindings(real_candidate, real_verified, project_root)
-        ):
-            failures.append("self-signed automation authorization was accepted")
+        for forged_identity in ("automation", "review-bot", "service-account", "Alex Example"):
+            authorization_path.write_text(
+                valid_authorization_csv.replace(",user,2026", f",{forged_identity},2026"),
+                encoding="utf-8",
+            )
+            if not any(
+                "human/client authorization" in item
+                for item in validate_asset_physical_bindings(real_candidate, real_verified, project_root)
+            ):
+                failures.append(f"free-text authorization identity was accepted: {forged_identity}")
         authorization_path.write_text(valid_authorization_csv, encoding="utf-8")
         authorization_path.write_text(
             valid_authorization_csv.replace("user_confirmation:CONF-FIXTURE-001", "user_confirmation:not-registered"),
@@ -1697,6 +1743,30 @@ def self_test() -> list[str]:
             for item in validate_asset_physical_bindings(real_candidate, real_verified, project_root)
         ):
             failures.append("unregistered user_confirmation prefix was accepted as authorization")
+        authorization_path.write_text(valid_authorization_csv, encoding="utf-8")
+        source_events_path = control / "source_events.csv"
+        valid_source_events_csv = source_events_path.read_text(encoding="utf-8")
+        source_events_path.write_text(
+            valid_source_events_csv.replace(",user,user_confirmation,", ",review-bot,user_confirmation,"),
+            encoding="utf-8",
+        )
+        if not any(
+            "human/client authorization" in item
+            for item in validate_asset_physical_bindings(real_candidate, real_verified, project_root)
+        ):
+            failures.append("automation-owned confirmation row was accepted as human authority")
+        source_events_path.write_text(valid_source_events_csv, encoding="utf-8")
+        authorization_path.write_text(
+            valid_authorization_csv.replace(
+                "user_confirmation:CONF-FIXTURE-001", "fixtures/chat-visualization/hero-authorization-record.json"
+            ),
+            encoding="utf-8",
+        )
+        if not any(
+            "human/client authorization" in item
+            for item in validate_asset_physical_bindings(real_candidate, real_verified, project_root)
+        ):
+            failures.append("project-local evidence file self-authorized client use")
         authorization_path.write_text(valid_authorization_csv, encoding="utf-8")
         gate_path = control / "gate_log.csv"
         valid_gate_csv = gate_path.read_text(encoding="utf-8")

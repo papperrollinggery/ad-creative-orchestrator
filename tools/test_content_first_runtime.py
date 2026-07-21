@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -14,6 +15,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import init_project as init_project_module
+import adco_core.creative_contract as creative_contract_module
+import adco_core.facts as facts_module
 import adco_core.ingestion as ingestion_module
 import ad_creative_operator as operator_module
 
@@ -276,6 +279,105 @@ def test_forward_test_contracts_are_machine_readable() -> None:
     assert delivery_answer["work_that_can_continue"]
 
 
+def test_unbiased_chatgpt_evidence_receipt_is_hash_bound_and_manual() -> None:
+    fixture_root = forward_fixture_root()
+    receipt = json.loads(
+        (fixture_root / "mori_spark_unbiased_receipt.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert receipt["schema_version"] == 1
+    conversation = receipt["conversation"]
+    assert conversation["provider"] == "ChatGPT"
+    assert conversation["browser"] == "Chrome"
+    assert conversation["reasoning_mode"] == "极高"
+    assert conversation["mode_ui_confirmed"] is True
+    assert conversation["fresh_conversation"] is True
+    assert conversation["url"].startswith("https://chatgpt.com/c/")
+    verification = receipt["verification_scope"]
+    assert verification["status"] == "MANUAL_READBACK_ONLY"
+    assert verification["automated_conversation_attestation"] is False
+    assert "artifact_hashes" in verification["verified_by_automation"]
+    assert "reasoning_mode_ui" in verification["verified_by_manual_browser_readback"]
+    assert "do not independently read" in verification["limitation"]
+
+    protocol = receipt["unbiased_protocol"]
+    assert set(protocol["included_materials"]) == {
+        "current_SKILL.md",
+        "current_creative_contract.md",
+        "task_brief",
+    }
+    assert set(protocol["excluded_materials"]) == {
+        "prior_answers",
+        "prior_findings",
+        "evaluation_rubric",
+        "desired_direction",
+        "desired_verdict",
+    }
+
+    artifact_paths = {
+        "brief": fixture_root / "mori_spark_unbiased_brief.md",
+        "output": fixture_root / "mori_spark_unbiased_output.md",
+        "skill": skill_draft_dir() / "SKILL.md",
+        "creative_reference": skill_draft_dir() / "creative_contract.md",
+        "creative_contract": Path(creative_contract_module.__file__),
+        "facts": Path(facts_module.__file__),
+        "semantic_test": Path(__file__).with_name("test_creative_contract.py"),
+        "full_pptx_fixture": (
+            skill_draft_dir()
+            / "fixtures/chat-visualization/sample-deck.pptx"
+        ),
+    }
+    artifacts = receipt["artifacts"]
+    assert set(artifact_paths) <= set(artifacts)
+    for artifact_id, path in artifact_paths.items():
+        assert path.is_file(), (artifact_id, path)
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == artifacts[
+            artifact_id
+        ]["sha256"]
+
+    tree_files = operator_module.skill_tree_files(skill_draft_dir())
+    tree_receipt = artifacts["skill_tree"]
+    assert len(tree_files) == tree_receipt["managed_file_count"]
+    assert operator_module.skill_tree_hash(tree_files) == tree_receipt["sha256"]
+    observed = receipt["observed_result"]
+    output_text = artifact_paths["output"].read_text(encoding="utf-8")
+    assert observed["answer_nonempty"] is True
+    assert observed["answer_character_count"] >= 1500
+    assert len(output_text) == observed["fixture_character_count"]
+    assert observed["fixture_transcription"].startswith("Normalized Markdown")
+    assert not {
+        "制作复杂度最低",
+        "最容易执行",
+        "最安全",
+        "9:00",
+        "7:30",
+        "21:16",
+        "22:03",
+        "清醒社交",
+        "低负担",
+    }.intersection(output_text)
+    # Boundary and claim words are allowed only when the answer explicitly
+    # rejects them. A raw blacklist would punish a useful compliance statement
+    # such as “没有扩展到……冰箱” while failing to distinguish it from a scene
+    # invention.
+    denial_markers = {"不", "没有", "未", "避免", "未经允许"}
+    in_denial_section = False
+    for line in output_text.splitlines():
+        if line.strip() == "# 七、禁用表达":
+            in_denial_section = True
+        elif in_denial_section and line.startswith("# "):
+            in_denial_section = False
+        if {"冰箱", "冰柜", "冷柜", "货架", "收银台"}.intersection(line):
+            assert in_denial_section or any(
+                marker in line for marker in denial_markers
+            ), line
+        if {"睡眠", "醒酒", "健康", "减肥"}.intersection(line):
+            assert in_denial_section or any(
+                marker in line for marker in denial_markers
+            ), line
+
+
 def test_default_run_emits_content_answer_without_delivery_theatre() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-content-run-") as raw:
         root = Path(raw)
@@ -297,7 +399,9 @@ def test_default_run_emits_content_answer_without_delivery_theatre() -> None:
             "--json",
         )
         payload = json.loads(completed.stdout)
-        answer = payload["content_answer"]
+        answer = payload["intake_summary"]
+        assert payload["content_answer"] == answer
+        assert answer["artifact_role"] == "intake_summary_not_creative_output"
         assert payload["run"] == "PASS"
         assert answer["objective"] == "给出内部策略判断与下一步创意动作"
         assert answer["requirements"], answer
@@ -1600,6 +1704,7 @@ def main() -> int:
     test_standalone_init_full_upgrades_existing_content_project()
     test_delivery_preflight_failures_and_dry_runs_do_not_initialize()
     test_forward_test_contracts_are_machine_readable()
+    test_unbiased_chatgpt_evidence_receipt_is_hash_bound_and_manual()
     test_default_run_emits_content_answer_without_delivery_theatre()
     test_external_source_map_repairs_unsafe_local_gitignore()
     test_local_source_state_dirfd_resists_concurrent_symlink_swap()

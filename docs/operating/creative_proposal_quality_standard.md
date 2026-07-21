@@ -18,14 +18,16 @@ creative brief contract 和候选 provenance
 
 `creative-brief` 只把当前 evidence chunks、facts、requirements 和 open gaps 冻结为 brief snapshot、contract、candidate schema 与 generation request；它不生成创意方向。
 
-GPT-5.6 Sol 或明确选择的专业 Specialist 负责创意推理：生成 4-6 个候选。独立 Critic 负责 brief adherence、insight、brand ownership、mechanism difference、key visual、shootability、production risk 和 brand replacement test，去重后保留 2-3 个。
+GPT-5.6 Sol 或明确选择的专业 Specialist 负责创意推理：数量服从用户请求；未指定时只生成最小充分集合（1-6 个）。独立 Critic 只在用户明确要求或高后果决策边界启用，负责 brief adherence、insight、brand ownership、mechanism difference、key visual、shootability、production risk 和 brand replacement test；不为流程完整感制造额外候选。
 
-`creative-import` 验证候选结构、snapshot/evidence 绑定与机制差异；`creative-review` 是确定性结构/语言 lint。两者都不等于独立创意判断、客户偏好、商业效果或最终发送审批。`creative-proposal` 只是 `creative-brief` 的弃用兼容 alias。
+`creative-import` 验证候选结构、manifest/snapshot/provenance 绑定、机制差异、已确认硬约束和待人工复核项；parser 生成的 candidate requirement 不会自动升级为硬事实，直接改 CSV 状态也不算确认。耐久要求确认必须绑定 registered source event、同源 evidence chunk 和人工 receipt；无法机器判定的显式硬要求必须对 exact candidate/direction/constraint 完成人工裁决。receipt 的 `candidate_sha256` 绑定精确落盘字节，current candidate 最后原子切换。`creative-review` 重新核对 current/version/import receipt/brief/派生视图，并执行确定性结构/语义/语言 lint；evidence refs 只报告 `PROVENANCE_ONLY`，不声称语义支持。两者都不等于独立创意判断、客户偏好、商业效果或最终发送审批。`creative-proposal` 只是 `creative-brief` 的弃用兼容 alias。
 
 命令：
 
 ```text
 adco creative-brief <project> [--work-id <id>] [--json]
+adco creative-requirement-confirm <project> --requirement-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> [--evidence-ref <chunk>] [--json]
+adco creative-constraint-resolve <project> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> --decision <approved|rejected> --note <reason> [--json]
 adco creative-import <project> --file <candidate.json> [--json]
 adco creative-review <project> [--json]
 ```
@@ -34,8 +36,8 @@ adco creative-review <project> [--json]
 
 ```text
 VALIDATION=PASS = 项目结构和追溯关系通过
-creative-import = candidate contract / exact evidence binding 通过
-creative-review = deterministic structure/language lint，不是独立 Critic
+creative-import = pre-write candidate contract / hard-constraint / exact-byte binding 通过
+creative-review = deterministic structure/semantic/language lint，不是独立 Critic
 independent Critic = 创意判断与 brand replacement challenge
 human/client approval = 人工或客户最终判断
 ```
@@ -79,7 +81,7 @@ AD-creative/orchestrator/artifact_index.csv
 brief_snapshot_sha256 是否仍是 exact current
 每个方向是否绑定现有 evidence chunk
 insight 是否能从 brief evidence 推导，而不是复述 brief
-2-3 个保留方向是否具有不同的 creative mechanism
+请求范围内的保留方向是否具有不同的 creative mechanism
 why_brand_can_own_it 是否能通过品牌替换测试
 key visual 是否清楚，story/behavior 是否可拍
 production risk 是否具体
@@ -106,8 +108,8 @@ PPT/DOCX/XLSX 固定模板已生成
 
 | 需求 | 归属模块 | adco 责任 |
 | --- | --- | --- |
-| 创意推理与 4-6 个候选 | GPT-5.6 Sol 或专业 Specialist | 提供 brief contract、证据边界和输出 schema |
-| 2-3 个 post-Critic 候选、option matrix | ADCO import/control plane | 验证证据、机制差异、版本和 provenance |
+| 创意推理与按需候选 | GPT-5.6 Sol 或专业 Specialist | 提供 brief contract、证据边界和动态数量 schema |
+| 1-6 个请求内候选、option matrix | ADCO import/control plane | 验证硬约束、证据、机制差异、版本和 provenance |
 | 视频脚本、分镜、导演阐述、视频 prompt | `dircreative` 或专门 film workflow | 通过 Specialist Exchange 写清需求、证据和交付边界，再独立采用 |
 | image / KV / 背景图 / moodboard / visual asset | `imagegen` 或 Creative Production | 生成 image job spec、导入 asset、跑 visual-quality-gate |
 | 固定 PPT / DOCX / XLSX 模板和版式系统 | Template Creator 或专门文档模板流程 | 输出内容结构、字段、追溯关系、审阅 Gate |

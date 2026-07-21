@@ -31,7 +31,7 @@ source event
 -> structured fact candidates
 -> fact inventory with evidence refs
 -> requirements + true gaps/conflicts/blocking unknowns
--> concise content answer + affected-scope validators
+-> concise intake summary (not creative output) + affected-scope validators
 ```
 
 The parser registry accepts Markdown/text, CSV, JSON, YAML, DOCX, PPTX, PDF,
@@ -102,6 +102,6 @@ AD-creative/orchestrator/gaps.csv
 ```
 
 `adco run --json` reports characters read, evidence chunks, parser errors,
-budget overflows, the content answer, phase timings, and scoped validators. The
+budget overflows, the intake summary, phase timings, and scoped validators. The
 default Dashboard count is zero. Treat an overflow or parser error as `CHECK`;
 inspect the intake evidence before advancing.

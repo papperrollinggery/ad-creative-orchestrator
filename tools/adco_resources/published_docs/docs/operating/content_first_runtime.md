@@ -9,7 +9,7 @@ release process. The runtime therefore uses two surfaces.
 
 Use for intake, evidence, facts, real gaps, internal creative briefs, candidate
 review, and ordinary revisions. Keep the working set small and produce a useful
-content answer before discussing governance.
+working answer before discussing governance.
 
 Default operations must not create or run:
 
@@ -42,7 +42,7 @@ surface regardless of the percentage.
 
 ## Answer contract
 
-Every intake/run result must return a concise content summary containing:
+Every intake/run result must return a concise intake summary containing:
 
 1. the working objective;
 2. evidence-backed facts or requirements;
@@ -50,7 +50,9 @@ Every intake/run result must return a concise content summary containing:
 4. what useful content work can proceed now;
 5. one next content action.
 
-Metrics and file paths are supporting evidence. They are not the answer.
+This summary is evidence context, not creative reasoning or a finished creative
+artifact. The active agent uses it to answer the user's actual content request.
+Metrics and file paths are supporting evidence; they are not that answer.
 
 ## Design references
 

@@ -19,7 +19,7 @@ from runtime_paths import skill_draft_dir, source_root, template_root
 SOURCE_ROOT = source_root()
 ROOT = SOURCE_ROOT or Path(__file__).resolve().parent
 SOURCE_MODE = SOURCE_ROOT is not None
-EXPECTED_CLI_VERSION = "adco 0.3.2"
+EXPECTED_CLI_VERSION = "adco 0.3.3"
 
 
 def check_installed_skill_metadata() -> None:
@@ -104,20 +104,26 @@ def run_expected_exit(
 
 
 def cleanup_python_caches(root: Path) -> None:
-    pollution_dirs = ("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache")
-    for path in [found for name in pollution_dirs for found in root.rglob(name)]:
-        if ".git" not in path.parts and path.exists():
+    pollution_dirs = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+    pollution_files = {".DS_Store"}
+    for current_root, directory_names, file_names in os.walk(root, topdown=True):
+        directory_names[:] = [name for name in directory_names if name != ".git"]
+        current = Path(current_root)
+        for name in list(directory_names):
+            if name not in pollution_dirs:
+                continue
             try:
-                shutil.rmtree(path)
+                shutil.rmtree(current / name)
             except FileNotFoundError:
                 pass
-    for pattern in ("*.pyc", "*.pyo", ".DS_Store"):
-        for path in root.rglob(pattern):
-            if ".git" not in path.parts and path.exists():
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    pass
+            directory_names.remove(name)
+        for name in file_names:
+            if name not in pollution_files and not name.endswith((".pyc", ".pyo")):
+                continue
+            try:
+                (current / name).unlink()
+            except FileNotFoundError:
+                pass
 
 
 def main() -> int:
@@ -281,6 +287,8 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(main())
-    finally:
+        exit_code = main()
+    except BaseException:
         cleanup_python_caches(ROOT)
+        raise
+    raise SystemExit(exit_code)

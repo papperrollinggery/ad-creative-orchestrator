@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import re
 from time import perf_counter
@@ -13,6 +14,7 @@ from typing import Iterable
 
 from .ingestion import EVIDENCE_REL, IngestionReport, ingest_source_rows, load_evidence_chunks
 from .models import EvidenceChunk, FactInventoryItem
+from .safe_write import atomic_write_text
 from runtime_paths import DELIVERY_SURFACE, project_surface
 
 
@@ -25,6 +27,20 @@ CONTENT_DEFERRED_FACT_KEYS = {
     "brand.logo",
     "policy.ai_client_visibility",
 }
+AUTHORITY_EVENT_TYPES = {"user_confirmation", "client_confirmation"}
+AUTHORITY_EVENT_SEMANTICS = {
+    "creative_requirement_confirmation",
+    "creative_constraint_approval",
+    "creative_constraint_rejection",
+}
+
+
+def _is_authority_event(row: dict[str, str]) -> bool:
+    return (
+        row.get("source_type", "").strip().casefold() in AUTHORITY_EVENT_TYPES
+        and row.get("declared_semantics", "").strip().casefold()
+        in AUTHORITY_EVENT_SEMANTICS
+    )
 
 INTAKE_ANALYSIS_SCHEMA: dict[str, object] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -115,13 +131,18 @@ def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
         return list(reader.fieldnames or []), [dict(row) for row in reader]
 
 
-def _write_csv(path: Path, fields: list[str], rows: Iterable[dict[str, str]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({field: row.get(field, "") for field in fields})
+def _write_csv(
+    project: Path,
+    path: Path,
+    fields: list[str],
+    rows: Iterable[dict[str, str]],
+) -> None:
+    handle = io.StringIO(newline="")
+    writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({field: row.get(field, "") for field in fields})
+    atomic_write_text(project, path, handle.getvalue())
 
 
 def _next_id(rows: list[dict[str, str]], key: str, prefix: str) -> str:
@@ -154,14 +175,14 @@ def load_fact_inventory(project: Path) -> list[FactInventoryItem]:
 
 def write_fact_inventory(project: Path, facts: Iterable[FactInventoryItem]) -> Path:
     path = project / FACT_INVENTORY_REL
-    path.parent.mkdir(parents=True, exist_ok=True)
     ordered = sorted(facts, key=lambda item: item.fact_key)
-    path.write_text(
+    atomic_write_text(
+        project,
+        path,
         "".join(
             json.dumps(item.as_dict(), ensure_ascii=False, sort_keys=True) + "\n"
             for item in ordered
         ),
-        encoding="utf-8",
     )
     return path
 
@@ -288,7 +309,9 @@ def explicit_facts_from_evidence(chunks: Iterable[EvidenceChunk]) -> list[FactIn
 
 
 REQUIREMENT_TRIGGER_PATTERN = re.compile(
-    r"项目|客户希望|希望|要求|交付|方向|关键画面|关键帧|moodboard|参考|PPT|不要|不能|必须|需要|新增要求|客户明确|deliver|must|should",
+    r"项目|客户希望|希望|要求|交付|方向|关键画面|关键帧|moodboard|参考|PPT|"
+    r"不要|不能|不得|禁止|最多|不超过|以内|只能|仅限|必须|需要|新增要求|客户明确|"
+    r"deliver|must|should|max(?:imum)?|up\s+to|\bonly\b|prohibit|forbid",
     re.I,
 )
 
@@ -301,7 +324,21 @@ def _clean_statement(value: str) -> str:
 
 def classify_requirement(statement: str) -> tuple[str, str, str]:
     lowered = statement.lower()
-    if any(token in statement for token in ["不要", "禁区", "不能", "未经授权", "禁止"]):
+    if any(
+        token in statement
+        for token in [
+            "不要",
+            "禁区",
+            "不能",
+            "不得",
+            "未经授权",
+            "禁止",
+            "最多",
+            "不超过",
+            "只能",
+            "仅限",
+        ]
+    ) or re.search(r"must\s+not|\bonly\b|\bmaximum\b|\bmax\s", lowered):
         return "constraint", "high", "client_review"
     if any(token in lowered for token in ["交付", "ppt", "可编辑", "slidespec", "deliver"]):
         return "delivery", "high", "ppt_gate"
@@ -400,6 +437,14 @@ def _sync_requirements(
 ) -> list[dict[str, str]]:
     path = project / "AD-creative/orchestrator/requirements.csv"
     fields, rows = _read_csv(path)
+    for field in (
+        "evidence_ref",
+        "confirmation_ref",
+        "confirmed_by",
+        "confirmed_at",
+    ):
+        if field not in fields:
+            fields.append(field)
     existing = {row.get("statement", "").casefold() for row in rows}
     new_rows: list[dict[str, str]] = []
     for candidate in candidates:
@@ -419,11 +464,15 @@ def _sync_requirements(
             "linked_artifacts": "",
             "supersedes_requirement_id": "",
             "open_questions": f"evidence_ref:{candidate.evidence_ref}",
+            "evidence_ref": candidate.evidence_ref,
+            "confirmation_ref": "",
+            "confirmed_by": "",
+            "confirmed_at": "",
         }
         new_rows.append(row)
         existing.add(candidate.statement.casefold())
     if new_rows:
-        _write_csv(path, fields, [*rows, *new_rows])
+        _write_csv(project, path, fields, [*rows, *new_rows])
     return new_rows
 
 
@@ -461,7 +510,7 @@ def sync_fact_gaps(
         new_rows.append(row)
         existing[template["description"]] = row
     if new_rows or changed:
-        _write_csv(path, fields, [*rows, *new_rows])
+        _write_csv(project, path, fields, [*rows, *new_rows])
     return new_rows
 
 
@@ -471,17 +520,40 @@ def run_evidence_intake(
     *,
     max_total_chars: int = 2_000_000,
 ) -> IntakeResult:
+    content_source_rows = [row for row in source_rows if not _is_authority_event(row)]
     parse_started = perf_counter()
     ingestion = ingest_source_rows(
         project,
-        source_rows,
+        content_source_rows,
         max_total_chars=max_total_chars,
     )
     parse_ms = round((perf_counter() - parse_started) * 1000)
     analysis_started = perf_counter()
-    all_chunks = load_evidence_chunks(project)
+    _, all_source_rows = _read_csv(
+        project / "AD-creative/orchestrator/source_events.csv"
+    )
+    authority_source_ids = {
+        row.get("source_event_id", "").strip()
+        for row in all_source_rows
+        if _is_authority_event(row)
+    }
+    all_loaded_chunks = load_evidence_chunks(project)
+    authority_chunk_ids = {
+        chunk.chunk_id
+        for chunk in all_loaded_chunks
+        if chunk.source_event_id in authority_source_ids
+    }
+    all_chunks = [
+        chunk
+        for chunk in all_loaded_chunks
+        if chunk.source_event_id not in authority_source_ids
+    ]
     explicit_facts = explicit_facts_from_evidence(all_chunks)
-    existing_facts = load_fact_inventory(project)
+    existing_facts = [
+        fact
+        for fact in load_fact_inventory(project)
+        if not set(fact.evidence_refs).intersection(authority_chunk_ids)
+    ]
     facts = merge_facts(existing_facts, explicit_facts)
     fact_analysis_ms = round((perf_counter() - analysis_started) * 1000)
     write_started = perf_counter()
@@ -520,8 +592,11 @@ def export_intake_analysis_request(project: Path) -> tuple[dict[str, object], Pa
         "evidence_chunks": [chunk.as_dict() for chunk in chunks],
     }
     path = project / ANALYSIS_REQUEST_REL
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_write_text(
+        project,
+        path,
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    )
     return payload, path
 
 

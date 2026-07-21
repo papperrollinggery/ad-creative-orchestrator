@@ -25,6 +25,9 @@ for directory in [ROOT / "docs/operating", ROOT / "docs/assets"]:
     )
 REQUIRED_PATHS = [
     "ad_creative_operator.py",
+    "adco_core/creative_contract.py",
+    "adco_core/facts.py",
+    "adco_core/safe_write.py",
     "check_docs_commands.py",
     "check_gate_fixtures.py",
     "check_packaged_assets.py",
@@ -58,6 +61,9 @@ REQUIRED_PATHS = [
     "adco_resources/fixtures/content_first_forward/delivery_answer.schema.json",
     "adco_resources/fixtures/content_first_forward/delivery_answer.example.json",
     "adco_resources/fixtures/content_first_forward/delivery_request.md",
+    "adco_resources/fixtures/content_first_forward/mori_spark_unbiased_brief.md",
+    "adco_resources/fixtures/content_first_forward/mori_spark_unbiased_output.md",
+    "adco_resources/fixtures/content_first_forward/mori_spark_unbiased_receipt.json",
     "adco_resources/skill_drafts/ad-creative-orchestrator/SKILL.md",
     "adco_resources/skill_drafts/ad-creative-orchestrator/chat_interaction_and_visualization.md",
     "adco_resources/skill_drafts/ad-creative-orchestrator/scripts/adco_visualization.py",
@@ -92,7 +98,7 @@ REQUIRED_ENTRY_POINTS = [
 ]
 REQUIRED_PYPROJECT_SNIPPETS = [
     'name = "ad-creative-orchestrator"',
-    'version = "0.3.2"',
+    'version = "0.3.3"',
     'adco = "ad_creative_operator:main"',
     'adco-check = "run_checks:main"',
     'adco-init = "init_project:main"',
@@ -113,30 +119,6 @@ def find_dist_file(names: set[str], suffix: str) -> str | None:
     return matches[0] if matches else None
 
 
-def source_path_for_wheel_path(path: str) -> Path:
-    return ROOT / "tools" / path
-
-
-def static_manifest_check(reason: str) -> int:
-    issues: list[str] = []
-    for path in REQUIRED_PATHS:
-        if not source_path_for_wheel_path(path).exists():
-            issues.append(f"source missing for wheel path: {path}")
-    pyproject_text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    for snippet in REQUIRED_PYPROJECT_SNIPPETS:
-        if snippet not in pyproject_text:
-            issues.append(f"pyproject missing: {snippet}")
-    if issues:
-        print("DIST_CHECK=FAIL")
-        for issue in issues:
-            print(f"- {issue}")
-        return 1
-    print("DIST_CHECK=PASS")
-    print("WHEEL=STATIC_MANIFEST")
-    print(f"WHEEL_BUILD=SKIPPED:{reason}")
-    return 0
-
-
 def main() -> int:
     issues: list[str] = []
     with tempfile.TemporaryDirectory(prefix="adco-dist-") as raw_tmp:
@@ -151,7 +133,6 @@ def main() -> int:
                     "wheel",
                     ".",
                     "--no-deps",
-                    "--no-build-isolation",
                     "--wheel-dir",
                     str(wheelhouse),
                 ],
@@ -167,10 +148,9 @@ def main() -> int:
                 print(str(exc.stdout).strip())
             if exc.stderr:
                 print(str(exc.stderr).strip())
-            return static_manifest_check("timeout")
+            print("DIST_CHECK=FAIL")
+            return 1
         if result.returncode != 0:
-            if "Cannot import 'setuptools.build_meta'" in result.stderr:
-                return static_manifest_check("build_backend_unavailable")
             print("DIST_CHECK=FAIL")
             print(result.stdout.strip())
             print(result.stderr.strip())
@@ -201,7 +181,7 @@ def main() -> int:
                     metadata_text = archive.read(metadata_path).decode("utf-8")
                     if "Name: ad-creative-orchestrator" not in metadata_text:
                         issues.append("wheel metadata missing package name")
-                    if "Version: 0.3.2" not in metadata_text:
+                    if "Version: 0.3.3" not in metadata_text:
                         issues.append("wheel metadata missing version")
                     if "Current Release" not in metadata_text or "v0.3.2" not in metadata_text:
                         issues.append("wheel metadata embeds stale or incomplete README description")

@@ -147,7 +147,8 @@ def execute_lightweight_run(
         }
 
     handoff_started = perf_counter()
-    content_answer = render_handoff(project, goal, source_ids)
+    intake_summary = render_handoff(project, goal, source_ids)
+    intake_summary["artifact_role"] = "intake_summary_not_creative_output"
     handoff_write_ms = _elapsed_ms(handoff_started)
 
     dashboard = None
@@ -197,7 +198,10 @@ def execute_lightweight_run(
         "registered_sources": len(source_ids),
         "source_ids": source_ids,
         "intake": intake_stats,
-        "content_answer": content_answer,
+        "intake_summary": intake_summary,
+        # Backward-compatible JSON alias. Human-readable CLI output uses the
+        # accurate INTAKE_SUMMARY label.
+        "content_answer": intake_summary,
         "dashboard": str(dashboard) if dashboard else "",
         "dashboard_render_count": int(dashboard is not None),
         "council_run_count": 0,

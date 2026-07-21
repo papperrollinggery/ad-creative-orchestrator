@@ -51,7 +51,7 @@ AD-creative/orchestrator/gaps.csv
 AD-creative/AGENTS.md
 ```
 
-默认不会运行 Dashboard、Council、Thread、Git、画像分析、Specialist Exchange、客户 outline、PPT、Client Pack 或全量 delivery validation。CLI 先返回 `CONTENT_ANSWER`；需要操作台时运行 `adco open-dashboard` 或给 `run` 加 `--dashboard`。
+默认不会运行 Dashboard、Council、Thread、Git、画像分析、Specialist Exchange、客户 outline、PPT、Client Pack 或全量 delivery validation。CLI 先返回明确标为资料整理的 `INTAKE_SUMMARY`，不能把它当创意成品；需要操作台时运行 `adco open-dashboard` 或给 `run` 加 `--dashboard`。
 
 检查状态：
 
@@ -83,11 +83,13 @@ Threads 默认不启用。只有有界隔离、真实并行或独立审阅确有
 
 ```text
 adco creative-brief <项目目录> [--work-id <id>] [--json]
+adco creative-requirement-confirm <项目目录> --requirement-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> [--evidence-ref <chunk>] [--json]
+adco creative-constraint-resolve <项目目录> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> --decision <approved|rejected> --note <依据> [--json]
 adco creative-import <项目目录> --file <candidate.json> [--json]
 adco creative-review <项目目录> [--json]
 ```
 
-`creative-brief` 只生成 snapshot/contract/schema/request/open gaps，不生成方向。GPT-5.6 Sol 或专业 Specialist 生成 4-6 个候选，独立 Critic 去重后保留 2-3 个，再由 `creative-import` 验证并登记；`creative-review` 只是确定性 lint。双击 launcher 的默认 `run` 不进入这条创意链路，也不生成客户 outline 或 PPT。
+`creative-brief` 只生成 hash-bound manifest/snapshot/contract/schema/request/open gaps，不生成方向。GPT-5.6 Sol 或专业 Specialist 按用户要求生成候选；未指定数量时只生成最小充分集合（1-6 个）。独立 Critic 仅在明确要求或高后果决策边界启用。耐久硬要求必须先由 creative-requirement-confirm 同时绑定真实 source/evidence 与 typed user/client confirmation event；自由文本人名或直接改 CSV 无效。无法机器判断的 exact candidate 约束可用 creative-constraint-resolve 绑定 typed approval/rejection event，且必须精确绑定 candidate payload、brief、direction、constraint。`creative-import` 校验完整 brief、结构、硬约束与 exact-byte 来源链，并以 current_candidate 最后原子切换；`creative-review` 必须重新核对 current/version/import receipt/brief/派生视图。双击 launcher 的默认 `run` 不进入这条创意链路，也不生成客户 outline 或 PPT。
 
 `thread-plan` 会写入：
 
@@ -150,7 +152,7 @@ search-quality-gate / reference-pack-gate / visual-quality-gate / client-pack-ga
 creative-brief 是 evidence contract，不是创意方向或客户最终稿。
 Sol/专业 Specialist 负责创意推理；独立 Critic 负责创意判断和品牌替换测试；ADCO 负责 evidence binding、导入、版本、provenance 和 Gate。
 creative-import 拒绝 stale snapshot、无效 evidence refs、字段缺失和重复机制；品牌专属性弱会被标记。
-creative-review 是确定性结构/语言 lint，不能替代独立 Critic。
+creative-review 是确定性结构/语义/语言 lint，不能替代独立 Critic。
 creative-proposal 只是 creative-brief 的弃用 alias，不再生成固定方向。
 详细标准见 docs/operating/creative_proposal_quality_standard.md。
 ```

@@ -1,4 +1,4 @@
-.PHONY: check demo-transcript dist-check install-dev install-smoke package-smoke release-check validate dashboards clean
+.PHONY: check demo-transcript dist-check install-dev install-smoke package-smoke dependency-install-smoke release-check validate dashboards clean
 
 PYTHON ?= python3
 
@@ -77,7 +77,26 @@ package-smoke:
 	$$tmp_dir/venv/bin/adco check; \
 	echo "PACKAGE_SMOKE=PASS $$tmp_dir"
 
-release-check: check dist-check install-smoke package-smoke
+dependency-install-smoke:
+	set -e; \
+	tmp_dir=$$(mktemp -d /tmp/adco-dependency-install-XXXXXX); \
+	mkdir -p $$tmp_dir/wheelhouse; \
+	$(PYTHON) -m pip wheel . --no-deps --wheel-dir $$tmp_dir/wheelhouse >/dev/null; \
+	wheel=$$(find $$tmp_dir/wheelhouse -maxdepth 1 -name 'ad_creative_orchestrator-*.whl' -type f); \
+	test -n "$$wheel"; \
+	wheel_sha=$$(shasum -a 256 "$$wheel" | awk '{print $$1}'); \
+	$(PYTHON) -m venv $$tmp_dir/venv; \
+	$$tmp_dir/venv/bin/python -m pip install --upgrade pip >/dev/null; \
+	$$tmp_dir/venv/bin/python -m pip install "$$wheel" >/dev/null; \
+	$$tmp_dir/venv/bin/python -c 'from PIL import Image; from pptx import Presentation; from docx import Document; from pypdf import PdfReader; print("DECLARED_DEPENDENCIES=PASS")'; \
+	$$tmp_dir/venv/bin/adco --version; \
+	$$tmp_dir/venv/bin/adco doctor; \
+	$$tmp_dir/venv/bin/adco check; \
+	echo "DEPENDENCY_WHEEL=$$wheel"; \
+	echo "DEPENDENCY_WHEEL_SHA256=$$wheel_sha"; \
+	echo "DEPENDENCY_INSTALL_SMOKE=PASS $$tmp_dir"
+
+release-check: check dist-check install-smoke package-smoke dependency-install-smoke
 	$(PYTHON) tools/render_demo_transcript.py --check
 	echo "RELEASE_CHECK=PASS"
 

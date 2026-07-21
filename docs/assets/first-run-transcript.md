@@ -11,7 +11,7 @@ python3 tools/render_demo_transcript.py
 ```console
 $ adco demo /tmp/adco-first-run --no-open
 DEMO=PASS
-CONTENT_ANSWER:
+INTAKE_SUMMARY:
 ## 当前目标
 基于内置 brief 提炼品牌策略，并提出三条机制不同的内部创意方向。
 

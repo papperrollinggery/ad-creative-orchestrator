@@ -15,6 +15,7 @@ from ad_creative_operator import (
     write_csv_rows,
 )
 from adco_core.facts import (
+    classify_requirement,
     export_intake_analysis_request,
     import_intake_analysis,
     run_evidence_intake,
@@ -203,10 +204,23 @@ def test_missing_delivery_assets_are_deferred_on_content_and_block_delivery() ->
         assert any("unresolved blocking gaps" in item for item in delivery_errors)
 
 
+def test_only_uses_word_boundaries_in_english_requirements() -> None:
+    assert classify_requirement("A lonely commuter opens the product.")[0] == "brief"
+    assert classify_requirement("Shoot only in the apartment living room.")[0] == "constraint"
+    with tempfile.TemporaryDirectory(prefix="adco-facts-only-boundary-") as raw:
+        project = Path(raw)
+        ensure_project(project)
+        source = project / "brief.md"
+        source.write_text("A lonely commuter opens the product after work.", encoding="utf-8")
+        result = run_evidence_intake(project, [_row("SRC-ONLY-001", source, project)])
+        assert result.new_requirements == []
+
+
 def main() -> int:
     test_present_assets_do_not_become_false_gaps()
     test_conflict_and_blocking_unknown_create_evidence_bound_gaps()
     test_missing_delivery_assets_are_deferred_on_content_and_block_delivery()
+    test_only_uses_word_boundaries_in_english_requirements()
     print("TEST_FACT_INVENTORY=PASS")
     return 0
 

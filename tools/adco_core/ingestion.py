@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from .models import EvidenceChunk
+from .safe_write import atomic_write_text
 
 
 DEFAULT_CHUNK_CHARS = 3000
@@ -1067,7 +1068,6 @@ def load_evidence_chunks(project: Path) -> list[EvidenceChunk]:
 
 def write_evidence_chunks(project: Path, chunks: Iterable[EvidenceChunk]) -> Path:
     path = project / EVIDENCE_REL
-    path.parent.mkdir(parents=True, exist_ok=True)
     ordered = sorted(
         chunks,
         key=lambda item: (
@@ -1083,7 +1083,7 @@ def write_evidence_chunks(project: Path, chunks: Iterable[EvidenceChunk]) -> Pat
         json.dumps(item.as_dict(), ensure_ascii=False, sort_keys=True) + "\n"
         for item in ordered
     )
-    path.write_text(text, encoding="utf-8")
+    atomic_write_text(project, path, text)
     return path
 
 

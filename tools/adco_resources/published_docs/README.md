@@ -76,7 +76,7 @@ adco run <project_dir> --material <brief_or_material_folder>
 adco open-dashboard <project_dir>
 ```
 
-`adco run` parses source material into evidence chunks, updates the fact inventory, requirements, true gaps/conflicts, writes a concise content answer, and runs only affected-scope validators. By default it renders no dashboard and runs no Council, Thread, Git workflow, Specialist Exchange, PPT, Client Pack, or full delivery validation. Add `--dashboard` only when that view is useful.
+`adco run` parses source material into evidence chunks, updates the fact inventory, requirements, true gaps/conflicts, writes a concise `INTAKE_SUMMARY` explicitly marked as intake rather than creative output, and runs only affected-scope validators. By default it renders no dashboard and runs no Council, Thread, Git workflow, Specialist Exchange, PPT, Client Pack, or full delivery validation. Add `--dashboard` only when that view is useful.
 
 Supported intake includes Markdown/text, CSV, JSON, YAML, DOCX, PPTX, PDF, SRT/VTT, images, and video. Long text is processed under an explicit aggregate character budget instead of silently truncating each file; media that was only registered by metadata is never presented as understood.
 
@@ -86,7 +86,7 @@ Every new Content Surface starts with only the core project files:
 project/
 └── AD-creative/
     ├── AGENTS.md         # scoped, opt-in project rules
-    ├── handoff/          # content summary and genuine questions
+    ├── handoff/          # intake summary and genuine questions
     └── orchestrator/     # source events, truth, requirements, gaps
 ```
 
@@ -132,7 +132,9 @@ Read the [authorization policy](docs/operating/authorization_policy.md) for the 
 | `adco quickstart [project_dir]` | Create, validate, and open a safe first-run demo. |
 | `adco run <project_dir> --material <path>` | Register real materials and produce the first project state. |
 | `adco creative-brief <project_dir>` | Freeze current evidence into a creative contract; generates no directions. |
-| `adco creative-import <project_dir> --file <candidate.json>` | Import 2-3 selected, evidence-bound, mechanism-distinct candidates. |
+| `adco creative-requirement-confirm <project_dir> ...` | Bind one durable requirement to source evidence and an exact typed user/client confirmation event. |
+| `adco creative-constraint-resolve <project_dir> ...` | Resolve one `REVIEW_REQUIRED` check for an exact candidate/direction/constraint. |
+| `adco creative-import <project_dir> --file <candidate.json>` | Preflight and import 1-6 selected, evidence-bound, mechanism-distinct candidates. |
 | `adco creative-review <project_dir>` | Run deterministic candidate lint; add independent creative review when the decision boundary requires it. |
 | `adco profile-analyze <project_dir>` | Analyze meeting/client profiles on the Content Surface; Dashboard is opt-in. |
 | `adco status <project_dir>` | Show blockers, pending confirmations, and current validation. |
@@ -149,7 +151,7 @@ Run `adco --help` or `adco <command> --help` for the complete CLI reference. The
 
 ADCO owns project truth, evidence and creative contracts, candidate provenance, artifact versions, review evidence, specialist adoption, presentation/client-package binding, FinalDelivery protection, and send-readiness checks. GPT-5.6 Sol or an explicitly selected professional Specialist supplies creative reasoning. DIRcreative is a film-craft provider used only through a negotiated, bounded Specialist Exchange.
 
-ADCO is **not** a SaaS, image generator, video generator, deterministic three-direction creative engine, autonomous creative approver, or delivery bot. `creative-brief` generates a contract, not ideas. The active model or a professional Specialist produces the number of directions the task needs. An explicit internal second judgment may use a read-only Critic on the Content Surface; it does not trigger Delivery or write a persistent governance receipt. A consequential selection or exact client-visible boundary may instead use a durable Critic bound to that candidate/version. `creative-import` accepts 2-3 selected directions and rejects stale or unbound evidence and duplicate mechanisms while flagging weak brand ownership. Image and film work can come from specialist tools through a versioned exchange contract; ADCO remains the owner of adoption, provenance, and client-facing readiness.
+ADCO is **not** a SaaS, image generator, video generator, deterministic three-direction creative engine, autonomous creative approver, or delivery bot. `creative-brief` generates a contract, not ideas. The active model or a professional Specialist produces the number of directions the task needs. An explicit internal second judgment may use a read-only Critic on the Content Surface; it does not trigger Delivery or write a persistent governance receipt. A consequential selection or exact client-visible boundary may instead use a durable Critic bound to that candidate/version. `creative-import` accepts 1-6 selected directions and rejects a stale/corrupt brief, unbound evidence, duplicate mechanisms, and failed or unresolved hard constraints. Durable requirement authority comes only from the source/evidence/human confirmation command, and non-deterministic constraint decisions bind the exact candidate. The final current pointer and review are exact-byte bound to the version, import receipt, brief manifest, directions, and matrix; evidence refs prove provenance, not semantic claim support. Image and film work can come from specialist tools through a versioned exchange contract; ADCO remains the owner of adoption, provenance, and client-facing readiness.
 
 ## Documentation
 
