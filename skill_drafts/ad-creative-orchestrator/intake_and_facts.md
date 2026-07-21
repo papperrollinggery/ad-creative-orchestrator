@@ -18,6 +18,9 @@ adco intake <project>
 ```
 
 Never run these commands on the ADCO or DIRcreative source repository.
+All material paths and the character budget are checked before project creation.
+Missing, empty/unsupported, recursive, or symlinked material fails with a nonzero
+structured result and no project write.
 
 ## Evidence flow
 
@@ -34,13 +37,36 @@ source event
 The parser registry accepts Markdown/text, CSV, JSON, YAML, DOCX, PPTX, PDF,
 SRT/VTT, images, and video files. Images and video are registered with metadata
 and an explicit inspection status; metadata-only intake must not claim visual or
-audio understanding.
+audio understanding. Media hashes are streamed once. Image metadata uses a small
+technical allowlist and excludes camera identity, timestamps, GPS, comments, and
+other unneeded EXIF fields.
 
 Text is chunked by source structure with stable source path, parser kind,
 ordinal, content hash, and source-event provenance. The default aggregate budget
 is 2,000,000 characters. A budget overflow or parser failure is explicit; no
 file is silently truncated to its first 12,000 characters and no 16-line fact
 limit is used as the source of truth.
+
+External absolute material paths are not written to public project records.
+`source_events.csv` and evidence use `local-source://<source_event_id>` aliases;
+the absolute lookup stays only in owner-readable `.adco-local/source_paths.json`.
+ADCO opens the project and `.adco-local` through stable directory descriptors,
+atomically enforces the dedicated `.adco-local/.gitignore` as deny-by-default,
+and verifies the same directory/file binding before returning. Symlink swaps,
+non-regular files, malformed versions, unreadable maps, and concurrent map
+replacement fail closed. Support diagnostics are not written while that private
+state is invalid; a registered `local-source://` alias with a missing map is also
+invalid. Client-pack manifests hard-exclude `.adco-local/**`, omit all inputs when
+the map cannot be trusted, and open each candidate through a project-rooted,
+component-by-component `O_NOFOLLOW` descriptor chain. Privacy scanning, hashing,
+size capture, and final parent/file inode verification share that binding. One
+root descriptor remains open across source-map, alias-reference, and candidate
+reads so a real-directory project-root replacement also blocks. ZIP-based
+formats add member-count, per-member, and total-uncompressed limits. PDFs scan
+extracted visible text and metadata through a streaming output cap; the Python
+fallback is process-isolated with an address-space limit. Timeout, limit,
+unavailable parser, or invalid input fails closed. Specialist manifests hard-
+exclude `.adco-local/**`.
 
 ## Fact and gap semantics
 
@@ -57,6 +83,13 @@ Do not convert a present statement into a missing gap. For example, “客户已
 is evidence that the product-image fact is present, not a request for a missing
 product image. Conflicts preserve every competing evidence reference and remain
 open until reconciled.
+
+Missing product images, logo, or AI client-visibility permission is recorded as a
+non-blocking follow-up on the Content Surface so unaffected internal reasoning can
+continue. The same unresolved fact becomes blocking when the project enters a
+client-visible Delivery Surface. Conflicting evidence remains blocking on either
+surface. Closing a gap row cannot override an unresolved blocking fact: promotion
+reopens the gap and Delivery readiness reads the fact inventory directly.
 
 Primary records:
 

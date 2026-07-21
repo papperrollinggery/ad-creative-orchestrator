@@ -107,7 +107,7 @@ class CreativeImportResult:
 @dataclass
 class CreativeReviewResult:
     status: str
-    receipt_path: Path
+    receipt_path: Path | None
     receipt: dict[str, object]
     blocking_issues: list[str]
     warnings: list[str]
@@ -528,7 +528,11 @@ def _status_map(status: str, reason: str) -> dict[str, str]:
     return {"status": status, "reason": reason}
 
 
-def review_creative_candidate(project: Path) -> CreativeReviewResult:
+def review_creative_candidate(
+    project: Path,
+    *,
+    independent_critic_required: bool = True,
+) -> CreativeReviewResult:
     path = project / CURRENT_CANDIDATE_REL
     if not path.is_file():
         raise ValueError("current creative candidate is missing; run creative-import first")
@@ -571,7 +575,7 @@ def review_creative_candidate(project: Path) -> CreativeReviewResult:
             "human tension is concrete" if insight_ok else "human tension is thin or generic",
         )
         if not insight_ok:
-            warnings.append(f"{direction_id}: insight quality requires independent review")
+            warnings.append(f"{direction_id}: insight quality requires human review")
         ownership = str(raw["why_brand_can_own_it"])
         ownership_ok = len(ownership.strip()) >= 20 and not re.search(
             r"任何品牌|所有品牌|其他品牌|通用|any brand|every brand",
@@ -585,7 +589,11 @@ def review_creative_candidate(project: Path) -> CreativeReviewResult:
         receipt["brand_replacement_test"][direction_id] = _status_map(
             "REVIEW_REQUIRED" if ownership_ok else "FAIL",
             (
-                "Independent Critic must replace the brand and test whether the mechanism still fully works."
+                (
+                    "Independent Critic must replace the brand and test whether the mechanism still fully works."
+                    if independent_critic_required
+                    else "A human reviewer should replace the brand and test whether the mechanism still fully works."
+                )
                 if ownership_ok
                 else "Ownership language is generic enough that another brand may replace it."
             ),
@@ -634,11 +642,21 @@ def review_creative_candidate(project: Path) -> CreativeReviewResult:
             warnings.append(f"{direction_id}: generic AI advertising vocabulary detected")
     receipt["blocking_issues"] = blocking
     receipt["warnings"] = sorted(set(warnings))
-    receipt["independent_critic_required"] = True
+    receipt["independent_critic_required"] = independent_critic_required
     receipt["creative_quality"] = "NOT_APPROVED_BY_DETERMINISTIC_LINT"
-    receipt["verdict"] = "BLOCKED" if blocking else "STRUCTURE_PASS_REQUIRES_INDEPENDENT_CRITIC"
+    receipt["verdict"] = (
+        "BLOCKED"
+        if blocking
+        else "STRUCTURE_PASS_REQUIRES_INDEPENDENT_CRITIC"
+        if independent_critic_required
+        else "STRUCTURE_PASS_HUMAN_JUDGMENT_REQUIRED"
+    )
     receipt["reviewed_at"] = now_iso()
-    receipt_path = _write_json(project / CRITIC_RECEIPT_REL, receipt)
+    receipt_path = (
+        _write_json(project / CRITIC_RECEIPT_REL, receipt)
+        if independent_critic_required
+        else None
+    )
     return CreativeReviewResult(
         status="BLOCKED" if blocking else "PARTIAL_PASS",
         receipt_path=receipt_path,

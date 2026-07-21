@@ -7,12 +7,19 @@ import json
 import tempfile
 from pathlib import Path
 
-from ad_creative_operator import ensure_project, gap_templates
+from ad_creative_operator import (
+    ensure_delivery_project,
+    ensure_project,
+    gap_templates,
+    read_csv_rows,
+    write_csv_rows,
+)
 from adco_core.facts import (
     export_intake_analysis_request,
     import_intake_analysis,
     run_evidence_intake,
 )
+from validate_project import validate_client_delivery_readiness
 
 
 def _row(source_id: str, path: Path, project: Path) -> dict[str, str]:
@@ -112,9 +119,94 @@ def test_conflict_and_blocking_unknown_create_evidence_bound_gaps() -> None:
         assert first.ingestion.chunks
 
 
+def test_missing_delivery_assets_are_deferred_on_content_and_block_delivery() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-facts-surface-") as raw:
+        project = Path(raw)
+        ensure_project(project)
+        source = project / "missing-assets.md"
+        source.write_text(
+            "客户尚未提供产品图，客户未提供品牌 logo，且不允许 AI 生成图用于客户审阅。",
+            encoding="utf-8",
+        )
+        result = run_evidence_intake(project, [_row("SRC-001", source, project)])
+        assert result.new_gaps
+        content_impacts = {
+            gap["impact"]
+            for gap in result.new_gaps
+            if any(
+                key in gap["description"]
+                for key in (
+                    "asset.product_images",
+                    "brand.logo",
+                    "policy.ai_client_visibility",
+                )
+            )
+        }
+        assert content_impacts == {"low"}, (content_impacts, result.new_gaps)
+
+        gap_path = project / "AD-creative/orchestrator/gaps.csv"
+        gap_fields, content_gap_rows = read_csv_rows(gap_path)
+        for row in content_gap_rows:
+            if any(
+                key in row["description"]
+                for key in (
+                    "asset.product_images",
+                    "brand.logo",
+                    "policy.ai_client_visibility",
+                )
+            ):
+                row["status"] = "closed"
+        write_csv_rows(gap_path, gap_fields, content_gap_rows)
+
+        ensure_delivery_project(project)
+        delivery_errors_before_resync = validate_client_delivery_readiness(
+            project,
+            [],
+            [],
+            [],
+        )
+        assert any(
+            "unresolved blocking facts" in item
+            and "asset.product_images" in item
+            for item in delivery_errors_before_resync
+        ), delivery_errors_before_resync
+        rerun = run_evidence_intake(project, [_row("SRC-001", source, project)])
+        assert rerun.new_gaps == []
+        _, gap_rows = read_csv_rows(project / "AD-creative/orchestrator/gaps.csv")
+        impacts = {
+            row["impact"]
+            for row in gap_rows
+            if any(
+                key in row["description"]
+                for key in (
+                    "asset.product_images",
+                    "brand.logo",
+                    "policy.ai_client_visibility",
+                )
+            )
+        }
+        assert impacts == {"blocking"}, impacts
+        statuses = {
+            row["status"]
+            for row in gap_rows
+            if any(
+                key in row["description"]
+                for key in (
+                    "asset.product_images",
+                    "brand.logo",
+                    "policy.ai_client_visibility",
+                )
+            )
+        }
+        assert statuses == {"open"}, statuses
+        delivery_errors = validate_client_delivery_readiness(project, [], [], [])
+        assert any("unresolved blocking gaps" in item for item in delivery_errors)
+
+
 def main() -> int:
     test_present_assets_do_not_become_false_gaps()
     test_conflict_and_blocking_unknown_create_evidence_bound_gaps()
+    test_missing_delivery_assets_are_deferred_on_content_and_block_delivery()
     print("TEST_FACT_INVENTORY=PASS")
     return 0
 

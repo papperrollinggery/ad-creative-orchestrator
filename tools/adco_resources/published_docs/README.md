@@ -121,6 +121,7 @@ Important boundaries:
 - `client-send-readiness-gate` checks that independent review and explicit authorization match the same current package. It never sends files.
 - AI-generated images remain internal until visual QA and hash-bound authorization are recorded.
 - Files manually placed in `05_最终交付_FinalDelivery/` are protected from automatic move, overwrite, and deletion.
+- Invalid private source state blocks support/client-package export; ZIP-based candidates are privacy-scanned with bounded streaming.
 
 Read the [authorization policy](docs/operating/authorization_policy.md) for the complete stop conditions.
 
@@ -131,8 +132,9 @@ Read the [authorization policy](docs/operating/authorization_policy.md) for the 
 | `adco quickstart [project_dir]` | Create, validate, and open a safe first-run demo. |
 | `adco run <project_dir> --material <path>` | Register real materials and produce the first project state. |
 | `adco creative-brief <project_dir>` | Freeze current evidence into a creative contract; generates no directions. |
-| `adco creative-import <project_dir> --file <candidate.json>` | Import 2-3 evidence-bound, mechanism-distinct post-Critic candidates. |
-| `adco creative-review <project_dir>` | Run deterministic candidate lint; independent creative review is still required. |
+| `adco creative-import <project_dir> --file <candidate.json>` | Import 2-3 selected, evidence-bound, mechanism-distinct candidates. |
+| `adco creative-review <project_dir>` | Run deterministic candidate lint; add independent creative review when the decision boundary requires it. |
+| `adco profile-analyze <project_dir>` | Analyze meeting/client profiles on the Content Surface; Dashboard is opt-in. |
 | `adco status <project_dir>` | Show blockers, pending confirmations, and current validation. |
 | `adco next <project_dir>` | Print the next safe action. |
 | `adco open-dashboard <project_dir>` | Open the non-developer project dashboard. |
@@ -147,7 +149,7 @@ Run `adco --help` or `adco <command> --help` for the complete CLI reference. The
 
 ADCO owns project truth, evidence and creative contracts, candidate provenance, artifact versions, review evidence, specialist adoption, presentation/client-package binding, FinalDelivery protection, and send-readiness checks. GPT-5.6 Sol or an explicitly selected professional Specialist supplies creative reasoning. DIRcreative is a film-craft provider used only through a negotiated, bounded Specialist Exchange.
 
-ADCO is **not** a SaaS, image generator, video generator, deterministic three-direction creative engine, autonomous creative approver, or delivery bot. `creative-brief` generates a contract, not ideas. Sol/a professional Specialist generates 4-6 candidates, an independent Critic narrows them to 2-3, and `creative-import` rejects stale or unbound evidence and duplicate mechanisms while flagging weak brand ownership. Image and film work can come from specialist tools through a versioned exchange contract; ADCO remains the owner of adoption, provenance, and client-facing readiness.
+ADCO is **not** a SaaS, image generator, video generator, deterministic three-direction creative engine, autonomous creative approver, or delivery bot. `creative-brief` generates a contract, not ideas. The active model or a professional Specialist produces the number of directions the task needs. An explicit internal second judgment may use a read-only Critic on the Content Surface; it does not trigger Delivery or write a persistent governance receipt. A consequential selection or exact client-visible boundary may instead use a durable Critic bound to that candidate/version. `creative-import` accepts 2-3 selected directions and rejects stale or unbound evidence and duplicate mechanisms while flagging weak brand ownership. Image and film work can come from specialist tools through a versioned exchange contract; ADCO remains the owner of adoption, provenance, and client-facing readiness.
 
 ## Documentation
 

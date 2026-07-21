@@ -110,6 +110,19 @@ def test_candidate_requires_evidence_and_distinct_mechanisms() -> None:
         ]:
             assert field in review.receipt
 
+        review.receipt_path.unlink()
+        content_review = review_creative_candidate(
+            project,
+            independent_critic_required=False,
+        )
+        assert content_review.status == "PARTIAL_PASS"
+        assert content_review.receipt_path is None
+        assert not review.receipt_path.exists()
+        assert content_review.receipt["independent_critic_required"] is False
+        assert content_review.receipt["verdict"] == (
+            "STRUCTURE_PASS_HUMAN_JUDGMENT_REQUIRED"
+        )
+
         duplicate = copy.deepcopy(candidate)
         duplicate["directions"][1]["creative_mechanism"] = duplicate["directions"][0][
             "creative_mechanism"

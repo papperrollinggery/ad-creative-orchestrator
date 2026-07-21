@@ -8,11 +8,15 @@ For an internal brief, concept, script, storyboard, or ordinary revision, reason
 directly from the inspected material and return the useful creative work. Do not
 create a candidate contract, version, Gate, or Specialist handoff merely because
 the task is creative. Match the number of directions to the request; do not force
-4-6 options when three strong, mechanism-distinct directions are enough.
+a preset option count after the useful distinctions are already covered.
 
-Use an independent Critic when the selection is consequential, the user asks for
-a second judgment, or a client-visible boundary needs it. It is not a mandatory
-step for every brainstorm.
+An explicit internal second judgment may use a read-only Critic on the Content
+Surface. Return that judgment directly; do not create a Delivery Surface, Thread,
+Gate, candidate contract, version ledger, or persistent Critic receipt for that
+reason alone. Use a durable independent Critic only when a consequential review
+must bind an exact candidate/client-visible version, or when the user explicitly
+requests isolated/parallel execution. Critic review is not mandatory for every
+brainstorm.
 
 ADCO's deterministic strings are evidence and structural checks, not a complete
 creative engine. The active model or an explicitly chosen creative Specialist
@@ -53,7 +57,8 @@ outline, or a PPT.
 ## Imported candidate contract
 
 The imported JSON binds the exact `brief_snapshot_sha256` and contains 2-3
-post-Critic directions. Every direction has non-empty:
+selected directions. Add an independent Critic before import only when the
+decision boundary requires it. Every direction has non-empty:
 
 ```text
 direction_id, name, human_tension, brand_truth, audience_truth,
@@ -71,6 +76,7 @@ remain `internal_only`.
 
 `creative-review` is deterministic structural/language lint for brief adherence,
 mechanism difference, ownership, visual clarity, shootability, and production
-risk. It does not replace the independent creative Critic, client judgment, or
+risk. On the Content Surface it returns the lint result without a persistent
+receipt; Delivery writes a bound receipt. It does not replace the independent creative Critic, client judgment, or
 effectiveness evidence. `creative-quality-gate` remains a downstream legacy
 proposal safety Gate and must not be presented as Sol or Critic judgment.

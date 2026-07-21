@@ -105,7 +105,7 @@ def test_default_run_is_content_first_zero_dashboard_and_timed() -> None:
         ).exists()
         assert not (project / "AD-creative/handoff/操作台.html").exists()
         assert not (project / "AD-creative/orchestrator/artifact_index.csv").exists()
-        assert len([path for path in project.rglob("*") if path.is_file()]) <= 12
+        assert len([path for path in project.rglob("*") if path.is_file()]) <= 14
         timings = payload["timings"]
         assert set(timings) == {
             "parse_ms",

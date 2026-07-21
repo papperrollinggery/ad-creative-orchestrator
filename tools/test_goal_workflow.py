@@ -8,7 +8,11 @@ import hashlib
 import json
 import os
 import tempfile
+import threading
 from pathlib import Path
+from unittest.mock import patch
+
+import ad_creative_operator as operator_module
 
 from ad_creative_operator import (
     ARTIFACT_INDEX_FIELDS,
@@ -3901,23 +3905,30 @@ pptx_path: AD-creative/ppt/exports/shared.pptx
                     "updated_at": "2025-01-01T00:00:00+08:00",
                 },
             )
+        before_migration = {
+            path.relative_to(project).as_posix(): file_sha256(path)
+            for path in project.rglob("*")
+            if path.is_file()
+        }
         result = migrate_control_plane(project)
         assert any(
             blocker["code"] == "ambiguous_legacy_current_package_artifact"
             for blocker in result["blockers"]
         )
+        assert result["applied"] is False
+        assert result["blocked_before_write"] is True
         assert "## Current Version Truth" not in truth_path.read_text(encoding="utf-8")
         manifest_path = (
             project
             / "AD-creative/orchestrator/migrations/control_plane_v2_manifest.json"
         )
-        first_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        assert any(
-            blocker["code"] == "ambiguous_legacy_current_package_artifact"
-            for blocker in first_manifest["active_blockers"]
-        )
-        immutable_raw = first_manifest["raw_legacy_evidence"]
-        immutable_source_hashes = first_manifest["source_hashes"]
+        assert not manifest_path.exists()
+        after_blocked = {
+            path.relative_to(project).as_posix(): file_sha256(path)
+            for path in project.rglob("*")
+            if path.is_file()
+        }
+        assert after_blocked == before_migration
 
         append_csv_row(
             project / "AD-creative/orchestrator/version_map.csv",
@@ -3960,17 +3971,16 @@ pptx_path: AD-creative/ppt/exports/shared.pptx
 
         resolved = migrate_control_plane(project)
         assert resolved["blockers"] == []
+        assert resolved["applied"] is True
+        assert resolved["blocked_before_write"] is False
         resolved_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         assert resolved_manifest["active_blockers"] == []
-        assert resolved_manifest["raw_legacy_evidence"] == immutable_raw
-        assert resolved_manifest["source_hashes"] == immutable_source_hashes
-        assert any(
+        assert not any(
             entry.get("blocker", {}).get("code")
             == "ambiguous_legacy_current_package_artifact"
-            and entry.get("resolved_attempt_id")
             for entry in resolved_manifest["blocker_history"]
         )
-        assert len(resolved_manifest["attempts"]) == 2
+        assert len(resolved_manifest["attempts"]) == 1
         resolved_manifest_hash = file_sha256(manifest_path)
         third = migrate_control_plane(project)
         assert third["blockers"] == []
@@ -3981,6 +3991,370 @@ pptx_path: AD-creative/ppt/exports/shared.pptx
             issue.code.startswith("ambiguous_legacy_current_package")
             for issue in resolved_issues
         )
+
+
+def test_migration_input_change_blocks_before_first_adco_write() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-migration-concurrent-") as raw:
+        project = Path(raw)
+        ensure_delivery_project(project)
+        truth_path = project / "AD-creative/orchestrator/current_truth.md"
+        original_snapshot = operator_module._migration_input_snapshot
+        calls = 0
+        snapshot_after_external_change: dict[str, str] = {}
+
+        def changing_snapshot(candidate: Path) -> dict[str, str]:
+            nonlocal calls, snapshot_after_external_change
+            calls += 1
+            if calls == 2:
+                truth_path.write_text(
+                    truth_path.read_text(encoding="utf-8")
+                    + "\nexternal_concurrent_marker: changed\n",
+                    encoding="utf-8",
+                )
+            result = original_snapshot(candidate)
+            if calls == 2:
+                snapshot_after_external_change = dict(result)
+            return result
+
+        with patch.object(
+            operator_module,
+            "_migration_input_snapshot",
+            side_effect=changing_snapshot,
+        ):
+            result = migrate_control_plane(project)
+
+        assert result["applied"] is False, result
+        assert result["blocked_before_write"] is True, result
+        assert result["plan_sha256"], result
+        assert any(
+            blocker["code"] == "migration_inputs_changed"
+            for blocker in result["blockers"]
+        ), result
+        assert operator_module._migration_input_snapshot(project) == (
+            snapshot_after_external_change
+        )
+        assert not (
+            project
+            / "AD-creative/orchestrator/migrations/control_plane_v2_manifest.json"
+        ).exists()
+
+
+def test_migration_aliases_share_one_canonical_lock() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-migration-alias-lock-") as raw:
+        root = Path(raw)
+        real_parent = root / "real-parent"
+        project = real_parent / "project"
+        project.mkdir(parents=True)
+        ensure_delivery_project(project)
+        alias_parent = root / "alias-parent"
+        alias_parent.symlink_to(real_parent, target_is_directory=True)
+        alias_project = alias_parent / "project"
+
+        canonical, real_key, _ = operator_module._migration_project_identity(project)
+        alias_canonical, alias_key, _ = operator_module._migration_project_identity(
+            alias_project
+        )
+        assert alias_canonical == canonical
+        assert alias_key == real_key
+        not_yet_created = root / "future-project"
+        _, before_create_key, _ = operator_module._migration_project_identity(
+            not_yet_created
+        )
+        not_yet_created.mkdir()
+        _, after_create_key, _ = operator_module._migration_project_identity(
+            not_yet_created
+        )
+        assert before_create_key == after_create_key
+
+        first_entered = threading.Event()
+        release_first = threading.Event()
+        second_entered = threading.Event()
+        call_lock = threading.Lock()
+        calls = 0
+        errors: list[BaseException] = []
+
+        def controlled_migration(
+            candidate: Path,
+            *,
+            dry_run: bool,
+            pre_write_guard: object = None,
+        ) -> dict[str, object]:
+            nonlocal calls
+            with call_lock:
+                calls += 1
+                call_number = calls
+            if call_number == 1:
+                first_entered.set()
+                assert release_first.wait(timeout=3)
+            else:
+                second_entered.set()
+            return {
+                "project": str(candidate),
+                "dry_run": dry_run,
+                "call_number": call_number,
+            }
+
+        def invoke(candidate: Path) -> None:
+            try:
+                migrate_control_plane(candidate, dry_run=True)
+            except BaseException as exc:  # noqa: BLE001 - surface thread failures
+                errors.append(exc)
+
+        with patch.object(
+            operator_module,
+            "_migrate_control_plane_locked",
+            side_effect=controlled_migration,
+        ):
+            first = threading.Thread(target=invoke, args=(project,))
+            second = threading.Thread(target=invoke, args=(alias_project,))
+            first.start()
+            assert first_entered.wait(timeout=3)
+            second.start()
+            assert not second_entered.wait(timeout=0.25), (
+                "canonical migration lock allowed concurrent alias execution"
+            )
+            release_first.set()
+            first.join(timeout=3)
+            second.join(timeout=3)
+
+        assert not first.is_alive() and not second.is_alive()
+        assert second_entered.is_set()
+        assert calls == 2
+        assert errors == []
+
+
+def test_migration_lock_rejects_symlink_file_without_touching_target() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-migration-lock-symlink-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        ensure_delivery_project(project)
+        _, lock_key, _ = operator_module._migration_project_identity(project)
+        lock_dir = operator_module._migration_lock_directory_path()
+        lock_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        lock_dir.chmod(0o700)
+        lock_path = lock_dir / f"{lock_key}.lock"
+        assert not lock_path.exists() and not lock_path.is_symlink()
+        outside = root / "outside-lock-target.txt"
+        outside.write_text("unchanged", encoding="utf-8")
+        lock_path.symlink_to(outside)
+        try:
+            try:
+                migrate_control_plane(project, dry_run=True)
+            except ValueError as exc:
+                assert "safely open migration lock" in str(exc)
+            else:
+                raise AssertionError("symlinked migration lock must fail closed")
+            assert outside.read_text(encoding="utf-8") == "unchanged"
+        finally:
+            if lock_path.is_symlink():
+                lock_path.unlink()
+
+
+def test_migration_project_root_swap_uses_open_directory_binding() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-migration-root-swap-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        ensure_delivery_project(project)
+        missing_rel = Path(
+            "AD-creative/orchestrator/agency/maintenance_heartbeat.md"
+        )
+        (project / missing_rel).unlink(missing_ok=True)
+        outside = root / "outside"
+        outside.mkdir()
+        (outside / "sentinel.txt").write_text("unchanged", encoding="utf-8")
+        outside_before = {
+            path.relative_to(outside).as_posix(): path.read_bytes()
+            for path in outside.rglob("*")
+            if path.is_file()
+        }
+        original_project = root / "project-before-swap"
+        original_locked = operator_module._migrate_control_plane_locked
+        swapped = False
+
+        def swapping_migration(
+            candidate: Path,
+            *,
+            dry_run: bool,
+            pre_write_guard: object = None,
+        ) -> dict[str, object]:
+            nonlocal swapped
+            project.rename(original_project)
+            project.symlink_to(outside, target_is_directory=True)
+            swapped = True
+            return original_locked(
+                candidate,
+                dry_run=dry_run,
+                pre_write_guard=pre_write_guard,
+            )
+
+        with patch.object(
+            operator_module,
+            "_migrate_control_plane_locked",
+            side_effect=swapping_migration,
+        ):
+            try:
+                migrate_control_plane(project)
+            except ValueError as exc:
+                assert "changed during execution" in str(exc)
+            else:
+                raise AssertionError("migration root swap must fail closed")
+
+        assert swapped
+        outside_after = {
+            path.relative_to(outside).as_posix(): path.read_bytes()
+            for path in outside.rglob("*")
+            if path.is_file()
+        }
+        assert outside_after == outside_before
+        assert not (original_project / missing_rel).exists()
+        assert not (
+            original_project
+            / operator_module.CONTROL_PLANE_MIGRATION_MANIFEST_REL
+        ).exists()
+
+
+def test_migration_managed_directory_swap_blocks_before_apply() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-migration-managed-swap-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        ensure_delivery_project(project)
+        orchestrator = project / "AD-creative/orchestrator"
+        moved_orchestrator = project / "AD-creative/orchestrator-before-swap"
+        before = {
+            path.relative_to(orchestrator).as_posix(): path.read_bytes()
+            for path in orchestrator.rglob("*")
+            if path.is_file()
+        }
+        outside = root / "outside"
+        outside.mkdir()
+        (outside / "sentinel.txt").write_text("unchanged", encoding="utf-8")
+        outside_before = {
+            path.relative_to(outside).as_posix(): path.read_bytes()
+            for path in outside.rglob("*")
+            if path.is_file()
+        }
+        original_ensure = operator_module.ensure_delivery_project
+        swapped = False
+
+        def swapping_ensure(candidate: Path) -> tuple[int, int]:
+            nonlocal swapped
+            result = original_ensure(candidate)
+            orchestrator.rename(moved_orchestrator)
+            orchestrator.symlink_to(outside, target_is_directory=True)
+            swapped = True
+            return result
+
+        with patch.object(
+            operator_module,
+            "ensure_delivery_project",
+            side_effect=swapping_ensure,
+        ):
+            result = migrate_control_plane(project)
+
+        assert swapped
+        assert result["applied"] is False, result
+        assert result["blocked_before_write"] is True, result
+        assert any(
+            blocker["code"] == "migration_managed_path_changed"
+            for blocker in result["blockers"]
+        ), result
+        outside_after = {
+            path.relative_to(outside).as_posix(): path.read_bytes()
+            for path in outside.rglob("*")
+            if path.is_file()
+        }
+        assert outside_after == outside_before
+        after = {
+            path.relative_to(moved_orchestrator).as_posix(): path.read_bytes()
+            for path in moved_orchestrator.rglob("*")
+            if path.is_file()
+        }
+        assert after == before
+        assert not (
+            moved_orchestrator
+            / "migrations/control_plane_v2_manifest.json"
+        ).exists()
+
+
+def test_migration_does_not_claim_prewrite_block_after_template_changes() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-migration-partial-template-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        ensure_delivery_project(project)
+        missing_rels = [
+            Path("AD-creative/copywriting/message_line_candidates.md"),
+            Path("AD-creative/film/treatment_packet.md"),
+            Path("AD-creative/ppt/ppt_visual_system.md"),
+        ]
+        for rel_path in missing_rels:
+            (project / rel_path).unlink()
+        project_before = {
+            path.relative_to(project).as_posix(): path.read_bytes()
+            for path in project.rglob("*")
+            if path.is_file()
+        }
+
+        orchestrator = project / "AD-creative/orchestrator"
+        moved_orchestrator = project / "AD-creative/orchestrator-before-swap"
+        orchestrator_before = {
+            path.relative_to(orchestrator).as_posix(): path.read_bytes()
+            for path in orchestrator.rglob("*")
+            if path.is_file()
+        }
+        outside = root / "outside"
+        outside.mkdir()
+        (outside / "sentinel.txt").write_text("unchanged", encoding="utf-8")
+        outside_before = {
+            path.relative_to(outside).as_posix(): path.read_bytes()
+            for path in outside.rglob("*")
+            if path.is_file()
+        }
+        original_ensure = operator_module.ensure_delivery_project
+
+        def swapping_ensure(candidate: Path) -> tuple[int, int]:
+            result = original_ensure(candidate)
+            assert result[0] >= len(missing_rels), result
+            orchestrator.rename(moved_orchestrator)
+            orchestrator.symlink_to(outside, target_is_directory=True)
+            return result
+
+        with patch.object(
+            operator_module,
+            "ensure_delivery_project",
+            side_effect=swapping_ensure,
+        ):
+            result = migrate_control_plane(project)
+
+        assert result["applied"] is False, result
+        assert result["blocked_before_write"] is False, result
+        assert result["partial_apply"] is True, result
+        assert any(
+            blocker["code"] == "migration_managed_path_changed"
+            for blocker in result["blockers"]
+        ), result
+        outside_after = {
+            path.relative_to(outside).as_posix(): path.read_bytes()
+            for path in outside.rglob("*")
+            if path.is_file()
+        }
+        assert outside_after == outside_before
+        orchestrator_after = {
+            path.relative_to(moved_orchestrator).as_posix(): path.read_bytes()
+            for path in moved_orchestrator.rglob("*")
+            if path.is_file()
+        }
+        assert orchestrator_after == orchestrator_before
+        project_after = {
+            path.relative_to(project).as_posix(): path.read_bytes()
+            for path in project.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        }
+        assert project_after != project_before
+        assert all((project / rel_path).is_file() for rel_path in missing_rels)
+        assert not (
+            moved_orchestrator
+            / "migrations/control_plane_v2_manifest.json"
+        ).exists()
 
 
 def test_realistic_legacy_forward_fixture_prioritizes_current_p0_and_groups_debt() -> None:
@@ -4523,6 +4897,11 @@ def main() -> int:
     test_pre_v2_full_header_thread_row_is_hash_bound_quarantined()
     test_v2_unclassified_imported_thread_row_is_hash_bound_quarantined()
     test_legacy_current_package_backfills_exact_current_truth_or_blocks_ambiguity()
+    test_migration_input_change_blocks_before_first_adco_write()
+    test_migration_aliases_share_one_canonical_lock()
+    test_migration_lock_rejects_symlink_file_without_touching_target()
+    test_migration_project_root_swap_uses_open_directory_binding()
+    test_migration_managed_directory_swap_blocks_before_apply()
     test_realistic_legacy_forward_fixture_prioritizes_current_p0_and_groups_debt()
     test_migrate_control_plane_adds_missing_current_truth_keys_without_overwrite()
     test_duffy_v2_regression_allows_long_low_density_client_outline()

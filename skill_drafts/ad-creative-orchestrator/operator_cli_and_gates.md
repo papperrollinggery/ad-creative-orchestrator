@@ -52,7 +52,7 @@ adco final-delivery-reconcile <project> --old-path <path> --new-path <path> --ki
 adco dedupe-audit <project>
 adco cleanup-plan <project>
 adco handoff-readiness-gate <project>
-adco profile-analyze <project> [--source-id <id>] --brand <brand> --company <company>
+adco profile-analyze <project> [--source-id <id>] --brand <brand> --company <company> [--dashboard]
 adco hygiene <project>
 adco support-bundle <project> [--json]
 adco open-dashboard <project>
@@ -63,13 +63,26 @@ adco docs [--json]
 adco install-skill [--target <dir>]
 ```
 
+`support-bundle` is fail-closed: malformed, unreadable, replaced, or symlinked
+`.adco-local` source state returns `SUPPORT_BUNDLE=BLOCKED` and writes no new
+diagnostic bundle. Client-pack privacy scanning walks every project-relative
+parent through stable `O_NOFOLLOW` directory descriptors, then scans and hashes
+the same file descriptor. One project-root descriptor also binds the source map,
+alias references, and every candidate for the complete manifest build. It uses
+bounded streaming for regular files and ZIP-based formats. PDF extractor output
+is read through a capped pipe and terminated on timeout or limit; the Python
+fallback runs in a memory-limited subprocess and emits metadata/page fragments
+through the same capped pipe. An unreadable,
+unparseable, changed, or oversized candidate blocks the Gate.
+
 Thread and specialist commands are documented in their dedicated references.
 
 `install-skill` owns only the current packaged files it writes. Its schema-v2 install manifest binds current managed paths to SHA-256 digests for parity checks, but a writable target-side manifest is never trusted as deletion authority. Stale, user-modified, and unrelated files are always preserved and reported for explicit cleanup; installation never auto-deletes them. A root symlink is accepted only for the canonical `~/.codex/skills/ad-creative-orchestrator` to `~/.skillshub/ad-creative-orchestrator` compatibility layout, checked before path resolution.
 
 ## Phase/Gate order
 
-New projects start on the Content Surface. Commands for client-visible versions,
+New projects start on the Content Surface. `profile-analyze` stays content-only
+and renders no Dashboard unless `--dashboard` is requested. Commands for client-visible versions,
 PPT/Client Pack/FinalDelivery, asset authorization, legacy migration, or Thread
 work materialize the Delivery Surface before executing. `adco init --full` is an
 explicit alternative for operators who already know the project begins at a
@@ -175,8 +188,8 @@ Migration manifests are written only when legacy evidence exists. They are immut
 
 ## Gate semantics
 
-- `creative-import`: structural and provenance validation for 2-3 post-Critic candidates; rejects stale/unbound evidence and duplicate mechanisms, and flags weak brand ownership.
-- `creative-review`: deterministic structure/language lint; an independent creative Critic remains required.
+- `creative-import`: structural and provenance validation for 2-3 selected candidates; rejects stale/unbound evidence and duplicate mechanisms, and flags weak brand ownership.
+- `creative-review`: deterministic structure/language lint; Content returns it read-only without a receipt, while Delivery may persist an exact-bound Critic receipt.
 - `creative-quality-gate`: downstream legacy proposal completeness and client-safety checks; it is not Sol generation, independent Critic judgment, or client approval.
 - `client-outline-gate`: complete page framework plus explicit hash-bound human/client confirmation.
 - `client-language-gate`: blocks prompts, execution/Thread language, internal notes, fake/unsupported claims.

@@ -66,7 +66,11 @@ Use the Delivery Surface only when the current action involves at least one of:
 - PPT export, Client Pack, FinalDelivery, or send-readiness evidence;
 - external upload/send/publish;
 - legacy control-plane migration;
-- explicit parallel isolation or independent review.
+- explicit isolated/parallel execution with a controlled write scope;
+- independent review bound to an exact client-visible version or delivery decision.
+
+An internal second opinion remains on the Content Surface. It does not by itself
+justify Delivery files, a Thread, a Gate, or a version ledger.
 
 Delivery-risk CLI commands materialize the full surface on demand. Once
 escalated, preserve existing client-visible files and exact-current evidence.

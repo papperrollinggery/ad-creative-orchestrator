@@ -13,12 +13,18 @@ from typing import Iterable
 
 from .ingestion import EVIDENCE_REL, IngestionReport, ingest_source_rows, load_evidence_chunks
 from .models import EvidenceChunk, FactInventoryItem
+from runtime_paths import DELIVERY_SURFACE, project_surface
 
 
 FACT_INVENTORY_REL = Path("AD-creative/orchestrator/fact_inventory.jsonl")
 ANALYSIS_REQUEST_REL = Path("AD-creative/orchestrator/intake_analysis_request.json")
 FACT_STATES = {"present", "missing", "unknown", "conflicting"}
 FACT_OWNERS = {"client", "operator", "model"}
+CONTENT_DEFERRED_FACT_KEYS = {
+    "asset.product_images",
+    "brand.logo",
+    "policy.ai_client_visibility",
+}
 
 INTAKE_ANALYSIS_SCHEMA: dict[str, object] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -214,7 +220,7 @@ EXPLICIT_FACT_PATTERNS: list[tuple[str, str, re.Pattern[str], bool]] = [
     (
         "policy.ai_client_visibility",
         "present",
-        re.compile(r"(?:允许|可用于|可以).{0,24}(?:AI|生成图).{0,24}(?:客户|审阅|client)", re.I),
+        re.compile(r"(?<!不)(?:允许|可用于|可以).{0,24}(?:AI|生成图).{0,24}(?:客户|审阅|client)", re.I),
         False,
     ),
     (
@@ -340,7 +346,11 @@ def requirement_candidates(chunks: Iterable[EvidenceChunk]) -> list[RequirementC
     return candidates
 
 
-def fact_gap_templates(facts: Iterable[FactInventoryItem]) -> list[dict[str, str]]:
+def fact_gap_templates(
+    facts: Iterable[FactInventoryItem],
+    *,
+    delivery_surface: bool = True,
+) -> list[dict[str, str]]:
     gaps: list[dict[str, str]] = []
     for fact in facts:
         if fact.state not in {"missing", "conflicting"} and not (
@@ -352,13 +362,30 @@ def fact_gap_templates(facts: Iterable[FactInventoryItem]) -> list[dict[str, str
             "conflicting": "冲突",
             "unknown": "待确认",
         }[fact.state]
+        deferred_on_content = (
+            not delivery_surface
+            and fact.fact_key in CONTENT_DEFERRED_FACT_KEYS
+            and fact.state != "conflicting"
+        )
+        impact = (
+            "low"
+            if deferred_on_content
+            else "blocking"
+            if fact.blocking or fact.state == "conflicting"
+            else "high_impact"
+        )
+        recommended_action = (
+            f"记录 {fact.fact_key}，在进入客户可见交付前补齐；当前内部内容工作可继续。"
+            if deferred_on_content
+            else f"核对 {fact.fact_key} 的来源证据并由 {fact.owner} 补充或裁决。"
+        )
         gaps.append(
             {
                 "linked_requirement_id": "",
-                "impact": "blocking" if fact.blocking or fact.state == "conflicting" else "high_impact",
+                "impact": impact,
                 "status": "open",
                 "description": f"fact:{fact.fact_key} {state_label}；仅依据已绑定证据，不由关键词反推。",
-                "recommended_action": f"核对 {fact.fact_key} 的来源证据并由 {fact.owner} 补充或裁决。",
+                "recommended_action": recommended_action,
                 "owner": fact.owner,
                 "question_for_user": "" if fact.owner == "client" else f"请确认 {fact.fact_key}。",
                 "question_for_client": f"请补充或确认 {fact.fact_key}。" if fact.owner == "client" else "",
@@ -405,18 +432,35 @@ def sync_fact_gaps(
 ) -> list[dict[str, str]]:
     path = project / "AD-creative/orchestrator/gaps.csv"
     fields, rows = _read_csv(path)
-    existing = {row.get("description", "") for row in rows}
+    existing = {row.get("description", ""): row for row in rows}
     new_rows: list[dict[str, str]] = []
-    for template in fact_gap_templates(facts):
-        if template["description"] in existing:
+    changed = False
+    for template in fact_gap_templates(
+        facts,
+        delivery_surface=project_surface(project) == DELIVERY_SURFACE,
+    ):
+        current = existing.get(template["description"])
+        if current is not None:
+            for key, value in template.items():
+                if key == "status":
+                    if (
+                        template["impact"] in {"blocking", "high_impact"}
+                        and current.get("status", "").strip().lower() != "open"
+                    ):
+                        current["status"] = "open"
+                        changed = True
+                    continue
+                if current.get(key, "") != value:
+                    current[key] = value
+                    changed = True
             continue
         row = {
             "gap_id": _next_id([*rows, *new_rows], "gap_id", "GAP"),
             **template,
         }
         new_rows.append(row)
-        existing.add(template["description"])
-    if new_rows:
+        existing[template["description"]] = row
+    if new_rows or changed:
         _write_csv(path, fields, [*rows, *new_rows])
     return new_rows
 

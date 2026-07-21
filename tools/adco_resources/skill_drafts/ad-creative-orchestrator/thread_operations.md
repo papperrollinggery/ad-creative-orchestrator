@@ -4,7 +4,12 @@ Read this file before any Thread planning, dispatch, observation, receipt reconc
 
 ## Decision and budget
 
-Default decision: no Thread. Use the minimum bounded worker/reviewer only for explicit isolation, genuinely parallel specialist work, or independent review.
+Default decision: no Thread. A same-task internal second opinion stays on the
+Content Surface and can be returned read-only in the current conversation; it is
+not a dispatch reason. Use the minimum bounded worker/reviewer only when the user
+explicitly requests isolation/parallel execution, genuinely independent work must
+proceed concurrently, or an exact client-visible version needs a separately bound
+review receipt.
 
 ```text
 default max active worker/reviewer Threads: 3

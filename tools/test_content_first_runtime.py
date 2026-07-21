@@ -8,9 +8,23 @@ import os
 import subprocess
 import sys
 import tempfile
+import zipfile
+import zlib
 from pathlib import Path
+from unittest.mock import patch
 
-from ad_creative_operator import read_csv_rows, render_handoff, write_csv_rows
+import init_project as init_project_module
+import adco_core.ingestion as ingestion_module
+import ad_creative_operator as operator_module
+
+from ad_creative_operator import (
+    build_client_pack_input_manifest,
+    read_csv_rows,
+    render_handoff,
+    render_support_bundle,
+    specialist_scope_manifest,
+    write_csv_rows,
+)
 from runtime_paths import (
     CONTENT_SURFACE,
     DELIVERY_SURFACE,
@@ -74,6 +88,50 @@ def run_init(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]
 
 def file_count(project: Path) -> int:
     return sum(path.is_file() for path in project.rglob("*"))
+
+
+def write_compressed_text_pdf(path: Path, visible_text: str) -> None:
+    escaped = (
+        visible_text.replace("\\", "\\\\")
+        .replace("(", "\\(")
+        .replace(")", "\\)")
+    )
+    content = f"BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET".encode("utf-8")
+    compressed = zlib.compress(content)
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+        ),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        (
+            f"<< /Length {len(compressed)} /Filter /FlateDecode >>\nstream\n".encode()
+            + compressed
+            + b"\nendstream"
+        ),
+    ]
+    payload = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for index, body in enumerate(objects, start=1):
+        offsets.append(len(payload))
+        payload.extend(f"{index} 0 obj\n".encode())
+        payload.extend(body)
+        payload.extend(b"\nendobj\n")
+    xref_offset = len(payload)
+    payload.extend(f"xref\n0 {len(objects) + 1}\n".encode())
+    payload.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        payload.extend(f"{offset:010d} 00000 n \n".encode())
+    payload.extend(
+        (
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF\n"
+        ).encode()
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(bytes(payload))
 
 
 def test_skill_and_default_project_budgets() -> None:
@@ -248,7 +306,27 @@ def test_default_run_emits_content_answer_without_delivery_theatre() -> None:
         assert payload["dashboard_render_count"] == 0
         assert payload["council_run_count"] == 0
         assert payload["full_validation_run_count"] == 0
-        assert file_count(project) <= 12, file_count(project)
+        assert file_count(project) <= 14, file_count(project)
+        source_rows = (
+            project / "AD-creative/orchestrator/source_events.csv"
+        ).read_text(encoding="utf-8")
+        assert "local-source://SRC-001" in source_rows
+        evidence = (
+            project / "AD-creative/orchestrator/evidence_chunks.jsonl"
+        ).read_text(encoding="utf-8")
+        assert str(root) not in source_rows
+        assert str(root) not in evidence
+        for public_path in (project / "AD-creative").rglob("*"):
+            if public_path.is_file():
+                assert str(root) not in public_path.read_text(
+                    encoding="utf-8", errors="ignore"
+                ), public_path
+        local_map = project / ".adco-local/source_paths.json"
+        assert str(material.resolve()) in local_map.read_text(encoding="utf-8")
+        assert (project / ".adco-local/.gitignore").read_text(encoding="utf-8") == (
+            "*\n!.gitignore\n"
+        )
+        assert local_map.stat().st_mode & 0o077 == 0
         forbidden = [
             "AD-creative/handoff/操作台.html",
             "AD-creative/orchestrator/events.jsonl",
@@ -266,6 +344,908 @@ def test_default_run_emits_content_answer_without_delivery_theatre() -> None:
         assert status["lane_states"] == {}
         assert status["completion_readiness"]["delivery_gates_required"] is False
         assert "missing_gates" not in status["completion_readiness"]
+
+        support_report = render_support_bundle(project)
+        support_text = support_report.read_text(encoding="utf-8")
+        assert str(material.resolve()) not in support_text
+        assert ".adco-local" not in support_text
+
+        private_client = project / "AD-creative/client_review/private-marker.md"
+        private_client.parent.mkdir(parents=True, exist_ok=True)
+        private_client.write_text(
+            f"must never export {material.resolve()}",
+            encoding="utf-8",
+        )
+        manifest, _, manifest_errors = build_client_pack_input_manifest(
+            project,
+            [
+                {
+                    "artifact_id": "ART-PRIVATE-MAP",
+                    "visibility": "client_visible",
+                    "path": ".adco-local/source_paths.json",
+                },
+                {
+                    "artifact_id": "ART-PRIVATE-MARKER",
+                    "visibility": "client_visible",
+                    "path": "AD-creative/client_review/private-marker.md",
+                },
+            ],
+        )
+        manifest_text = json.dumps(manifest, ensure_ascii=False, sort_keys=True)
+        assert ".adco-local" not in manifest_text
+        assert str(material.resolve()) not in manifest_text
+        assert any("private local source path" in item for item in manifest_errors)
+        scope = specialist_scope_manifest(project, excluded_roots=[])
+        assert not any(
+            rel == ".adco-local" or rel.startswith(".adco-local/")
+            for rel in scope
+        )
+
+
+def test_external_source_map_repairs_unsafe_local_gitignore() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-local-ignore-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        local_state = project / ".adco-local"
+        local_state.mkdir(parents=True)
+        (local_state / ".gitignore").write_text(
+            "*\n!source_paths.json\n",
+            encoding="utf-8",
+        )
+        material = root / "brief.md"
+        material.write_text("用于验证私有映射忽略规则。", encoding="utf-8")
+
+        completed = run_operator(
+            "run",
+            str(project),
+            "--material",
+            str(material),
+            "--json",
+        )
+        payload = json.loads(completed.stdout)
+        assert payload["run"] == "PASS", payload
+        assert (local_state / ".gitignore").read_text(encoding="utf-8") == (
+            "*\n!.gitignore\n"
+        )
+        assert (local_state / "source_paths.json").stat().st_mode & 0o077 == 0
+        subprocess.run(
+            ["git", "init", "--quiet", str(project)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        ignored = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(project),
+                "check-ignore",
+                "--quiet",
+                ".adco-local/source_paths.json",
+            ],
+            check=False,
+        )
+        assert ignored.returncode == 0, ignored.returncode
+
+
+def test_local_source_state_dirfd_resists_concurrent_symlink_swap() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-local-swap-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        run_operator("init", str(project))
+        material = root / "brief.md"
+        material.write_text("private source marker", encoding="utf-8")
+        outside = root / "outside"
+        outside.mkdir()
+        (outside / "sentinel.txt").write_text("unchanged", encoding="utf-8")
+        outside_before = {
+            path.relative_to(outside).as_posix(): path.read_bytes()
+            for path in outside.rglob("*")
+            if path.is_file()
+        }
+        original_replace = ingestion_module.os.replace
+        swapped = False
+
+        def swapping_replace(
+            source: str,
+            target: str,
+            *,
+            src_dir_fd: int | None = None,
+            dst_dir_fd: int | None = None,
+        ) -> None:
+            nonlocal swapped
+            if not swapped:
+                local_state = project / ".adco-local"
+                assert local_state.is_dir()
+                local_state.rename(project / ".adco-local.before-swap")
+                local_state.symlink_to(outside, target_is_directory=True)
+                swapped = True
+            original_replace(
+                source,
+                target,
+                src_dir_fd=src_dir_fd,
+                dst_dir_fd=dst_dir_fd,
+            )
+
+        with patch.object(
+            ingestion_module.os,
+            "replace",
+            side_effect=swapping_replace,
+        ):
+            try:
+                ingestion_module.register_local_source_path(
+                    project,
+                    "SRC-SWAP",
+                    material,
+                )
+            except ValueError as exc:
+                assert "changed during operation" in str(exc)
+            else:
+                raise AssertionError("local state swap must fail closed")
+
+        assert swapped
+        outside_after = {
+            path.relative_to(outside).as_posix(): path.read_bytes()
+            for path in outside.rglob("*")
+            if path.is_file()
+        }
+        assert outside_after == outside_before
+
+
+def test_open_project_dir_closes_fd_when_visible_binding_disappears() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-project-fd-close-") as raw:
+        project = Path(raw) / "project"
+        project.mkdir()
+        original_close = ingestion_module.os.close
+        closed_fds: list[int] = []
+
+        def tracking_close(fd: int) -> None:
+            closed_fds.append(fd)
+            original_close(fd)
+
+        with (
+            patch.object(
+                ingestion_module.os,
+                "stat",
+                side_effect=FileNotFoundError("simulated binding loss"),
+            ),
+            patch.object(
+                ingestion_module.os,
+                "close",
+                side_effect=tracking_close,
+            ),
+        ):
+            try:
+                ingestion_module._open_project_dir(project)
+            except FileNotFoundError:
+                pass
+            else:
+                raise AssertionError("binding loss must fail project dir open")
+        assert len(closed_fds) == 1
+
+
+def test_private_source_map_failures_block_support_and_client_pack() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-private-map-fail-closed-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        run_operator("init", str(project))
+        local_state = project / ".adco-local"
+        local_state.mkdir(mode=0o700)
+        (local_state / ".gitignore").write_text(
+            "*\n!.gitignore\n",
+            encoding="utf-8",
+        )
+        map_path = local_state / "source_paths.json"
+        support_path = project / "AD-creative/handoff/support_bundle.md"
+
+        def assert_exports_blocked() -> None:
+            try:
+                render_support_bundle(project)
+            except ValueError as exc:
+                assert "invalid or unreadable" in str(exc)
+            else:
+                raise AssertionError("unsafe private source map must block support bundle")
+            payload, _, errors = build_client_pack_input_manifest(project, [])
+            assert any("invalid or unreadable" in item for item in errors), errors
+            assert payload["files"] == []
+            assert not support_path.exists()
+
+        map_path.write_text("{not-json", encoding="utf-8")
+        assert_exports_blocked()
+        blocked_cli = run_operator(
+            "support-bundle",
+            str(project),
+            check=False,
+        )
+        assert blocked_cli.returncode == 1
+        assert "SUPPORT_BUNDLE=BLOCKED" in blocked_cli.stdout
+        assert not support_path.exists()
+
+        outside_map = root / "outside-source-map.json"
+        outside_map.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "sources": {"SRC-OUTSIDE": str((root / "source.md").resolve())},
+                }
+            ),
+            encoding="utf-8",
+        )
+        outside_before = outside_map.read_bytes()
+        map_path.unlink()
+        map_path.symlink_to(outside_map)
+        assert_exports_blocked()
+        assert outside_map.read_bytes() == outside_before
+
+        map_path.unlink()
+        map_path.write_text(outside_map.read_text(encoding="utf-8"), encoding="utf-8")
+        with patch.object(
+            ingestion_module,
+            "_read_private_text_at",
+            side_effect=PermissionError("simulated unreadable private state"),
+        ):
+            assert_exports_blocked()
+
+
+def test_missing_private_map_with_registered_alias_blocks_exports() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-private-map-missing-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        run_operator("init", str(project))
+        source = root / "private-source.md"
+        source.write_text("private", encoding="utf-8")
+        ingestion_module.register_local_source_path(project, "SRC-MISSING", source)
+        source_events = project / "AD-creative/orchestrator/source_events.csv"
+        fields, rows = read_csv_rows(source_events)
+        rows.append(
+            {
+                "source_event_id": "SRC-MISSING",
+                "received_at": "2026-01-01T00:00:00+08:00",
+                "source_owner": "operator",
+                "source_type": "file",
+                "declared_semantics": "initial",
+                "file_paths": "local-source://SRC-MISSING",
+                "raw_summary": "private material",
+                "trust_level": "unreviewed",
+                "affects_requirements": "unknown",
+                "notes": "",
+            }
+        )
+        write_csv_rows(source_events, fields, rows)
+        client_file = project / "AD-creative/client_review/private-path.md"
+        client_file.parent.mkdir(parents=True, exist_ok=True)
+        client_file.write_text(str(source.resolve()), encoding="utf-8")
+        (project / ".adco-local/source_paths.json").unlink()
+
+        try:
+            render_support_bundle(project)
+        except ValueError as exc:
+            assert "invalid or unreadable" in str(exc)
+        else:
+            raise AssertionError("missing map with aliases must block support bundle")
+        manifest, _, errors = build_client_pack_input_manifest(
+            project,
+            [
+                {
+                    "artifact_id": "ART-MISSING-MAP",
+                    "visibility": "client_visible",
+                    "path": client_file.relative_to(project).as_posix(),
+                }
+            ],
+        )
+        assert any("invalid or unreadable" in item for item in errors), errors
+        assert manifest["files"] == []
+
+
+def test_client_pack_private_marker_zip_scan_is_bounded_and_directory_safe() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-private-zip-scan-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        run_operator("init", str(project))
+        source = root / "private-source.md"
+        source.write_text("private", encoding="utf-8")
+        ingestion_module.register_local_source_path(project, "SRC-ZIP", source)
+
+        client_root = project / "AD-creative/client_review"
+        client_root.mkdir(parents=True, exist_ok=True)
+        safe_pptx = client_root / "safe-directory-entry.pptx"
+        with zipfile.ZipFile(safe_pptx, "w") as archive:
+            archive.writestr("folder/", b"")
+            archive.writestr("folder/document.xml", b"safe client content")
+        safe_artifact = {
+            "artifact_id": "ART-SAFE-ZIP",
+            "visibility": "client_visible",
+            "path": safe_pptx.relative_to(project).as_posix(),
+        }
+        safe_manifest, _, safe_errors = build_client_pack_input_manifest(
+            project,
+            [safe_artifact],
+        )
+        assert not [item for item in safe_errors if "safe-directory-entry.pptx" in item]
+        assert any(
+            item["path"] == safe_artifact["path"]
+            for item in safe_manifest["files"]
+        )
+
+        leaking_pptx = client_root / "leaking.pptx"
+        with zipfile.ZipFile(leaking_pptx, "w") as archive:
+            archive.writestr("ppt/slides/slide1.xml", str(source.resolve()))
+        leaking_artifact = {
+            "artifact_id": "ART-LEAKING-ZIP",
+            "visibility": "client_visible",
+            "path": leaking_pptx.relative_to(project).as_posix(),
+        }
+        leaking_manifest, _, leaking_errors = build_client_pack_input_manifest(
+            project,
+            [leaking_artifact],
+        )
+        assert any(
+            "leaking.pptx" in item and "private local source path marker" in item
+            for item in leaking_errors
+        ), leaking_errors
+        assert not any(
+            item["path"] == leaking_artifact["path"]
+            for item in leaking_manifest["files"]
+        )
+
+        oversized_pptx = client_root / "oversized.pptx"
+        with zipfile.ZipFile(oversized_pptx, "w") as archive:
+            archive.writestr("ppt/slides/slide1.xml", b"x" * 64)
+        oversized_artifact = {
+            "artifact_id": "ART-OVERSIZED-ZIP",
+            "visibility": "client_visible",
+            "path": oversized_pptx.relative_to(project).as_posix(),
+        }
+        with patch.object(
+            operator_module,
+            "PRIVATE_MARKER_SCAN_MAX_MEMBER_BYTES",
+            32,
+        ):
+            oversized_manifest, _, oversized_errors = build_client_pack_input_manifest(
+                project,
+                [oversized_artifact],
+            )
+        assert any(
+            "oversized.pptx" in item and "archive limit exceeded" in item
+            for item in oversized_errors
+        ), oversized_errors
+        assert not any(
+            item["path"] == oversized_artifact["path"]
+            for item in oversized_manifest["files"]
+        )
+
+
+def test_client_pack_scan_and_hash_share_one_stable_file_binding() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-private-scan-hash-race-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        run_operator("init", str(project))
+        source = root / "private-source.md"
+        source.write_text("private", encoding="utf-8")
+        ingestion_module.register_local_source_path(project, "SRC-RACE", source)
+
+        client_file = project / "AD-creative/client_review/race.md"
+        client_file.parent.mkdir(parents=True, exist_ok=True)
+        client_file.write_text("safe client content", encoding="utf-8")
+        safe_inode = client_file.stat().st_ino
+        replacement = root / "replacement.md"
+        replacement.write_text(str(source.resolve()), encoding="utf-8")
+        original_scan = operator_module._scan_and_hash_regular_fd
+        swapped = False
+
+        def swapping_scan(
+            fd: int,
+            markers: list[bytes],
+            *,
+            limit: int,
+        ) -> tuple[str, int, bool, bool]:
+            nonlocal swapped
+            result = original_scan(fd, markers, limit=limit)
+            if not swapped and os.fstat(fd).st_ino == safe_inode:
+                os.replace(replacement, client_file)
+                swapped = True
+            return result
+
+        with patch.object(
+            operator_module,
+            "_scan_and_hash_regular_fd",
+            side_effect=swapping_scan,
+        ):
+            manifest, _, errors = build_client_pack_input_manifest(
+                project,
+                [
+                    {
+                        "artifact_id": "ART-SCAN-HASH-RACE",
+                        "visibility": "client_visible",
+                        "path": client_file.relative_to(project).as_posix(),
+                    }
+                ],
+            )
+        assert swapped
+        assert any(
+            "race.md" in item and "target changed during inspection" in item
+            for item in errors
+        ), errors
+        assert not any(
+            item["path"] == client_file.relative_to(project).as_posix()
+            for item in manifest["files"]
+        )
+
+
+def test_client_pack_parent_directory_swap_cannot_escape_project() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-private-parent-swap-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        run_operator("init", str(project))
+        source = root / "private-source.md"
+        source.write_text("private", encoding="utf-8")
+        ingestion_module.register_local_source_path(project, "SRC-PARENT", source)
+
+        client_root = project / "AD-creative/client_review"
+        client_root.mkdir(parents=True, exist_ok=True)
+        client_file = client_root / "parent-race.md"
+        client_file.write_text("safe client content", encoding="utf-8")
+        outside = root / "outside"
+        outside.mkdir()
+        outside_file = outside / client_file.name
+        outside_file.write_text(str(source.resolve()), encoding="utf-8")
+        outside_hash = operator_module.file_sha256(outside_file)
+        moved_client_root = project / "AD-creative/client_review-before-swap"
+        original_open = operator_module._open_project_relative_regular_file
+        swapped = False
+
+        def swapping_open(
+            candidate_project: Path,
+            relative_path: str | Path,
+            *,
+            project_root_fd: int | None = None,
+        ) -> tuple[int, os.stat_result, list[int], tuple[str, ...]]:
+            nonlocal swapped
+            if not swapped and str(relative_path).endswith(client_file.name):
+                client_root.rename(moved_client_root)
+                client_root.symlink_to(outside, target_is_directory=True)
+                swapped = True
+            return original_open(
+                candidate_project,
+                relative_path,
+                project_root_fd=project_root_fd,
+            )
+
+        with patch.object(
+            operator_module,
+            "_open_project_relative_regular_file",
+            side_effect=swapping_open,
+        ):
+            manifest, _, errors = build_client_pack_input_manifest(
+                project,
+                [
+                    {
+                        "artifact_id": "ART-PARENT-RACE",
+                        "visibility": "client_visible",
+                        "path": client_file.relative_to(project).as_posix(),
+                    }
+                ],
+            )
+        assert swapped
+        assert any("parent-race.md" in item and "privacy" in item for item in errors)
+        assert not any(item.get("sha256") == outside_hash for item in manifest["files"])
+        assert outside_file.read_text(encoding="utf-8") == str(source.resolve())
+
+
+def test_client_pack_manifest_binds_one_project_root_inode() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-private-root-replace-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        replacement_project = root / "replacement-project"
+        original_project = root / "original-project"
+        run_operator("init", str(project))
+        run_operator("init", str(replacement_project))
+
+        source_a = root / "private-source-a.md"
+        source_a.write_text("private-a", encoding="utf-8")
+        ingestion_module.register_local_source_path(project, "SRC-ROOT-A", source_a)
+        client_rel = Path("AD-creative/client_review/root-race.md")
+        client_a = project / client_rel
+        client_a.parent.mkdir(parents=True, exist_ok=True)
+        client_a.write_text("safe project A", encoding="utf-8")
+
+        source_b = root / "private-source-b.md"
+        source_b.write_text("private-b", encoding="utf-8")
+        ingestion_module.register_local_source_path(
+            replacement_project,
+            "SRC-ROOT-B",
+            source_b,
+        )
+        client_b = replacement_project / client_rel
+        client_b.parent.mkdir(parents=True, exist_ok=True)
+        client_b.write_text(str(source_b.resolve()), encoding="utf-8")
+        replacement_hash = operator_module.file_sha256(client_b)
+
+        original_markers = operator_module.private_source_path_markers
+        swapped = False
+
+        def swapping_markers(
+            candidate_project: Path,
+            *,
+            project_root_fd: int | None = None,
+        ) -> list[bytes]:
+            nonlocal swapped
+            markers = original_markers(
+                candidate_project,
+                project_root_fd=project_root_fd,
+            )
+            project.rename(original_project)
+            replacement_project.rename(project)
+            swapped = True
+            return markers
+
+        with patch.object(
+            operator_module,
+            "private_source_path_markers",
+            side_effect=swapping_markers,
+        ):
+            manifest, _, errors = build_client_pack_input_manifest(
+                project,
+                [
+                    {
+                        "artifact_id": "ART-ROOT-RACE",
+                        "visibility": "client_visible",
+                        "path": client_rel.as_posix(),
+                    }
+                ],
+            )
+
+        assert swapped
+        assert any("project root changed" in item for item in errors), errors
+        assert manifest["files"] == [], manifest
+        assert not any(
+            item.get("sha256") == replacement_hash for item in manifest["files"]
+        )
+        assert (project / client_rel).read_text(encoding="utf-8") == str(
+            source_b.resolve()
+        )
+
+
+def test_client_pack_scans_compressed_pdf_visible_text() -> None:
+    with (
+        tempfile.TemporaryDirectory(prefix="adco-private-pdf-scan-") as raw,
+        tempfile.TemporaryDirectory(
+            prefix="adco-pdf-source-",
+            dir="/tmp",
+        ) as raw_source,
+    ):
+        root = Path(raw)
+        project = root / "project"
+        run_operator("init", str(project))
+        source = Path(raw_source) / "private-source.md"
+        source.write_text("private", encoding="utf-8")
+        ingestion_module.register_local_source_path(project, "SRC-PDF", source)
+
+        marker = str(source.resolve())
+        pdf_path = project / "AD-creative/client_review/compressed-marker.pdf"
+        write_compressed_text_pdf(pdf_path, marker)
+        assert marker.encode("utf-8") not in pdf_path.read_bytes()
+
+        manifest, _, errors = build_client_pack_input_manifest(
+            project,
+            [
+                {
+                    "artifact_id": "ART-COMPRESSED-PDF",
+                    "visibility": "client_visible",
+                    "path": pdf_path.relative_to(project).as_posix(),
+                }
+            ],
+        )
+        assert any(
+            "compressed-marker.pdf" in item
+            and "private local source path marker" in item
+            for item in errors
+        ), errors
+        assert not any(
+            item["path"] == pdf_path.relative_to(project).as_posix()
+            for item in manifest["files"]
+        )
+
+
+def test_pdf_extractor_enforces_output_limit_while_streaming() -> None:
+    if not operator_module.shutil.which("pdftotext"):
+        return
+    with tempfile.TemporaryDirectory(prefix="adco-private-pdf-limit-") as raw:
+        pdf_path = Path(raw) / "expanding.pdf"
+        visible_text = "bounded-output " * 20_000
+        write_compressed_text_pdf(pdf_path, visible_text)
+        raw_size = pdf_path.stat().st_size
+        assert raw_size < 8_192, raw_size
+        fd = os.open(pdf_path, os.O_RDONLY)
+        try:
+            with patch.object(
+                operator_module,
+                "PRIVATE_MARKER_SCAN_MAX_ARCHIVE_BYTES",
+                4_096,
+            ):
+                issue, found = operator_module._scan_pdf_fd(
+                    fd,
+                    [b"marker-that-is-not-present"],
+                )
+        finally:
+            os.close(fd)
+        assert issue == "privacy scan PDF text limit exceeded", issue
+        assert found is False
+
+
+def test_pypdf_fallback_isolated_with_memory_and_stream_limits() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-pypdf-limit-") as raw:
+        dummy = Path(raw) / "dummy.pdf"
+        dummy.write_bytes(b"%PDF-1.4\n%%EOF\n")
+        fd = os.open(dummy, os.O_RDONLY)
+        try:
+            with (
+                patch.object(
+                    operator_module.importlib.util,
+                    "find_spec",
+                    return_value=object(),
+                ),
+                patch.object(
+                    operator_module,
+                    "_scan_pdf_command_fd",
+                    return_value=("", False),
+                ) as bounded_scan,
+            ):
+                issue, found = operator_module._scan_pdf_with_pypdf_fd(
+                    fd,
+                    [b"marker-that-is-not-present"],
+                )
+        finally:
+            os.close(fd)
+    assert issue == ""
+    assert found is False
+    command = bounded_scan.call_args.args[2]
+    assert command[:3] == [sys.executable, "-I", "-c"], command
+    script = command[3]
+    assert "resource.setrlimit" in script
+    assert "visitor_text" in script
+    assert "sys.stdout.buffer" in script
+
+
+def test_run_preflight_rejects_invalid_inputs_before_project_write() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-run-preflight-") as raw:
+        root = Path(raw)
+        missing = root / "missing.md"
+        unsupported = root / "brief.bin"
+        unsupported.write_bytes(b"unsupported")
+        empty_file = root / "empty.md"
+        empty_file.touch()
+        empty_dir = root / "empty-dir"
+        empty_dir.mkdir()
+
+        cases = [
+            ("missing", missing, 2_000_000, "material_not_found"),
+            ("unsupported", unsupported, 2_000_000, "empty_or_unsupported_material"),
+            ("empty-file", empty_file, 2_000_000, "empty_material"),
+            ("empty-dir", empty_dir, 2_000_000, "empty_or_unsupported_material"),
+            ("bad-budget", unsupported, 0, "invalid_character_budget"),
+        ]
+        for name, material, budget, expected_code in cases:
+            project = root / f"project-{name}"
+            completed = run_operator(
+                "run",
+                str(project),
+                "--material",
+                str(material),
+                "--max-total-chars",
+                str(budget),
+                "--json",
+                check=False,
+            )
+            assert completed.returncode == 1, completed.stdout
+            payload = json.loads(completed.stdout)
+            assert payload["error"]["code"] == expected_code, payload
+            assert payload["project_created"] is False, payload
+            assert not project.exists(), project
+
+        material_parent = root / "material-parent"
+        material_parent.mkdir()
+        (material_parent / "brief.md").write_text(
+            "项目父级材料目录不应递归包含即将创建的项目。",
+            encoding="utf-8",
+        )
+        nested_project = material_parent / "project"
+        completed = run_operator(
+            "run",
+            str(nested_project),
+            "--material",
+            str(material_parent),
+            "--json",
+            check=False,
+        )
+        assert completed.returncode == 1, completed.stdout
+        payload = json.loads(completed.stdout)
+        assert payload["error"]["code"] == "recursive_project_material", payload
+        assert payload["project_created"] is False, payload
+        assert not nested_project.exists(), nested_project
+
+        existing_project = root / "existing-project"
+        managed_material = existing_project / "AD-creative"
+        managed_material.mkdir(parents=True)
+        (existing_project / "brief.md").write_text(
+            "项目根目录不能作为自身材料。",
+            encoding="utf-8",
+        )
+        (managed_material / "managed.md").write_text(
+            "受管控制面不能作为材料。",
+            encoding="utf-8",
+        )
+        before = {
+            path.relative_to(existing_project).as_posix(): path.read_bytes()
+            for path in existing_project.rglob("*")
+            if path.is_file()
+        }
+        for material in (existing_project, managed_material):
+            completed = run_operator(
+                "run",
+                str(existing_project),
+                "--material",
+                str(material),
+                "--json",
+                check=False,
+            )
+            assert completed.returncode == 1, completed.stdout
+            payload = json.loads(completed.stdout)
+            assert payload["error"]["code"] == "recursive_project_material", payload
+            after = {
+                path.relative_to(existing_project).as_posix(): path.read_bytes()
+                for path in existing_project.rglob("*")
+                if path.is_file()
+            }
+            assert after == before
+
+
+def test_init_and_run_reject_managed_symlink_without_escape_write() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-project-symlink-") as raw:
+        root = Path(raw)
+        outside = root / "outside"
+        outside.mkdir()
+        sentinel = outside / "sentinel.txt"
+        sentinel.write_text("unchanged", encoding="utf-8")
+        before = {path.name: path.read_bytes() for path in outside.iterdir()}
+
+        for command in ("init", "run"):
+            project = root / f"project-{command}"
+            project.mkdir()
+            (project / "AD-creative").symlink_to(outside, target_is_directory=True)
+            if command == "init":
+                completed = run_operator("init", str(project), check=False)
+                assert "INIT=CHECK" in completed.stdout
+            else:
+                material = root / "brief.md"
+                material.write_text("客户希望测试安全边界。", encoding="utf-8")
+                completed = run_operator(
+                    "run",
+                    str(project),
+                    "--material",
+                    str(material),
+                    "--json",
+                    check=False,
+                )
+                payload = json.loads(completed.stdout)
+                assert payload["error"]["code"] == "unsafe_project_symlink"
+            assert completed.returncode == 1
+            assert {path.name: path.read_bytes() for path in outside.iterdir()} == before
+
+        standalone = root / "project-standalone"
+        standalone.mkdir()
+        (standalone / "AD-creative").symlink_to(outside, target_is_directory=True)
+        completed = run_init(str(standalone), check=False)
+        assert completed.returncode == 1
+        assert "INIT=CHECK" in completed.stdout
+        assert {path.name: path.read_bytes() for path in outside.iterdir()} == before
+
+
+def test_init_dirfd_resists_concurrent_managed_symlink_swap() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-init-symlink-swap-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        project.mkdir()
+        outside = root / "outside"
+        outside.mkdir()
+        sentinel = outside / "sentinel.txt"
+        sentinel.write_text("unchanged", encoding="utf-8")
+        outside_before = {
+            path.relative_to(outside).as_posix(): path.read_bytes()
+            for path in outside.rglob("*")
+            if path.is_file()
+        }
+        original_link = init_project_module.os.link
+        swapped = False
+
+        def swapping_link(
+            source: str,
+            target: str,
+            *,
+            src_dir_fd: int | None = None,
+            dst_dir_fd: int | None = None,
+            follow_symlinks: bool = True,
+        ) -> None:
+            nonlocal swapped
+            if not swapped:
+                managed = project / "AD-creative"
+                assert managed.is_dir()
+                managed.rename(project / "AD-creative.before-swap")
+                managed.symlink_to(outside, target_is_directory=True)
+                swapped = True
+            original_link(
+                source,
+                target,
+                src_dir_fd=src_dir_fd,
+                dst_dir_fd=dst_dir_fd,
+                follow_symlinks=follow_symlinks,
+            )
+
+        with patch.object(init_project_module.os, "link", side_effect=swapping_link):
+            try:
+                init_project_module.copy_content_template(template_root(), project)
+            except (OSError, RuntimeError) as exc:
+                assert "symlink" in str(exc).lower() or "not a directory" in str(exc).lower()
+            else:
+                raise AssertionError("concurrent managed symlink swap must fail closed")
+
+        assert swapped
+        outside_after = {
+            path.relative_to(outside).as_posix(): path.read_bytes()
+            for path in outside.rglob("*")
+            if path.is_file()
+        }
+        assert outside_after == outside_before
+
+
+def test_profile_analysis_stays_on_content_surface_without_governance_noise() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-profile-content-") as raw:
+        project = Path(raw) / "project"
+        project.mkdir()
+        material = project / "meeting.md"
+        material.write_text(
+            "张总: 我们希望品牌更年轻，但不要像普通快消广告。\n"
+            "李经理: 产品卖点必须清楚，内部还没统一偏功能还是偏情绪。\n",
+            encoding="utf-8",
+        )
+        run_operator(
+            "run",
+            str(project),
+            "--material",
+            str(material),
+            "--goal",
+            "先理解会议内容",
+            "--json",
+        )
+        analyzed = run_operator(
+            "profile-analyze",
+            str(project),
+            "--source-id",
+            "SRC-001",
+            "--brand",
+            "NOVA",
+            "--json",
+        )
+        payload = json.loads(analyzed.stdout)
+        assert payload["profile_analysis"] == "PASS", payload
+        assert payload["work_id"] == ""
+        assert payload["dashboard"] == ""
+        assert payload["stats"]["governance_records_written"] == 0
+        assert project_surface(project) == CONTENT_SURFACE
+        assert file_count(project) <= 20, file_count(project)
+        assert (
+            project / "AD-creative/orchestrator/profile_knowledge/profile_current_truth.md"
+        ).is_file()
+        assert (project / "AD-creative/handoff/画像分析简报.md").is_file()
+        forbidden = [
+            "AD-creative/handoff/操作台.html",
+            "AD-creative/orchestrator/events.jsonl",
+            "AD-creative/orchestrator/artifact_index.csv",
+            "AD-creative/orchestrator/version_map.csv",
+            "AD-creative/orchestrator/gate_log.csv",
+            "AD-creative/orchestrator/work_items.csv",
+        ]
+        assert not [path for path in forbidden if (project / path).exists()]
 
 
 def test_content_answer_prioritizes_current_requirements_and_real_blockers() -> None:
@@ -621,6 +1601,19 @@ def main() -> int:
     test_delivery_preflight_failures_and_dry_runs_do_not_initialize()
     test_forward_test_contracts_are_machine_readable()
     test_default_run_emits_content_answer_without_delivery_theatre()
+    test_external_source_map_repairs_unsafe_local_gitignore()
+    test_local_source_state_dirfd_resists_concurrent_symlink_swap()
+    test_open_project_dir_closes_fd_when_visible_binding_disappears()
+    test_private_source_map_failures_block_support_and_client_pack()
+    test_missing_private_map_with_registered_alias_blocks_exports()
+    test_client_pack_private_marker_zip_scan_is_bounded_and_directory_safe()
+    test_client_pack_scan_and_hash_share_one_stable_file_binding()
+    test_client_pack_parent_directory_swap_cannot_escape_project()
+    test_client_pack_scans_compressed_pdf_visible_text()
+    test_run_preflight_rejects_invalid_inputs_before_project_write()
+    test_init_and_run_reject_managed_symlink_without_escape_write()
+    test_init_dirfd_resists_concurrent_managed_symlink_swap()
+    test_profile_analysis_stays_on_content_surface_without_governance_noise()
     test_content_answer_prioritizes_current_requirements_and_real_blockers()
     test_non_blocking_unknown_does_not_block_content_status()
     test_legacy_surface_detection_does_not_depend_on_a_delivery_ledger()

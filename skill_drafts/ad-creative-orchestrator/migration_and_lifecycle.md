@@ -13,15 +13,30 @@ AD-creative/orchestrator/control_plane_schema.json
 
 `adco migrate-control-plane` is additive and evidence-preserving:
 
-1. Hash migration inputs before mutation.
-2. Add required files/columns without deleting rows.
-3. Normalize short CSV rows.
-4. Classify artifact lifecycle using controlled values.
-5. Backfill legacy Current Package only when it resolves to one version and one artifact per declared exact-current slot.
-6. Quarantine pre-v2 ThreadOps rows with a hash of the raw row.
-7. Capture only allowlisted low-risk legacy-row messages (for example old gate/work references) in the hash-bound baseline. Authorization, client visibility, send/readiness, path containment, current truth, and FinalDelivery errors can never downgrade; any later delta remains `P1/active` or `P0/current`.
-8. Write a migration manifest whose source hashes/raw legacy evidence/history are immutable while `active_blockers` and state-changing attempts are recomputed from current evidence.
-8. Set project/control schema version only after the evidence snapshot is defined.
+1. Resolve lexical/symlink aliases to one canonical project lock identity, open
+   the owner-only lock directory and regular lock file with `O_NOFOLLOW`, take an
+   exclusive ADCO migration lock, then hold an open project-directory binding for
+   every relative snapshot and write. Build one read-only plan and hash the
+   complete project input snapshot without following directory symlinks. A root
+   rename/symlink swap is reported while the originally opened directory remains
+   the only write root. Every managed parent is then reopened component by
+   component with `O_NOFOLLOW`; CSV, truth, schema, and manifest updates use
+   atomic dirfd-relative writes, so a managed-subdirectory swap blocks instead of
+   redirecting a write outside the project.
+2. If the plan has a blocker, return `blocked_before_write=true` and write nothing.
+3. Re-hash immediately before the first project write; any concurrent delta
+   returns `migration_inputs_changed` with no ADCO write or manifest attempt.
+4. Apply the already computed plan without a second independent derivation.
+   Safe template materialization is the first apply step. If a managed path
+   changes after that step, the run writes no migration manifest and reports
+   `blocked_before_write=true` only when no template file or surface changed;
+   otherwise it reports `partial_apply=true` so a retry is explicit and honest.
+5. Add required files/columns without deleting rows only after the plan is clear.
+6. Normalize short CSV rows and classify artifact lifecycle using controlled values.
+7. Backfill legacy Current Package only when it resolves to one version and one artifact per declared exact-current slot.
+8. Quarantine pre-v2 ThreadOps rows with a hash of the raw row.
+9. Capture only allowlisted low-risk legacy-row messages (for example old gate/work references) in the hash-bound baseline. Authorization, client visibility, send/readiness, path containment, current truth, and FinalDelivery errors can never downgrade; any later delta remains `P1/active` or `P0/current`.
+10. Write the migration manifest and set schema versions only for an applied run.
 
 The migration must be idempotent. A second run over unchanged migrated inputs must not rewrite the artifact index, registry, truth, or manifest.
 
@@ -35,7 +50,12 @@ Return P0/current blockers instead of choosing or inventing truth when:
 - the control schema is malformed;
 - raw ThreadOps quarantine evidence cannot be bound.
 
-An active blocker remains visible in `active_blockers` and the validator. When an operator explicitly establishes one valid Current Version Truth bound to `version_map` and the artifact index, a rerun clears that active blocker while retaining it in `blocker_history`; unchanged reruns do not append attempts. Do not add a blank Current Version Truth to make validation appear cleaner.
+A blocker is returned in the CLI/JSON result without creating or updating a
+migration manifest. After an operator explicitly establishes one valid Current
+Version Truth bound to `version_map` and the artifact index, a rerun may apply the
+migration and record that successful attempt. A blocked preflight is not a state
+change and is not persisted as an attempt. Do not add a blank Current Version
+Truth to make validation appear cleaner.
 
 ## Artifact lifecycle
 
