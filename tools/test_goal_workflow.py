@@ -5,14 +5,18 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import json
 import os
 import tempfile
 import threading
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
 import ad_creative_operator as operator_module
+import adco_core.storage as storage_module
+from adco_core.storage import audit_project_storage, cleanup_actions
 
 from ad_creative_operator import (
     ARTIFACT_INDEX_FIELDS,
@@ -24,6 +28,7 @@ from ad_creative_operator import (
     analyze_profiles,
     append_csv_row,
     build_parser,
+    command_export_pptx,
     command_thread_plan,
     cleanup_plan,
     client_outline_confirmed_content_sha256,
@@ -37,6 +42,7 @@ from ad_creative_operator import (
     ensure_profile_work,
     export_editable_pptx,
     file_sha256,
+    film_packet_content_findings,
     final_delivery_human_identity_valid,
     final_delivery_lock,
     final_delivery_reconciliation_valid,
@@ -397,6 +403,13 @@ def test_project_agents_policy_created_and_validated() -> None:
         assert "content surface" in text
         assert "delivery governance" in text
         assert "structural validation" in text
+        assert "decided once per task" in text
+        assert "never creates or overwrites the root `AGENTS.md`" in text
+        assert "Only inventory/hash-lock" in text
+        assert "claim wording confirmation" in text
+        assert "report `TOOL_BLOCKED`" in text
+        assert "thread_cleanup_<work_id>.md" in text
+        assert "protocol id, not a command" in text
         assert_valid(project)
 
 
@@ -420,6 +433,45 @@ def test_existing_agents_policy_is_not_overwritten() -> None:
         assert not (project / "AD-creative/orchestrator/AGENTS.merge_suggestion.md").exists()
         errors, _ = validate(project)
         assert not errors, errors
+
+
+def test_current_truth_preserves_later_stage_and_dated_sections() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-truth-owned-sections-") as raw_project:
+        project = Path(raw_project)
+        ensure_delivery_project(project)
+        truth_path = project / "AD-creative/orchestrator/current_truth.md"
+        original = truth_path.read_text(encoding="utf-8")
+        original = original.replace(
+            "## Current Stage\n\n",
+            "## Current Stage\nppt_internal_review\n",
+        ).replace(
+            "## Next Action\n",
+            "## Next Action\nkeep-later-stage-action\n",
+        )
+        original += "\n## 2026-08-13 User Notes\nkeep-this-dated-section\n"
+        truth_path.write_text(original, encoding="utf-8")
+
+        material = project / "late-material.md"
+        material.write_text("客户要求补充一页产品证据。", encoding="utf-8")
+        source_ids = register_materials(project, [material], "late evidence")
+        perform_intake(project, source_ids, "late evidence")
+        updated = truth_path.read_text(encoding="utf-8")
+        assert "## Current Stage\nppt_internal_review" in updated
+        assert "## Next Action\nkeep-later-stage-action" in updated
+        assert "## 2026-08-13 User Notes\nkeep-this-dated-section" in updated
+
+        duplicated = updated + "\n## Current Stage\ncompeting-old-summary\n"
+        truth_path.write_text(duplicated, encoding="utf-8")
+        before = truth_path.read_bytes()
+        try:
+            operator_module.update_markdown_sections(
+                truth_path, {"Current Stage": "must-not-choose-silently"}
+            )
+        except ValueError as exc:
+            assert "owned section is duplicated" in str(exc), exc
+        else:
+            raise AssertionError("duplicate current snapshot must fail closed")
+        assert truth_path.read_bytes() == before
 
 
 def test_human_workspace_indexes_mirror_control_plane() -> None:
@@ -804,6 +856,69 @@ def test_pptx_export_blocks_unconfirmed_generated_outline() -> None:
             assert "client-outline-gate BLOCKED" in str(exc)
         else:
             raise AssertionError("unconfirmed generated outline must not reach PPT export")
+
+
+def test_pptx_export_check_preflight_is_zero_write_and_reports_tool_blocked() -> None:
+    if not optional_module("pptx"):
+        return
+    with tempfile.TemporaryDirectory(prefix="adco-ppt-check-preflight-") as raw_project:
+        project = Path(raw_project)
+        ensure_delivery_project(project)
+        material = project / "brief.md"
+        material.write_text(
+            "客户需要一份可编辑广告提案；先由人工确认 exact outline。",
+            encoding="utf-8",
+        )
+        source_ids = register_materials(project, [material], "PPT preflight fixture")
+        perform_intake(project, source_ids, "PPT preflight fixture")
+        add_client_outline_fixture(project)
+        confirm_client_outline(
+            project,
+            confirmed_by="fixture-project-owner",
+            confirmed_at="2026-07-05T00:00:00Z",
+            evidence_ref="user_confirmation:ppt-preflight-fixture",
+        )
+        append_csv_row(
+            project / "AD-creative/orchestrator/gate_log.csv",
+            {
+                "gate_id": "GATE-HISTORICAL-CHECK",
+                "gate_run_id": "GATE-RUN-HISTORICAL-CHECK",
+                "stage": "legacy_review",
+                "status": "PASS",
+                "checked_artifacts": "ART-MISSING-HISTORICAL",
+                "created_at": "2026-07-05T00:01:00Z",
+                "owner": "fixture",
+            },
+        )
+        errors, _ = validate(project)
+        assert any("ART-MISSING-HISTORICAL" in error for error in errors), errors
+        missing_scaffold = project / "AD-creative/film/treatment_packet.md"
+        missing_scaffold.unlink()
+        assert not missing_scaffold.exists()
+        before = {
+            path.relative_to(project).as_posix(): path.read_bytes()
+            for path in project.rglob("*")
+            if path.is_file()
+        }
+        output = io.StringIO()
+        with redirect_stdout(output):
+            status = command_export_pptx(
+                type("ExportArgs", (), {"project": str(project), "output": ""})()
+            )
+        after = {
+            path.relative_to(project).as_posix(): path.read_bytes()
+            for path in project.rglob("*")
+            if path.is_file()
+        }
+        assert status == 1
+        assert after == before
+        stdout = output.getvalue()
+        assert "PPTX_EXPORT=TOOL_BLOCKED" in stdout
+        assert "TARGETED_ARTIFACT=NOT_RUN" in stdout
+        assert "PROJECT_VALIDATION=CHECK" in stdout
+        assert "do not clean, overwrite, move, or copy FinalDelivery" in stdout
+        assert not missing_scaffold.exists()
+        assert not list((project / "AD-creative/ppt/exports").glob("client_review_v*.pptx"))
 
 
 def test_outline_confirmation_binds_presented_bytes_and_stable_content_digest() -> None:
@@ -1937,6 +2052,145 @@ evidence_refs: made-up
         assert row["reconciliation_status"] == "rejected_evidence"
 
 
+def test_thread_reconcile_rejects_cleanup_projection_as_worker_receipt() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-cleanup-not-receipt-") as raw_project:
+        project = Path(raw_project)
+        ensure_delivery_project(project)
+        payload = render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-CLEANUP-NOT-RECEIPT",
+            title="Cleanup projection is not a receipt",
+            objective="Bind reconciliation to the real worker receipt only.",
+            roles=["copy_creative"],
+        )
+        work_id = str(payload["work_id"])
+        _, rows = read_csv_rows(project / "AD-creative/orchestrator/thread_registry.csv")
+        target = next(row for row in rows if row["work_id"] == work_id)
+        lane_id = target["lane_id"]
+        thread_id = "019f9999-1111-7222-8333-444444444444"
+        record_thread_dispatch(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            real_thread_id=thread_id,
+            title_action="dispatcher_set",
+            title_verified_at="2026-07-05T00:00:00Z",
+            dispatch_evidence="read_thread verified cleanup-not-receipt fixture",
+            dispatch_status="dispatched",
+            absolute_deadline_at="2026-07-05T00:05:00Z",
+        )
+        cleanup_path = project / f"AD-creative/orchestrator/thread_cleanup_{work_id}.md"
+        assert cleanup_path.is_file()
+        result = reconcile_thread_receipt(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            receipt_path_value=str(cleanup_path.relative_to(project)),
+            adoption_decision="ADOPT",
+            rejection_reason="",
+            reconciled_at="2026-07-05T00:02:00Z",
+            cleanup_action="must_not_archive_from_projection",
+            archived_at="2026-07-05T00:02:10Z",
+        )
+        assert result["status"] == "rejected_evidence", result
+        _, rows = read_csv_rows(project / "AD-creative/orchestrator/thread_registry.csv")
+        target = next(row for row in rows if row["lane_id"] == lane_id)
+        assert target["archived"] != "true"
+        assert not target.get("scope_proof_path", "")
+
+
+def test_thread_reconcile_rolls_back_adoption_cleanup_and_archive_on_project_check() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-thread-reconcile-rollback-") as raw_project:
+        project = Path(raw_project)
+        ensure_delivery_project(project)
+        append_csv_row(
+            project / "AD-creative/orchestrator/gate_log.csv",
+            {
+                "gate_id": "GATE-UNRELATED-CHECK",
+                "gate_run_id": "GATE-RUN-UNRELATED-CHECK",
+                "stage": "legacy_review",
+                "status": "PASS",
+                "checked_artifacts": "ART-MISSING-UNRELATED",
+                "created_at": "2026-07-05T00:01:00Z",
+                "owner": "fixture",
+            },
+        )
+        payload = render_thread_execution_plan(
+            project,
+            goal_id="GOAL-THREAD-ROLLBACK",
+            title="Thread reconcile rollback",
+            objective="Rollback candidate adoption when whole-project validation is CHECK.",
+            roles=["copy_creative"],
+        )
+        work_id = str(payload["work_id"])
+        registry_path = project / "AD-creative/orchestrator/thread_registry.csv"
+        _, rows = read_csv_rows(registry_path)
+        target = next(row for row in rows if row["work_id"] == work_id)
+        lane_id = target["lane_id"]
+        thread_id = "019f9999-2222-7333-8444-555555555555"
+        record_thread_dispatch(
+            project,
+            lane_id=lane_id,
+            work_id=work_id,
+            real_thread_id=thread_id,
+            title_action="dispatcher_set",
+            title_verified_at="2026-07-05T00:00:00Z",
+            dispatch_evidence="read_thread verified rollback fixture",
+            dispatch_status="dispatched",
+            absolute_deadline_at="2026-07-05T00:05:00Z",
+        )
+        _, rows = read_csv_rows(registry_path)
+        target = next(row for row in rows if row["lane_id"] == lane_id)
+        output_rel = f"{target['write_scope']}/copy_drafts.md"
+        output_path = project / output_rel
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("host-observed worker draft", encoding="utf-8")
+        receipt_path = project / target["receipt_path"]
+        receipt_path.write_text(
+            f"""# Worker Receipt
+
+thread_id: {thread_id}
+files_changed: {output_rel}
+validation_result: PASS
+dirty_state_impact: only the declared isolated workspace changed
+worker_recommendation: ADOPT
+loop_state: completed
+cleanup_actions: archive after host reconciliation
+evidence_refs: exact worker output and dispatch-bound receipt
+""",
+            encoding="utf-8",
+        )
+        tracked = [
+            registry_path,
+            project / "AD-creative/orchestrator/agent_runs.csv",
+            project / "AD-creative/orchestrator/thread_lane_plan.md",
+            project / f"AD-creative/orchestrator/thread_cleanup_{work_id}.md",
+        ]
+        before = {path: path.read_bytes() for path in tracked}
+        try:
+            reconcile_thread_receipt(
+                project,
+                lane_id=lane_id,
+                work_id=work_id,
+                receipt_path_value=target["receipt_path"],
+                adoption_decision="ADOPT",
+                rejection_reason="",
+                reconciled_at="2026-07-05T00:02:00Z",
+                cleanup_action="archive_after_host_reconciliation",
+                archived_at="2026-07-05T00:02:10Z",
+            )
+        except ValueError as exc:
+            assert "control-plane changes rolled back" in str(exc), exc
+            assert "ART-MISSING-UNRELATED" in str(exc), exc
+        else:
+            raise AssertionError("project-wide CHECK must rollback thread reconciliation")
+        assert {path: path.read_bytes() for path in tracked} == before
+        _, rows = read_csv_rows(registry_path)
+        target = next(row for row in rows if row["lane_id"] == lane_id)
+        assert target["archived"] != "true"
+        assert not target.get("scope_proof_path", "")
+
+
 def test_thread_worker_cannot_write_host_attestation_even_if_scope_declares_it() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-thread-host-attestation-") as raw_project:
         project = Path(raw_project)
@@ -2534,8 +2788,409 @@ def test_film_quality_gate_writes_report() -> None:
         ensure_delivery_project(project)
         status, findings, report = review_film_quality(project)
         assert status == "BLOCKED", (status, findings)
+        assert any("导演命题" in item for item in findings), findings
+        assert any("shot plan 没有镜头行" in item for item in findings), findings
+        assert any("世界/物理规则" in item for item in findings), findings
         assert report.exists()
         assert_valid(project)
+
+
+def test_film_packet_requires_causal_world_and_fallback_content() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-film-content-") as raw_project:
+        project = Path(raw_project)
+        ensure_delivery_project(project)
+        film_root = project / "AD-creative/film"
+        treatment = film_root / "treatment_packet.md"
+        shot_plan = film_root / "shot_list_storyboard_plan.md"
+        constraints = film_root / "production_constraints.md"
+        treatment.write_text(
+            """# Film Treatment Packet
+## Director Thesis
+让卖家看见增长不是抽象数据，而是一次可追踪的选择。
+## Audience State Change
+从观望到理解行动为何有效。
+## Brand Causal Role
+只有该产品完成从选择到履约的证据链。
+## Causal Story Arc
+选择触发订单，订单触发真实履约，履约形成品牌记忆。
+## World Rules
+手机屏幕只显示已确认界面；人物不能跨越未建立的空间。
+## Camera / Blocking / Performance
+镜头跟随卖家动作，表演克制，调度保持视线连续。
+## Art / Light / Sound / Edit
+光线由冷转暖，声音用真实操作声建立节奏。
+## Practical / VFX Boundary
+人物与产品实拍，数据轨迹仅作后期合成且不伪造 UI。
+## Fallback / Plan B
+界面未授权时改用包装、动作和声音完成同一因果链。
+## Reference Logic / Do Not Copy
+只借鉴节奏，不复制构图、人物或识别性装置。
+## Client Risks / Decisions
+待确认界面资产是否可出现。
+""",
+            encoding="utf-8",
+        )
+        shot_plan.write_text(
+            """# Shot List / Storyboard Plan
+| shot_id | story_function | causal_input | visible_action | causal_output | physical_space | camera_blocking | capture_method | brand_or_product_role | transition | sound | reference_ids | asset_ids | ratio | risk | fallback | status |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| S01 | 建立选择 | 卖家查看商品 | 手指确认 | 订单成立 | 工作台 | 肩后跟拍 | 实拍 | 产品触发后续 | 动作切 | 点击声 | REF-01 | AST-01 | 16:9 | UI 未授权 | 拍包装确认动作 | draft |
+""",
+            encoding="utf-8",
+        )
+        constraints.write_text(
+            """# Production Constraints
+## Brand / Product Truth
+只使用已确认包装、标志和功能描述。
+## World / Physical Rules
+人物、手机、包装始终保持同一空间和时间连续。
+## Practical / VFX Boundary
+实拍人物产品；合成仅用于抽象轨迹。
+## Stop Conditions
+产品或界面资产未确认时停止客户可见制作。
+## Fallback / Plan B
+以包装和履约动作代替未获授权界面。
+""",
+            encoding="utf-8",
+        )
+        issues, warnings = film_packet_content_findings(
+            project, treatment, shot_plan, constraints
+        )
+        assert not issues, issues
+        assert not warnings, warnings
+
+        treatment.write_text(
+            "# Film Treatment Packet\n"
+            + "".join(
+                f"## {heading}\nTBD\n"
+                for heading in [
+                    "Director Thesis",
+                    "Audience State Change",
+                    "Brand Causal Role",
+                    "Causal Story Arc",
+                    "World Rules",
+                    "Camera / Blocking / Performance",
+                    "Art / Light / Sound / Edit",
+                    "Practical / VFX Boundary",
+                    "Fallback / Plan B",
+                    "Reference Logic / Do Not Copy",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        required_columns = [
+            "shot_id",
+            "story_function",
+            "causal_input",
+            "visible_action",
+            "causal_output",
+            "physical_space",
+            "capture_method",
+            "brand_or_product_role",
+            "risk",
+            "fallback",
+        ]
+        shot_plan.write_text(
+            "| " + " | ".join(required_columns) + " |\n"
+            + "|" + "|".join("---" for _ in required_columns) + "|\n"
+            + "| " + " | ".join("TBD" for _ in required_columns) + " |\n",
+            encoding="utf-8",
+        )
+        constraints.write_text(
+            "# Production Constraints\n"
+            + "".join(
+                f"## {heading}\nTBD\n"
+                for heading in [
+                    "Brand / Product Truth",
+                    "World / Physical Rules",
+                    "Practical / VFX Boundary",
+                    "Stop Conditions",
+                    "Fallback / Plan B",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        issues, warnings = film_packet_content_findings(
+            project, treatment, shot_plan, constraints
+        )
+        assert any("导演命题" in item for item in issues), issues
+        assert any("shot plan 第 1 行缺少实质字段" in item for item in issues), issues
+        assert any("品牌/产品事实" in item for item in issues), issues
+        assert any("reference 可借鉴/不可照搬边界" in item for item in warnings), warnings
+
+        treatment.write_text(treatment.read_text(encoding="utf-8").replace("TBD", "TODO: fill later"), encoding="utf-8")
+        shot_plan.write_text(shot_plan.read_text(encoding="utf-8").replace("TBD", "TODO: fill later"), encoding="utf-8")
+        constraints.write_text(constraints.read_text(encoding="utf-8").replace("placeholder", "待补充：稍后填写"), encoding="utf-8")
+        issues, _warnings = film_packet_content_findings(
+            project, treatment, shot_plan, constraints
+        )
+        assert any("导演命题" in item for item in issues), issues
+        assert any("shot plan 第 1 行缺少实质字段" in item for item in issues), issues
+        assert any("品牌/产品事实" in item for item in issues), issues
+
+
+def test_film_packet_rejects_file_and_parent_symlink_inputs() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-film-symlink-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        outside = root / "outside"
+        ensure_delivery_project(project)
+        outside.mkdir()
+        paths = [
+            project / "AD-creative/film/treatment_packet.md",
+            project / "AD-creative/film/shot_list_storyboard_plan.md",
+            project / "AD-creative/film/production_constraints.md",
+        ]
+        for path in paths:
+            external = outside / path.name
+            external.write_text("external substantive-looking content", encoding="utf-8")
+            path.unlink()
+            path.symlink_to(external)
+        issues, _warnings = film_packet_content_findings(project, *paths)
+        assert len([item for item in issues if "无法安全读取" in item]) == 3, issues
+
+    with tempfile.TemporaryDirectory(prefix="adco-film-parent-symlink-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        outside = root / "outside-film"
+        ensure_delivery_project(project)
+        outside.mkdir()
+        film_dir = project / "AD-creative/film"
+        original_dir = project / "AD-creative/film-original"
+        film_dir.rename(original_dir)
+        for name in (
+            "treatment_packet.md",
+            "shot_list_storyboard_plan.md",
+            "production_constraints.md",
+        ):
+            (outside / name).write_text("external content", encoding="utf-8")
+        film_dir.symlink_to(outside, target_is_directory=True)
+        paths = [
+            film_dir / "treatment_packet.md",
+            film_dir / "shot_list_storyboard_plan.md",
+            film_dir / "production_constraints.md",
+        ]
+        issues, _warnings = film_packet_content_findings(project, *paths)
+        assert len([item for item in issues if "无法安全读取" in item]) == 3, issues
+
+
+def test_storage_audit_is_read_only_and_finds_large_exact_duplicates() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-storage-audit-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        loose_brief = project / "客户brief.pdf"
+        loose_logo = project / "brand-logo.png"
+        loose_brief.write_bytes(b"brief-material")
+        loose_logo.write_bytes(b"same-image-bytes")
+        reference = project / "01_参考资料_References/reference-logo.png"
+        reference.parent.mkdir(parents=True)
+        reference.write_bytes(loose_logo.read_bytes())
+        hardlink = reference.parent / "reference-logo-hardlink.png"
+        os.link(reference, hardlink)
+        (project / "empty-placeholder.txt").write_bytes(b"")
+        (reference.parent / "empty-placeholder.txt").write_bytes(b"")
+        before = {
+            path.relative_to(project).as_posix(): path.read_bytes()
+            for path in project.rglob("*")
+            if path.is_file()
+        }
+        audit = audit_project_storage(project, deep=True)
+        after = {
+            path.relative_to(project).as_posix(): path.read_bytes()
+            for path in project.rglob("*")
+            if path.is_file()
+        }
+        assert after == before
+        assert audit["root_loose_file_count"] == 3
+        assert audit["duplicate_group_count"] == 1
+        assert audit["duplicate_path_count"] == 2
+        assert audit["duplicate_file_count"] == 1
+        assert audit["reclaimable_bytes"] == len(b"same-image-bytes")
+        assert audit["duplicate_groups"][0]["hardlinked_paths"] == 1
+        duplicate_action = next(
+            item
+            for item in cleanup_actions(audit)
+            if "independent_duplicate_byte_owners=" in item
+        )
+        assert "independent_duplicate_byte_owners=1" in duplicate_action
+        assert "hardlinked_paths=1" in duplicate_action
+        suggestions = {
+            item["path"]: item["suggested_destination"]
+            for item in audit["organization_suggestions"]
+        }
+        assert suggestions["客户brief.pdf"] == "00_项目资料_ProjectMaterials/"
+        assert suggestions["brand-logo.png"] == "02_关键资产_KeyAssets/"
+
+
+def test_storage_audit_fails_closed_on_scan_errors_and_invalid_roots() -> None:
+    missing = Path(tempfile.gettempdir()) / "adco-storage-missing-fixture"
+    if missing.exists():
+        raise AssertionError(f"fixture path unexpectedly exists: {missing}")
+    missing_audit = audit_project_storage(missing, deep=True)
+    assert missing_audit["status"] == "INCOMPLETE"
+    assert missing_audit["audit_complete"] is False
+    assert any("does not exist" in item for item in missing_audit["errors"])
+
+    with tempfile.TemporaryDirectory(prefix="adco-storage-root-") as raw_root:
+        root = Path(raw_root)
+        real_project = root / "real-project"
+        real_project.mkdir()
+        linked_project = root / "linked-project"
+        linked_project.symlink_to(real_project, target_is_directory=True)
+        args = build_parser().parse_args(
+            ["dedupe-audit", str(linked_project), "--json"]
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = args.func(args)
+        payload = json.loads(output.getvalue())
+        assert exit_code == 1
+        assert payload["status"] == "INCOMPLETE"
+        assert any("must not be a symlink" in item for item in payload["errors"])
+
+    with tempfile.TemporaryDirectory(prefix="adco-storage-incomplete-") as raw_project:
+        project = Path(raw_project)
+        ensure_project(project)
+        (project / "a.bin").write_bytes(b"same")
+        (project / "b.bin").write_bytes(b"same")
+        plan_path = project / "AD-creative/orchestrator/storage_plan.json"
+        with patch("adco_core.storage._sha256", side_effect=OSError("fixture unreadable")):
+            audit = audit_project_storage(project, deep=True)
+            assert audit["status"] == "INCOMPLETE"
+            assert audit["audit_complete"] is False
+            assert len(audit["errors"]) == 2
+            for command in ("dedupe-audit", "cleanup-plan", "organize-plan"):
+                argv = [command, str(project), "--save", "--json"]
+                if command == "organize-plan":
+                    argv.append("--deep")
+                args = build_parser().parse_args(argv)
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    exit_code = args.func(args)
+                payload = json.loads(output.getvalue())
+                assert exit_code == 1, (command, payload)
+                assert payload["audit_complete"] is False, (command, payload)
+                assert payload["status"] == "INCOMPLETE", (command, payload)
+                assert payload["errors"], (command, payload)
+                assert not plan_path.exists(), command
+
+        unreadable = project / "unreadable"
+        unreadable.mkdir()
+        (unreadable / "hidden.bin").write_bytes(b"hidden")
+        unreadable.chmod(0)
+        try:
+            unreadable_audit = audit_project_storage(project, deep=True)
+        finally:
+            unreadable.chmod(0o700)
+        assert unreadable_audit["status"] == "INCOMPLETE", unreadable_audit
+        assert unreadable_audit["errors"], unreadable_audit
+
+        original_scandir = storage_module.os.scandir
+
+        def fail_scandir(path: object):
+            if Path(path).resolve() == unreadable.resolve():
+                raise PermissionError("fixture traversal denied")
+            return original_scandir(path)
+
+        with patch("adco_core.storage.os.scandir", side_effect=fail_scandir):
+            patched_audit = audit_project_storage(project, deep=True)
+        assert patched_audit["status"] == "INCOMPLETE"
+        assert any("fixture traversal denied" in item for item in patched_audit["errors"])
+
+        with patch(
+            "adco_core.storage.sha256_project_file",
+            side_effect=ValueError("fixture safe-read rejection"),
+        ):
+            rejected_audit = audit_project_storage(project, deep=True)
+        assert rejected_audit["status"] == "INCOMPLETE"
+        assert any("fixture safe-read rejection" in item for item in rejected_audit["errors"])
+
+    with tempfile.TemporaryDirectory(prefix="adco-storage-stream-hash-") as raw:
+        project = Path(raw)
+        ensure_project(project)
+        first = project / "large-a.bin"
+        second = project / "large-b.bin"
+        with first.open("wb") as handle:
+            handle.truncate(8 * 1024 * 1024)
+        with second.open("wb") as handle:
+            handle.truncate(8 * 1024 * 1024)
+        with patch(
+            "adco_core.safe_write.read_project_bytes",
+            side_effect=AssertionError("storage hashing must remain streaming"),
+        ):
+            streamed_audit = audit_project_storage(project, deep=True)
+        assert streamed_audit["status"] == "PASS", streamed_audit
+        assert streamed_audit["duplicate_group_count"] == 1
+
+    with tempfile.TemporaryDirectory(prefix="adco-storage-swap-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        project.mkdir()
+        first = project / "same-a.bin"
+        second = project / "same-b.bin"
+        first.write_bytes(b"same")
+        second.write_bytes(b"same")
+        outside = root / "outside.bin"
+        outside.write_bytes(b"evil")
+        real_hash = storage_module.sha256_project_file
+        swapped = False
+
+        def swap_before_hash(
+            project_arg: Path,
+            path: Path,
+            *,
+            expected_identity: tuple[int, int, int] | None = None,
+        ) -> str:
+            nonlocal swapped
+            if not swapped:
+                path.unlink()
+                path.symlink_to(outside)
+                swapped = True
+            return real_hash(
+                project_arg,
+                path,
+                expected_identity=expected_identity,
+            )
+
+        with patch(
+            "adco_core.storage.sha256_project_file",
+            side_effect=swap_before_hash,
+        ):
+            swapped_audit = audit_project_storage(project, deep=True)
+        assert swapped
+        assert swapped_audit["status"] == "INCOMPLETE", swapped_audit
+        assert swapped_audit["errors"], swapped_audit
+        assert outside.read_bytes() == b"evil"
+
+    with tempfile.TemporaryDirectory(prefix="adco-storage-complete-list-") as raw:
+        project = Path(raw)
+        ensure_project(project)
+        for index in range(105):
+            (project / f"loose-{index:03d}.txt").write_text(
+                f"unique-{index}", encoding="utf-8"
+            )
+        audit = audit_project_storage(project, deep=False)
+        assert audit["audit_complete"] is True
+        assert audit["root_loose_file_count"] == 105
+        assert len(audit["root_loose_files"]) == 105
+        assert audit["organization_suggestion_count"] == 105
+        assert len(audit["organization_suggestions"]) == 105
+
+
+def test_preview_and_version_archive_policy_is_replace_current_without_blanket_copy() -> None:
+    agents = (operator_module.TEMPLATE_ROOT / "AD-creative/AGENTS.md").read_text(
+        encoding="utf-8"
+    )
+    lifecycle = (
+        operator_module.SKILL_DRAFT_DIR / "migration_and_lifecycle.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        operator_module.TEMPLATE_ROOT / "AD-creative/orchestrator/WORKFLOW.md"
+    ).read_text(encoding="utf-8")
+    assert "replace-current staging artifact" in agents
+    assert "copying identical bytes into `version_archive`" in lifecycle
+    assert "never blanket-copy identical bytes into version_archive" in workflow
+    assert "archive immutable copies" not in workflow
 
 
 def test_film_gate_scans_adopted_artifact_type_schema_and_excludes_domain_qa() -> None:
@@ -2679,6 +3334,7 @@ def test_duffy_hardening_cli_commands_are_exposed() -> None:
         "visual-layout-gate",
         "dedupe-audit",
         "cleanup-plan",
+        "organize-plan",
         "final-delivery-lock",
     ]:
         assert command in commands
@@ -2789,9 +3445,13 @@ def test_final_delivery_lock_protects_user_placed_files() -> None:
         original_hash = next(
             row["sha256"] for row in locked if row.get("path", "").endswith("client_final.pdf")
         )
-        plan_path, actions = cleanup_plan(project)
-        assert plan_path.exists()
-        assert any("LOCKED_DO_NOT_MOVE_OR_DELETE" in action for action in actions)
+        audit, plan_path, actions = cleanup_plan(project, save=True)
+        assert audit["audit_complete"] is True
+        assert plan_path is not None and plan_path.exists()
+        assert actions == []
+        saved_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        assert saved_plan["read_only"] is True
+        assert saved_plan["policy"]["final_delivery"].startswith("protected")
         assert_valid(project)
 
         final_file.write_bytes(b"%PDF-1.4\nchanged\n")
@@ -4833,11 +5493,13 @@ def main() -> int:
     test_project_agents_policy_created_and_validated()
     test_validate_rejects_missing_project_agents_policy()
     test_existing_agents_policy_is_not_overwritten()
+    test_current_truth_preserves_later_stage_and_dated_sections()
     test_human_workspace_indexes_mirror_control_plane()
     test_human_workspace_v2_is_current_first_deduped_clickable_and_scans_all_folders()
     test_intake_preserves_version_truth_and_custom_sections()
     test_pptx_export_uses_immutable_version_transaction()
     test_pptx_export_blocks_unconfirmed_generated_outline()
+    test_pptx_export_check_preflight_is_zero_write_and_reports_tool_blocked()
     test_outline_confirmation_binds_presented_bytes_and_stable_content_digest()
     test_agents_policy_status_is_scoped_and_independent_of_root_policy()
     test_gate_downgrades_without_adversarial_record()
@@ -4856,6 +5518,8 @@ def main() -> int:
     test_threadops_validation_allows_pending_execution_worker_receipt_template()
     test_threadops_validation_rejects_prompt_only_received_execution_receipt()
     test_thread_reconcile_rejects_failed_or_out_of_scope_self_report()
+    test_thread_reconcile_rejects_cleanup_projection_as_worker_receipt()
+    test_thread_reconcile_rolls_back_adoption_cleanup_and_archive_on_project_check()
     test_thread_worker_cannot_write_host_attestation_even_if_scope_declares_it()
     test_threadops_validation_rejects_missing_helper_evidence()
     test_threadops_validation_rejects_helper_thread_id_claim()
@@ -4874,6 +5538,11 @@ def main() -> int:
     test_creative_doctor_respects_env_root()
     test_import_creative_production_run_registers_assets()
     test_film_quality_gate_writes_report()
+    test_film_packet_requires_causal_world_and_fallback_content()
+    test_film_packet_rejects_file_and_parent_symlink_inputs()
+    test_storage_audit_is_read_only_and_finds_large_exact_duplicates()
+    test_storage_audit_fails_closed_on_scan_errors_and_invalid_roots()
+    test_preview_and_version_archive_policy_is_replace_current_without_blanket_copy()
     test_film_gate_scans_adopted_artifact_type_schema_and_excludes_domain_qa()
     test_film_gate_scans_active_local_rows_and_skips_planned_rows()
     test_duffy_hardening_cli_commands_are_exposed()

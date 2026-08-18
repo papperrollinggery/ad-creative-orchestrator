@@ -28,11 +28,19 @@ PUBLISHED_DOCS_ROOT = ROOT / "tools/adco_resources/published_docs"
 CHAT_NATIVE_SKILL_PATH = (
     ROOT / "skill_drafts/ad-creative-orchestrator/chat_interaction_and_visualization.md"
 )
+CHAT_NATIVE_RENDERER_PATH = (
+    ROOT / "skill_drafts/ad-creative-orchestrator/scripts/adco_visualization.py"
+)
+CHAT_NATIVE_REGISTRY_PATH = (
+    ROOT / "skill_drafts/ad-creative-orchestrator/assets/visualizations/surface-registry.json"
+)
 CHAT_NATIVE_REQUIRED_SNIPPETS = [
-    "OpenAI Visualizations / `@Visualize`",
+    "OpenAI Visualizations is a product capability",
+    "actual Visualize capability",
     "adco.chat-visualization@1.0",
     "Data Analytics evidence",
     ".codex/visualizations",
+    "USER_VISIBLE=UNVERIFIED",
     "window.openai.sendFollowUpMessage",
     "does not redesign the dashboard",
     "The frontstage is for the user",
@@ -44,6 +52,7 @@ CHAT_NATIVE_FORBIDDEN_SNIPPETS = [
     "build_interaction_projection",
     "native render_table",
     "native render_chart",
+    "::codex-inline-vis",
 ]
 SKILL_METADATA_REL = Path("agents/openai.yaml")
 SKILL_METADATA_REQUIRED_SNIPPETS = [
@@ -66,11 +75,15 @@ def compare_dirs(source: Path, packaged: Path) -> list[str]:
         path.relative_to(source): path
         for path in source.rglob("*")
         if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix not in {".pyc", ".pyo"}
     }
     packaged_files = {
         path.relative_to(packaged): path
         for path in packaged.rglob("*")
         if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix not in {".pyc", ".pyo"}
     }
     for rel_path in sorted(source_files.keys() - packaged_files.keys()):
         issues.append(f"missing packaged asset: {packaged / rel_path}")
@@ -118,6 +131,22 @@ def main() -> int:
         for snippet in CHAT_NATIVE_FORBIDDEN_SNIPPETS:
             if snippet in chat_native_text:
                 issues.append(f"chat-native skill contains rebuilt-UI contract: {snippet}")
+    if not CHAT_NATIVE_RENDERER_PATH.exists():
+        issues.append(f"missing chat-native renderer: {CHAT_NATIVE_RENDERER_PATH}")
+    else:
+        renderer_text = CHAT_NATIVE_RENDERER_PATH.read_text(encoding="utf-8")
+        if "::codex-inline-vis" in renderer_text:
+            issues.append("chat-native renderer emits an unverified inline-mount directive")
+        if "USER_VISIBLE=UNVERIFIED" not in renderer_text:
+            issues.append("chat-native renderer does not disclose unverified user visibility")
+    if not CHAT_NATIVE_REGISTRY_PATH.exists():
+        issues.append(f"missing chat-native surface registry: {CHAT_NATIVE_REGISTRY_PATH}")
+    else:
+        registry_text = CHAT_NATIVE_REGISTRY_PATH.read_text(encoding="utf-8")
+        if "codex-inline-vis" in registry_text:
+            issues.append("chat-native surface registry advertises a private inline renderer")
+        if "native-openai-visualize-when-exposed" not in registry_text:
+            issues.append("chat-native surface registry lacks native capability detection")
     for root_label, skill_root in [
         ("source", ROOT / "skill_drafts/ad-creative-orchestrator"),
         ("packaged", ROOT / "tools/adco_resources/skill_drafts/ad-creative-orchestrator"),

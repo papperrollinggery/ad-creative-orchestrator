@@ -20,14 +20,15 @@ creative brief contract 和候选 provenance
 
 GPT-5.6 Sol 或明确选择的专业 Specialist 负责创意推理：数量服从用户请求；未指定时只生成最小充分集合（1-6 个）。独立 Critic 只在用户明确要求或高后果决策边界启用，负责 brief adherence、insight、brand ownership、mechanism difference、key visual、shootability、production risk 和 brand replacement test；不为流程完整感制造额外候选。
 
-`creative-import` 验证候选结构、manifest/snapshot/provenance 绑定、机制差异、已确认硬约束和待人工复核项；parser 生成的 candidate requirement 不会自动升级为硬事实，直接改 CSV 状态也不算确认。耐久要求确认必须绑定 registered source event、同源 evidence chunk 和人工 receipt；无法机器判定的显式硬要求必须对 exact candidate/direction/constraint 完成人工裁决。receipt 的 `candidate_sha256` 绑定精确落盘字节，current candidate 最后原子切换。`creative-review` 重新核对 current/version/import receipt/brief/派生视图，并执行确定性结构/语义/语言 lint；evidence refs 只报告 `PROVENANCE_ONLY`，不声称语义支持。两者都不等于独立创意判断、客户偏好、商业效果或最终发送审批。`creative-proposal` 只是 `creative-brief` 的弃用兼容 alias。
+`creative-import` 验证候选结构、manifest/snapshot/provenance 绑定、机制差异、所有落盘声明字段、local workflow assertion 和待人工复核项；parser 生成的 candidate requirement 不会自动升级为硬事实，直接改 CSV 状态也不算确认。local assertion 明确为 `identity_assurance=NONE`，不代表用户/客户身份、批准或发送授权。receipt 的 `candidate_sha256` 绑定精确落盘字节；完整 immutable generation 验证后只原子切换 `current_generation.json`。`creative-review` 重新核对 pointer/generation/import receipt/brief/派生视图，并执行确定性结构/语义/语言 lint；evidence refs 只报告 `PROVENANCE_ONLY`，不声称语义支持。两者都不等于独立创意判断、客户偏好、商业效果或最终发送审批。`creative-proposal` 只是 `creative-brief` 的弃用兼容 alias。
 
 命令：
 
 ```text
 adco creative-brief <project> [--work-id <id>] [--json]
-adco creative-requirement-confirm <project> --requirement-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> [--evidence-ref <chunk>] [--json]
-adco creative-constraint-resolve <project> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> --decision <approved|rejected> --note <reason> [--json]
+adco creative-assertion-record <project> --semantics <creative_requirement_confirmation|creative_constraint_approval|creative_constraint_rejection> --requirement-id <id> [--artifact-binding <binding> ...] --note <reason> [--json]
+adco creative-requirement-confirm <project> --requirement-id <id> --confirmation-ref <local_operator_assertion:id> [--evidence-ref <chunk>] [--json]
+adco creative-constraint-resolve <project> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <local_operator_assertion:id> --decision <approved|rejected> --note <reason> [--json]
 adco creative-import <project> --file <candidate.json> [--json]
 adco creative-review <project> [--json]
 ```
@@ -115,6 +116,26 @@ PPT/DOCX/XLSX 固定模板已生成
 | 固定 PPT / DOCX / XLSX 模板和版式系统 | Template Creator 或专门文档模板流程 | 输出内容结构、字段、追溯关系、审阅 Gate |
 
 ADCO 可以起草 brief contract、检查来源、导入候选、登记结果和维护版本；不要把确定性模板或 lint 描述成完整创意、视频、图片或固定模板生成引擎。
+
+## Film / Director Mode Acceptance
+
+导演阐述必须先成为客户可读 treatment，再展开技术镜头表。最低可接受内容：
+
+```text
+一句导演命题
+受众前后状态变化
+品牌或产品不可替换的因果角色
+逐段 cause -> visible action -> effect
+空间、时间、材质、身体、物件和 UI 的世界规则
+摄影、调度、表演、声音与剪辑为什么服务叙事
+每个关键效果的实拍 / 合成 / 模拟边界
+关键资产、场地、界面或预算失效时的 Plan B
+参考片只借鉴什么、禁止复制什么
+```
+
+镜头表的每一行必须包含 `story_function`、`causal_input`、`visible_action`、`causal_output`、`physical_space`、`capture_method`、`brand_or_product_role`、`risk` 和 `fallback`。只有氛围词、漂亮构图、镜头焦段或技术术语，不算完成。
+
+Film Gate 还执行四个反证：去掉品牌后故事是否仍原样成立；相邻镜头是否真的互为因果；人物、物件、界面和材质是否遵守同一物理世界；关键制作条件失败后核心承诺是否仍可拍。任一项无法回答时保持 `BLOCKED`，专业 Specialist 的 `completed` 或 domain QA 不能替代 ADCO 独立采用判断。
 
 ## Humanized Writing Rules
 

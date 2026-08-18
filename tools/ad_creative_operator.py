@@ -47,18 +47,19 @@ from adco_core.creative_contract import (
     BRIEF_CONTRACT_REL,
     BRIEF_MANIFEST_REL,
     BRIEF_SNAPSHOT_REL,
-    CANDIDATE_IMPORT_RECEIPT_REL,
     CANDIDATE_SCHEMA_REL,
-    CREATIVE_DIRECTIONS_REL,
-    CRITIC_RECEIPT_REL,
-    CURRENT_CANDIDATE_REL,
+    DETERMINISTIC_LINT_RECEIPT_REL,
     GENERATION_REQUEST_REL,
     OPEN_GAPS_REL,
-    OPTION_MATRIX_REL,
+    audit_local_operator_assertions,
     confirm_creative_requirement,
     create_creative_brief,
+    creative_brief_requires_independent_critic,
+    current_creative_generation_paths,
     import_creative_candidate,
+    record_local_operator_assertion,
     resolve_creative_constraint,
+    revoke_local_operator_assertion,
     review_creative_candidate,
 )
 from adco_core.commands.run import RunPreflightError, execute_lightweight_run
@@ -73,7 +74,12 @@ from adco_core.ingestion import (
     source_row_material_roots,
 )
 from adco_core.incremental_validation import run_incremental_validation
-from adco_core.safe_write import atomic_write_text, read_project_text
+from adco_core.safe_write import (
+    atomic_write_text,
+    read_optional_project_text,
+    read_project_text,
+)
+from adco_core.storage import audit_project_storage, cleanup_actions
 from adco_core.specialist_exchange import (
     V2_CONTRACT_VERSION,
     build_v2_handoff,
@@ -133,6 +139,18 @@ DELIVERY_COMMAND_ACTIVE: ContextVar[bool] = ContextVar(
 )
 MIGRATION_CWD_LOCK = threading.RLock()
 FINAL_DELIVERY_HOST_ATTESTATION_PROTOCOL = "adco.host-readback-attestation"
+
+
+class ProjectValidationBlocked(RuntimeError):
+    """A governed mutation was refused because the existing project is CHECK."""
+
+    def __init__(self, operation: str, errors: list[str]) -> None:
+        self.operation = operation
+        self.errors = list(errors)
+        super().__init__(
+            f"{operation} blocked by existing project validation debt: "
+            + "; ".join(self.errors[:12])
+        )
 FINAL_DELIVERY_HOST_ATTESTATION_VERSION = "1.0"
 FINAL_DELIVERY_HOST_ATTESTATION_ROOT = Path(
     "AD-creative/orchestrator/host_attestations"
@@ -993,11 +1011,16 @@ def doctor_report() -> tuple[str, list[str], list[str], list[str]]:
     evidence: list[str] = [
         f"version={package_version()}",
         f"python={sys.version.split()[0]}",
+        f"platform={os.name}",
         f"mode={'source' if source_root() else 'installed'}",
         f"runtime_root={REPO_ROOT}",
         f"template_root={TEMPLATE_ROOT}",
         f"skill_draft_dir={SKILL_DRAFT_DIR}",
     ]
+    if os.name != "posix":
+        issues.append(
+            "unsupported platform: secure project artifact I/O requires POSIX"
+        )
 
     required_template_files = [
         "AD-creative/orchestrator/project.yml",
@@ -2452,14 +2475,21 @@ def write_text(path: Path, content: str) -> None:
 
 
 def update_markdown_sections(path: Path, sections: dict[str, str]) -> None:
-    """Update owned sections while preserving version truth and user-added sections."""
+    """Replace unique owned snapshots while preserving user/date/history sections."""
     text = path.read_text(encoding="utf-8") if path.exists() else "# Current Truth\n"
     for heading, body in sections.items():
         section = f"## {heading}\n{body.strip()}\n"
         pattern = re.compile(
             rf"(?ms)^## {re.escape(heading)}[ \t]*\n.*?(?=^## [^\n]+\n|\Z)"
         )
-        if pattern.search(text):
+        matches = list(pattern.finditer(text))
+        if len(matches) > 1:
+            raise ValueError(
+                f"current_truth owned section is duplicated: {heading}; "
+                "preserve all dated/user sections and resolve the competing current "
+                "snapshot into Conflicted before retrying"
+            )
+        if matches:
             text = pattern.sub(section, text, count=1)
         else:
             text = text.rstrip() + "\n\n" + section
@@ -5864,13 +5894,13 @@ def render_creative_proposal(project: Path, *, work_id: str = "") -> dict[str, o
 
 def creative_proposal_scan_files(project: Path) -> list[Path]:
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
-    candidate_mode = (project / CURRENT_CANDIDATE_REL).is_file()
+    generation_paths = current_creative_generation_paths(project)
+    candidate_mode = bool(generation_paths)
     paths = (
         [
-            project / CURRENT_CANDIDATE_REL,
-            project / CREATIVE_DIRECTIONS_REL,
-            project / OPTION_MATRIX_REL,
-            project / CRITIC_RECEIPT_REL,
+            generation_paths["candidate"],
+            generation_paths["directions"],
+            generation_paths["matrix"],
         ]
         if candidate_mode
         else [project / rel_path for _, _, rel_path in CREATIVE_PROPOSAL_ARTIFACTS]
@@ -5883,13 +5913,24 @@ def creative_proposal_scan_files(project: Path) -> list[Path]:
         "creative_proposal",
         "proposal_outline",
         "creative_candidate",
-        "creative_critic_receipt",
     }
+    current_candidate_paths = (
+        {
+            generation_paths["candidate"].resolve(),
+            generation_paths["directions"].resolve(),
+            generation_paths["matrix"].resolve(),
+        }
+        if candidate_mode
+        else set()
+    )
     for artifact in artifacts:
         if artifact.get("artifact_type", "").strip() in creative_types:
             rel_path = artifact.get("path", "").strip()
-            if rel_path:
-                paths.append(project / rel_path)
+            artifact_path = project / rel_path
+            if rel_path and (
+                not candidate_mode or artifact_path.resolve() in current_candidate_paths
+            ):
+                paths.append(artifact_path)
     deduped: list[Path] = []
     seen: set[Path] = set()
     for path in paths:
@@ -5900,21 +5941,30 @@ def creative_proposal_scan_files(project: Path) -> list[Path]:
     return deduped
 
 
-def read_proposal_texts(paths: list[Path]) -> tuple[str, list[str]]:
+def read_proposal_texts(project: Path, paths: list[Path]) -> tuple[str, list[str]]:
     chunks: list[str] = []
     missing: list[str] = []
     for path in paths:
-        if not path.exists():
-            missing.append(str(path))
-            continue
         if path.suffix.lower() not in TEXT_SUFFIXES:
             continue
-        chunks.append(path.read_text(encoding="utf-8", errors="ignore"))
+        try:
+            text = read_optional_project_text(project, path)
+        except (UnicodeDecodeError, ValueError):
+            missing.append(str(path))
+            continue
+        if text is None:
+            missing.append(str(path))
+            continue
+        chunks.append(text)
     return "\n\n".join(chunks), missing
 
 
 def load_direction_rows(project: Path) -> list[dict[str, str]]:
-    _, rows = read_csv_rows(project / "AD-creative/creative/option_matrix.csv")
+    generation_paths = current_creative_generation_paths(project)
+    matrix_path = generation_paths.get(
+        "matrix", project / "AD-creative/creative/option_matrix.csv"
+    )
+    _, rows = read_csv_rows(matrix_path)
     return [row for row in rows if row.get("direction_id", "").strip()]
 
 
@@ -5966,31 +6016,64 @@ def collect_humanizer_writing_risks(combined_text: str, client_texts: list[tuple
     return risks
 
 
-def client_facing_scan_paths(project: Path, files: list[Path]) -> list[Path]:
+def client_facing_scan_paths(
+    project: Path, files: list[Path]
+) -> tuple[list[Path], list[str]]:
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
     client_paths: set[Path] = set()
+    errors: list[str] = []
     for artifact in artifacts:
         if artifact.get("visibility", "").lower() in CLIENT_VISIBLE_VALUES:
             rel_path = artifact.get("path", "").strip()
-            if rel_path:
-                client_paths.add((project / rel_path).resolve())
+            if not rel_path or Path(rel_path).suffix.lower() not in TEXT_SUFFIXES:
+                continue
+            candidate = project / rel_path
+            try:
+                text = read_optional_project_text(project, candidate)
+            except (OSError, UnicodeDecodeError, ValueError) as exc:
+                errors.append(f"invalid client-visible artifact path {rel_path}: {exc}")
+                continue
+            if text is None:
+                errors.append(f"missing client-visible artifact: {rel_path}")
+                continue
+            client_paths.add(candidate)
     for path in files:
-        if not path.exists() or path.suffix.lower() not in TEXT_SUFFIXES:
+        if path.suffix.lower() not in TEXT_SUFFIXES:
             continue
-        head = "\n".join(path.read_text(encoding="utf-8", errors="ignore").splitlines()[:12]).lower()
+        try:
+            text = read_optional_project_text(project, path)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            errors.append(f"invalid proposal scan path {path}: {exc}")
+            continue
+        if text is None:
+            continue
+        head = "\n".join(text.splitlines()[:12]).lower()
         if "visibility: client_visible" in head or "visibility: client_visible_ready" in head:
-            client_paths.add(path.resolve())
-    return sorted(client_paths)
+            client_paths.add(path)
+    return sorted(client_paths), errors
 
 
 def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
     files = creative_proposal_scan_files(project)
-    candidate_mode = (project / CURRENT_CANDIDATE_REL).is_file()
+    generation_paths = current_creative_generation_paths(project)
+    candidate_mode = bool(generation_paths)
     active_artifacts = (
         [
-            ("ART-AUTO-CREATIVE-CANDIDATE", "creative_candidate", CURRENT_CANDIDATE_REL),
-            ("ART-AUTO-CREATIVE-DIRECTIONS", "creative_directions", CREATIVE_DIRECTIONS_REL),
-            ("ART-AUTO-CREATIVE-OPTION-MATRIX", "creative_option_matrix", OPTION_MATRIX_REL),
+            (
+                "ART-AUTO-CREATIVE-CANDIDATE",
+                "creative_candidate",
+                generation_paths["candidate"].relative_to(project),
+            ),
+            (
+                "ART-AUTO-CREATIVE-DIRECTIONS",
+                "creative_directions",
+                generation_paths["directions"].relative_to(project),
+            ),
+            (
+                "ART-AUTO-CREATIVE-OPTION-MATRIX",
+                "creative_option_matrix",
+                generation_paths["matrix"].relative_to(project),
+            ),
         ]
         if candidate_mode
         else CREATIVE_PROPOSAL_ARTIFACTS
@@ -6006,7 +6089,7 @@ def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
                 visibility="internal_only",
                 gate_status="NOT_RUN",
             )
-    combined_text, missing_files = read_proposal_texts(files)
+    combined_text, missing_files = read_proposal_texts(project, files)
     lower_text = combined_text.lower()
     direction_rows = load_direction_rows(project)
     issues: list[str] = []
@@ -6061,10 +6144,10 @@ def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
         reason_codes.append("NO_PRODUCT_TO_BENEFIT")
         issues.append("缺少产品功能到传播利益的明确翻译。")
 
-    if len(direction_rows) < 2:
+    if not candidate_mode and len(direction_rows) < 2:
         reason_codes.append("TOO_FEW_DIRECTIONS")
         issues.append("创意方向少于 2 条。")
-    else:
+    elif len(direction_rows) > 1:
         signatures = {
             re.sub(
                 r"\s+",
@@ -6103,10 +6186,18 @@ def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
         reason_codes.append("UNSUPPORTED_REFERENCE_OR_CASE_CLAIM")
         issues.extend(f"未追溯案例/参考/数据声明: {line}" for line in unsupported_claims[:6])
 
-    client_paths = client_facing_scan_paths(project, files)
+    client_paths, client_path_errors = client_facing_scan_paths(project, files)
+    if client_path_errors:
+        reason_codes.append("INVALID_CLIENT_VISIBLE_ARTIFACT_PATH")
+        issues.extend(client_path_errors)
     client_texts: list[tuple[Path, str]] = []
     for path in client_paths:
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        try:
+            text = read_project_text(project, path)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            reason_codes.append("INVALID_CLIENT_VISIBLE_ARTIFACT_PATH")
+            issues.append(f"cannot safely read client-visible artifact {path}: {exc}")
+            continue
         client_texts.append((path, text))
         risky = sorted({match.group(0) for match in INTERNAL_LANGUAGE_PATTERN.finditer(text)})
         if risky:
@@ -6122,27 +6213,36 @@ def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
         reason_codes.append("OPEN_EVIDENCE_GAPS")
         warnings.append(f"仍有 {tbd_count} 个 TBD/open question，只能作为内部草案或 PARTIAL。")
 
+    critic_required = True
     if candidate_mode:
         try:
+            critic_required = creative_brief_requires_independent_critic(project)
             critic_result = review_creative_candidate(
-                project, independent_critic_required=True
+                project,
+                independent_critic_required=critic_required,
+                persist_receipt=True,
             )
         except ValueError as exc:
             reason_codes.append("CRITIC_RECEIPT_INVALID")
-            issues.append(f"Critic Receipt could not be produced: {exc}")
+            issues.append(f"deterministic lint could not be produced: {exc}")
         else:
             assert critic_result.receipt_path is not None
-            evidence.append(f"critic_receipt={safe_rel(project, critic_result.receipt_path)}")
+            evidence.append(
+                f"deterministic_lint_receipt={safe_rel(project, critic_result.receipt_path)}"
+            )
             if critic_result.blocking_issues:
                 reason_codes.append("CRITIC_STRUCTURE_BLOCKED")
                 issues.extend(critic_result.blocking_issues)
             warnings.extend(critic_result.warnings)
-        reason_codes.append("INDEPENDENT_CREATIVE_CRITIC_REQUIRED")
-        warnings.append(
-            "确定性结构/语言 Lint 不能批准创意质量；仍需绑定 exact candidate 的独立创意 Critic。"
-        )
+        if critic_required:
+            reason_codes.append("INDEPENDENT_CREATIVE_CRITIC_REQUIRED")
+            warnings.append(
+                "确定性结构/语言 Lint 不能批准创意质量；仍需绑定 exact candidate 的独立创意 Critic。"
+            )
+        else:
+            evidence.append("independent_creative_critic=not_required_by_verified_brief")
     status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
-    if status == "PASS":
+    if status == "PASS" and critic_required:
         status = "PARTIAL_PASS"
         reason_codes.append("INDEPENDENT_CREATIVE_CRITIC_REQUIRED")
         warnings.append(
@@ -6836,6 +6936,160 @@ checked_at: {now_iso()}
     return status, issues + warnings, report_path
 
 
+def substantive_film_packet_value(value: str | None) -> bool:
+    lowered = (value or "").strip().casefold()
+    if re.match(
+        r"^(?:tbd|todo|pending|placeholder(?:-only)?|open question|"
+        r"待补充|待确认|待定|暂无)(?:\s*[:：\-—]|\s*$)",
+        lowered,
+    ):
+        return False
+    return non_placeholder(value)
+
+
+def markdown_section_body(text: str, heading: str) -> str:
+    match = re.search(
+        rf"(?ms)^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)",
+        text,
+    )
+    if not match:
+        return ""
+    body = re.sub(r"<!--.*?-->", "", match.group(1), flags=re.S)
+    meaningful = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or re.fullmatch(r"\|?[\s:|-]+\|?", stripped):
+            continue
+        if stripped.startswith("|") and all(
+            token.strip() in {
+                "beat",
+                "audience_state",
+                "visible_action",
+                "cause",
+                "effect",
+                "brand_or_product_role",
+                "constraint_id",
+                "area",
+                "description",
+                "impact",
+                "owner",
+                "status",
+            }
+            for token in stripped.strip("|").split("|")
+        ):
+            continue
+        if not substantive_film_packet_value(stripped):
+            continue
+        meaningful.append(stripped)
+    return "\n".join(meaningful)
+
+
+def film_packet_content_findings(
+    project: Path,
+    treatment_path: Path,
+    shot_plan_path: Path,
+    constraints_path: Path,
+) -> tuple[list[str], list[str]]:
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    try:
+        text = read_project_text(project, treatment_path)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        issues.append(
+            f"缺少或无法安全读取 {treatment_path.name}；"
+            f"不能用技术 shot list 代替客户可读 treatment：{exc}"
+        )
+    else:
+        for heading, label in [
+            ("Director Thesis", "导演命题"),
+            ("Audience State Change", "受众状态变化"),
+            ("Brand Causal Role", "品牌因果角色"),
+            ("Causal Story Arc", "因果故事链"),
+            ("World Rules", "世界/物理规则"),
+            ("Camera / Blocking / Performance", "摄影、调度与表演逻辑"),
+            ("Art / Light / Sound / Edit", "美术、光、声音与剪辑逻辑"),
+            ("Practical / VFX Boundary", "实拍/VFX 边界"),
+            ("Fallback / Plan B", "关键依赖 Plan B"),
+        ]:
+            if not markdown_section_body(text, heading):
+                issues.append(f"treatment 缺少实质内容：{label}。")
+        if not markdown_section_body(text, "Reference Logic / Do Not Copy"):
+            warnings.append("treatment 缺少 reference 可借鉴/不可照搬边界。")
+
+    required_shot_columns = {
+        "shot_id",
+        "story_function",
+        "causal_input",
+        "visible_action",
+        "causal_output",
+        "physical_space",
+        "capture_method",
+        "brand_or_product_role",
+        "risk",
+        "fallback",
+    }
+    try:
+        shot_text = read_project_text(project, shot_plan_path)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        issues.append(
+            f"缺少或无法安全读取 {shot_plan_path.name}；"
+            f"关键画面没有可拍摄的因果拆解：{exc}"
+        )
+    else:
+        table_lines = [line.strip() for line in shot_text.splitlines() if line.strip().startswith("|")]
+        header_columns = {
+            value.strip() for value in table_lines[0].strip("|").split("|")
+        } if table_lines else set()
+        missing_columns = sorted(required_shot_columns - header_columns)
+        if missing_columns:
+            issues.append("shot plan 缺少因果/制作列：" + ", ".join(missing_columns) + "。")
+        data_rows = [
+            line
+            for line in table_lines[2:]
+            if any(value.strip() for value in line.strip("|").split("|"))
+        ]
+        if not data_rows:
+            issues.append("shot plan 没有镜头行；不能只保留表头。")
+        elif not missing_columns:
+            ordered_columns = [
+                value.strip() for value in table_lines[0].strip("|").split("|")
+            ]
+            for row_number, line in enumerate(data_rows, start=1):
+                values = [value.strip() for value in line.strip("|").split("|")]
+                row = dict(zip(ordered_columns, values))
+                empty_required = sorted(
+                    column
+                    for column in required_shot_columns
+                    if not substantive_film_packet_value(row.get(column))
+                )
+                if empty_required:
+                    issues.append(
+                        f"shot plan 第 {row_number} 行缺少实质字段："
+                        + ", ".join(empty_required)
+                        + "。"
+                    )
+
+    try:
+        constraints_text = read_project_text(project, constraints_path)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        issues.append(
+            f"缺少或无法安全读取 {constraints_path.name}；"
+            f"制作可行性和停止条件不可验证：{exc}"
+        )
+    else:
+        for heading, label in [
+            ("Brand / Product Truth", "品牌/产品事实"),
+            ("World / Physical Rules", "世界/物理规则"),
+            ("Practical / VFX Boundary", "实拍/VFX 边界"),
+            ("Stop Conditions", "停止条件"),
+            ("Fallback / Plan B", "Plan B"),
+        ]:
+            if not markdown_section_body(constraints_text, heading):
+                issues.append(f"production constraints 缺少实质内容：{label}。")
+    return issues, warnings
+
+
 def review_film_quality(project: Path) -> tuple[str, list[str], Path]:
     counts = read_counts(project)
     _, requirements = read_csv_rows(project / "AD-creative/orchestrator/requirements.csv")
@@ -6964,11 +7218,20 @@ def review_film_quality(project: Path) -> tuple[str, list[str], Path]:
     if creative_gate and creative_gate.get("status", "").strip() == "BLOCKED":
         issues.append("Creative Quality Gate 为 BLOCKED，Film Gate 不得推进下游。")
 
-    creative_path = project / "AD-creative/creative/creative_directions.md"
+    creative_path = active_creative_directions_path(project)
     proposal_path = project / "AD-creative/proposal_architecture/proposal_structure.md"
     treatment_path = project / "AD-creative/film/treatment_packet.md"
     shot_plan_path = project / "AD-creative/film/shot_list_storyboard_plan.md"
     constraints_path = project / "AD-creative/film/production_constraints.md"
+
+    packet_issues, packet_warnings = film_packet_content_findings(
+        project,
+        treatment_path,
+        shot_plan_path,
+        constraints_path,
+    )
+    issues.extend(packet_issues)
+    warnings.extend(packet_warnings)
 
     if not requirements:
         issues.append("缺少 requirements，影视/商业判断没有客户事实基线。")
@@ -7062,11 +7325,14 @@ checked_at: {now_iso()}
 
 ## Review Dimensions
 
-- cinematic_clarity: treatment / shot list / key-frame logic can explain the film idea.
+- cinematic_clarity: treatment states a director thesis and audience change before technical shots.
+- causal_continuity: every beat and shot has a visible input, action, and output.
+- physical_world: location, material, body, object, time, and screen behavior obey declared rules.
 - commercial_message: client value, product role, and campaign output are traceable to requirements.
+- brand_causality: replacing the brand/product would materially break the idea.
 - brand_fit: visual direction and references do not invent unsupported brand facts.
 - product_truth: product, packaging, logo, and claims are not faked.
-- production_feasibility: production constraints and known blockers are visible.
+- production_feasibility: capture method, practical/VFX boundary, stop conditions, and Plan B are usable.
 - client_risk: client-visible generated assets and artifacts remain gated.
 """,
     )
@@ -7240,10 +7506,23 @@ def perform_intake(
         and row.get("impact", "").strip().lower() in {"blocking", "high_impact"}
     ]
     current_truth_path = project / "AD-creative/orchestrator/current_truth.md"
-    confirmed = "\n".join(f"- {row['statement']}" for row in requirement_rows[:12]) or "- 暂无已抽取需求"
+    confirmed = (
+        "\n".join(
+            f"- source-backed requirement candidate (not claim/client approval): {row['statement']}"
+            for row in requirement_rows[:12]
+        )
+        or "- 暂无已抽取需求"
+    )
     open_questions = "\n".join(
         f"- {row.get('question_for_client') or row.get('description')}" for row in gap_rows[:8]
     ) or "- 暂无"
+    existing_truth = (
+        current_truth_path.read_text(encoding="utf-8")
+        if current_truth_path.is_file()
+        else ""
+    )
+    existing_stage = first_section_line(existing_truth, "Current Stage").strip()
+    preserve_later_stage = bool(existing_stage and existing_stage != "intake")
     if delivery_surface:
         inferred = (
             "- 当前处于 intake；已从本地资料抽取第一轮需求和缺口。\n"
@@ -7257,19 +7536,22 @@ def perform_intake(
             if blocking_gap_rows
             else "基于当前证据完成本轮内部广告内容产出。"
         )
-    update_markdown_sections(
-        current_truth_path,
-        {
-            "Project": project.name,
-            "Confirmed": confirmed,
-            "Inferred": inferred,
-            "Conflicted": "- 暂无自动识别冲突。",
-            "Deprecated": "- 暂无。",
-            "Open Questions": open_questions,
-            "Current Stage": "intake",
-            "Next Action": next_action,
-        },
-    )
+    truth_updates = {
+        "Project": project.name,
+        "Confirmed": confirmed,
+        "Conflicted": "- 以 gaps.csv / decisions.csv 中的 durable conflict 记录为准；此处只保留当前摘要。",
+        "Deprecated": "- 以 supersession/lifecycle authority 为准；此处不删除历史日期段。",
+        "Open Questions": open_questions,
+    }
+    if not preserve_later_stage:
+        truth_updates.update(
+            {
+                "Inferred": inferred,
+                "Current Stage": "intake",
+                "Next Action": next_action,
+            }
+        )
+    update_markdown_sections(current_truth_path, truth_updates)
     if delivery_surface:
         new_requirements = intake_result.new_requirements
         new_gaps = intake_result.new_gaps
@@ -15755,127 +16037,49 @@ def final_delivery_lock(project: Path) -> tuple[list[dict[str, str]], Path]:
     return final_delivery_lock_snapshot(project, protected_value="yes")
 
 
-def cleanup_category(path: Path) -> str:
-    lower = str(path).lower()
-    if "05_最终交付_finaldelivery".lower() in lower:
-        return "protected_final_delivery"
-    if "contact" in lower and "sheet" in lower:
-        return "contact_sheet"
-    if "cache" in lower or ".pptx-cache" in lower:
-        return "cache"
-    if "preview" in lower:
-        return "preview"
-    if "download" in lower or "tmp" in lower or "temp" in lower:
-        return "temporary_download"
-    if "exports" in lower or path.suffix.lower() in {".pptx", ".pdf"}:
-        return "old_export"
-    if "selected" in lower:
-        return "important_crop_or_selected"
-    if "generated" in lower or "imagegen" in lower or "grok" in lower or "chatgpt" in lower:
-        return "generated_original"
-    if "raw" in lower or "original" in lower:
-        return "original"
-    return "derived_or_unclassified"
-
-
-def dedupe_audit(project: Path) -> tuple[list[dict[str, str]], Path, Path]:
-    migrate_control_plane(project)
-    rows: list[dict[str, str]] = []
-    seen: dict[str, str] = {}
-    roots = [
-        project / "AD-creative/visual_assets",
-        project / "AD-creative/ppt",
-        project / "03_阶段成果_WorkInProgress",
-        project / "04_客户审阅_ClientReview",
-        project / "05_最终交付_FinalDelivery",
-    ]
-    for root in roots:
-        if not root.exists():
-            continue
-        for path in sorted(root.rglob("*")):
-            if not path.is_file():
-                continue
-            sha = file_sha256(path)
-            rel_path = safe_rel(project, path)
-            rows.append(
-                {
-                    "path": rel_path,
-                    "sha256": sha,
-                    "category": cleanup_category(path),
-                    "duplicate_of": seen.get(sha, ""),
-                    "recommended_action": "protect" if cleanup_category(path) == "protected_final_delivery" else "review",
-                }
-            )
-            seen.setdefault(sha, rel_path)
-    csv_path = project / "AD-creative/gates/dedupe_audit.csv"
-    write_csv_rows(csv_path, ["path", "sha256", "category", "duplicate_of", "recommended_action"], rows)
-    report_path = project / "AD-creative/gates/GATE-AUTO-DEDUPE-AUDIT-001_report.md"
-    duplicates = [row for row in rows if row["duplicate_of"]]
-    write_text(
-        report_path,
-        f"""# Dedupe Audit
-
-status: PASS
-checked_at: {now_iso()}
-visibility: internal_only
-
-## Evidence
-
-- files_scanned: {len(rows)}
-- duplicates_by_hash: {len(duplicates)}
-- csv: {safe_rel(project, csv_path)}
-
-## Rule
-
-This command does not delete files. It classifies originals, important crops, derived images, old exports, cache, previews, contact sheets, and protected final delivery files for human cleanup planning.
-""",
-    )
-    update_artifact(project, "ART-AUTO-DEDUPE-AUDIT", "dedupe_audit_report", safe_rel(project, report_path), "workspace_hygiene", visibility="internal_only", gate_status="PASS")
-    append_gate(project, "GATE-AUTO-DEDUPE-AUDIT-001", "workspace_hygiene", "PASS", "90", "ART-AUTO-DEDUPE-AUDIT", "", "Use cleanup-plan for non-destructive cleanup decisions.", "", "ready_for_cleanup_plan", "ad_creative_operator")
-    return rows, csv_path, report_path
-
-
-def cleanup_plan(project: Path) -> tuple[Path, list[str]]:
-    locked, lock_path = final_delivery_lock(project)
-    audit_rows, audit_csv, _ = dedupe_audit(project)
-    actions: list[str] = []
-    for row in audit_rows:
-        category = row["category"]
-        if category == "protected_final_delivery":
-            action = "LOCKED_DO_NOT_MOVE_OR_DELETE"
-        elif row["duplicate_of"]:
-            action = "REVIEW_DUPLICATE_KEEP_BEST_SOURCE"
-        elif category in {"cache", "preview", "contact_sheet"}:
-            action = "REVIEW_CAN_ARCHIVE_AFTER_CONFIRMATION"
-        else:
-            action = "KEEP_OR_REVIEW"
-        actions.append(f"{row['path']} => {action}")
-    plan_path = project / "AD-creative/gates/CLEANUP-PLAN.md"
-    write_text(
+def save_storage_plan(project: Path, audit: dict[str, object], *, mode: str) -> Path:
+    """Persist one replace-in-place plan only after an explicit --save."""
+    plan_path = project / "AD-creative/orchestrator/storage_plan.json"
+    payload = dict(audit)
+    payload["mode"] = mode
+    payload["actions"] = cleanup_actions(audit)
+    atomic_write_text(
+        project,
         plan_path,
-        f"""# Cleanup Plan
-
-status: REVIEW_ONLY
-checked_at: {now_iso()}
-visibility: internal_only
-
-## Inputs
-
-- dedupe_audit: {safe_rel(project, audit_csv)}
-- final_delivery_lock: {safe_rel(project, lock_path)}
-- protected_final_delivery_files: {len(locked)}
-
-## Proposed Actions
-
-{chr(10).join(f"- {action}" for action in actions[:200]) or "- 无文件需要分类。"}
-
-## Rule
-
-This plan never deletes, moves, or overwrites files. `05_最终交付_FinalDelivery` files are protected by default and only hash-registered.
-""",
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
     )
-    update_artifact(project, "ART-AUTO-CLEANUP-PLAN", "cleanup_plan", safe_rel(project, plan_path), "workspace_hygiene", visibility="internal_only", gate_status="PASS")
-    return plan_path, actions
+    return plan_path
+
+
+def dedupe_audit(
+    project: Path,
+    *,
+    deep: bool = True,
+    save: bool = False,
+) -> tuple[dict[str, object], Path | None]:
+    audit = audit_project_storage(project, deep=deep)
+    plan_path = (
+        save_storage_plan(project, audit, mode="dedupe_audit")
+        if save and audit.get("audit_complete") is True
+        else None
+    )
+    return audit, plan_path
+
+
+def cleanup_plan(
+    project: Path,
+    *,
+    deep: bool = True,
+    save: bool = False,
+) -> tuple[dict[str, object], Path | None, list[str]]:
+    audit = audit_project_storage(project, deep=deep)
+    actions = cleanup_actions(audit)
+    plan_path = (
+        save_storage_plan(project, audit, mode="cleanup_plan")
+        if save and audit.get("audit_complete") is True
+        else None
+    )
+    return audit, plan_path, actions
 
 
 def latest_gate_status(project: Path, gate_id: str) -> str:
@@ -15884,173 +16088,6 @@ def latest_gate_status(project: Path, gate_id: str) -> str:
         if row.get("gate_id") == gate_id:
             return row.get("status", "").strip().upper()
     return ""
-
-
-def classify_cleanup_path(project: Path, path: Path) -> str:
-    rel = safe_rel(project, path)
-    lowered = rel.lower()
-    suffix = path.suffix.lower()
-    if "/05_" in f"/{rel}" or rel.startswith("05_最终交付_FinalDelivery/"):
-        return "protected_final_delivery"
-    if any(part in path.parts for part in ("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache")) or suffix in {".pyc", ".pyo"}:
-        return "cache"
-    if "contact" in lowered and suffix in GENERATED_IMAGE_SUFFIXES:
-        return "contact_sheet"
-    if "preview" in lowered and suffix in GENERATED_IMAGE_SUFFIXES:
-        return "preview"
-    if "version_archive" in lowered or re.search(r"(old|backup|archive|v\d{1,3})", lowered) and suffix in {".pptx", ".pdf"}:
-        return "old_export"
-    if "/visual_assets/raw/" in lowered:
-        return "original_image"
-    if "/visual_assets/selected/" in lowered or "crop" in lowered or "裁切" in rel:
-        return "important_crop_or_selected"
-    if suffix in GENERATED_IMAGE_SUFFIXES:
-        return "derived_image"
-    return "other"
-
-
-def cleanup_file_inventory(project: Path) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    for path in sorted(project.rglob("*")):
-        if ".git" in path.parts or not path.is_file():
-            continue
-        try:
-            size = path.stat().st_size
-        except OSError:
-            continue
-        category = classify_cleanup_path(project, path)
-        sha = ""
-        if size <= 80 * 1024 * 1024 and category != "cache":
-            try:
-                sha = file_sha256(path)
-            except OSError:
-                sha = ""
-        rows.append(
-            {
-                "path": safe_rel(project, path),
-                "category": category,
-                "sha256": sha,
-                "size_bytes": str(size),
-                "protected": "true" if category == "protected_final_delivery" else "false",
-            }
-        )
-    return rows
-
-
-def write_dedupe_audit(project: Path) -> tuple[str, list[str], Path]:
-    register_final_delivery_locks(project)
-    inventory = cleanup_file_inventory(project)
-    by_hash: dict[str, list[dict[str, str]]] = {}
-    for row in inventory:
-        sha = row.get("sha256", "")
-        if sha:
-            by_hash.setdefault(sha, []).append(row)
-    duplicate_groups = [rows for rows in by_hash.values() if len(rows) > 1]
-    issues = [
-        "duplicate group includes protected final delivery file; review manually only"
-        for rows in duplicate_groups
-        if any(row.get("protected") == "true" for row in rows)
-    ]
-    category_counts: dict[str, int] = {}
-    for row in inventory:
-        category_counts[row["category"]] = category_counts.get(row["category"], 0) + 1
-    duplicate_text = []
-    for index, rows in enumerate(duplicate_groups[:40], start=1):
-        duplicate_text.append(f"### DUP-{index:03d}")
-        duplicate_text.extend(
-            f"- {row['category']} | protected={row['protected']} | {row['path']}"
-            for row in rows
-        )
-        duplicate_text.append("")
-    report_path = project / "AD-creative/orchestrator/dedupe_audit.md"
-    write_text(
-        report_path,
-        f"""# Dedupe Audit
-
-status: {"CHECK" if issues else "PASS"}
-visibility: internal_only
-checked_at: {now_iso()}
-delete_action: none
-
-## Category Counts
-
-{chr(10).join(f"- {key}: {value}" for key, value in sorted(category_counts.items())) or "- none"}
-
-## Duplicate Hash Groups
-
-{chr(10).join(duplicate_text).rstrip() or "- none"}
-
-## Issues
-
-{chr(10).join(f"- {issue}" for issue in issues) or "- 无"}
-
-## Rule
-
-本报告只分类和估算重复，不删除文件。清理必须通过 cleanup-plan，且 `05_最终交付_FinalDelivery` 下用户手动放入的 PPT/PDF 默认 protected。
-""",
-    )
-    update_artifact(
-        project,
-        "ART-AUTO-DEDUPE-AUDIT",
-        "dedupe_audit_report",
-        safe_rel(project, report_path),
-        "workspace_hygiene",
-        visibility="internal_only",
-        gate_status="CHECK" if issues else "PASS",
-    )
-    return ("CHECK" if issues else "PASS"), issues, report_path
-
-
-def write_cleanup_plan(project: Path) -> tuple[str, list[str], Path]:
-    lock_path = register_final_delivery_locks(project)
-    inventory = cleanup_file_inventory(project)
-    recommendations: list[str] = []
-    for category, action in [
-        ("protected_final_delivery", "register only; do not move, overwrite, or delete"),
-        ("original_image", "keep as source of truth unless manually superseded"),
-        ("important_crop_or_selected", "keep if referenced by slide/client outline; otherwise mark for manual review"),
-        ("derived_image", "keep if selected or referenced; otherwise candidate for archive"),
-        ("old_export", "keep in version_archive or move only after hash registration"),
-        ("cache", "safe candidate for automated cleanup after confirmation"),
-        ("preview", "regenerate only after current PPT/PDF hash is registered"),
-        ("contact_sheet", "archive separately; never use as client-visible image"),
-    ]:
-        count = sum(1 for row in inventory if row["category"] == category)
-        recommendations.append(f"- {category}: {count} files -> {action}")
-    report_path = project / "AD-creative/orchestrator/cleanup_plan.md"
-    write_text(
-        report_path,
-        f"""# Cleanup Plan
-
-status: planned
-visibility: internal_only
-created_at: {now_iso()}
-delete_action: none
-final_delivery_lock: {safe_rel(project, lock_path)}
-
-## Recommendations
-
-{chr(10).join(recommendations)}
-
-## Protected Files
-
-{chr(10).join(f"- {row['path']}" for row in inventory if row['protected'] == 'true') or "- none"}
-
-## Rule
-
-不要按 hash duplicate 直接删除。先按原图、重要裁切、派生图、旧导出、缓存、预览、contact sheet 分层；最终交付目录只登记 hash，不移动、不覆盖。
-""",
-    )
-    update_artifact(
-        project,
-        "ART-AUTO-CLEANUP-PLAN",
-        "cleanup_plan",
-        safe_rel(project, report_path),
-        "workspace_hygiene",
-        visibility="internal_only",
-        gate_status="PASS",
-    )
-    return "PASS", [], report_path
 
 
 def normalize_thread_status(value: str | None) -> str:
@@ -16267,29 +16304,44 @@ def has_adversarial_row_for_stage(text: str, stage: str) -> bool:
 
 
 def default_adversarial_targets(project: Path, stage: str) -> list[Path]:
-    targets = {
-        "creative": [
-            "AD-creative/creative/creative_directions.md",
-            "AD-creative/proposal_architecture/proposal_structure.md",
-        ],
-        "reference_research": ["AD-creative/references/reference_cards.csv"],
+    normalized_stage = normalize_stage(stage)
+    if normalized_stage == "creative":
+        generation_paths = current_creative_generation_paths(project)
+        creative_targets = (
+            [generation_paths["directions"]]
+            if generation_paths
+            else [
+                project / "AD-creative/creative/creative_directions.md",
+                project / "AD-creative/proposal_architecture/proposal_structure.md",
+            ]
+        )
+        return [path for path in creative_targets if path.is_file()]
+    targets: dict[str, list[Path]] = {
+        "reference_research": [project / "AD-creative/references/reference_cards.csv"],
         "visual_review": [
-            "AD-creative/visual_assets/asset_current_manifest.csv",
-            "AD-creative/visual_assets/asset_manifest.csv",
+            project / "AD-creative/visual_assets/asset_current_manifest.csv",
+            project / "AD-creative/visual_assets/asset_manifest.csv",
         ],
         "film_quality": [
-            "AD-creative/film/treatment_packet.md",
-            "AD-creative/film/shot_list_storyboard_plan.md",
+            project / "AD-creative/film/treatment_packet.md",
+            project / "AD-creative/film/shot_list_storyboard_plan.md",
         ],
         "final_delivery": [
-            "AD-creative/delivery/client_pack_binding.json",
+            project / "AD-creative/delivery/client_pack_binding.json",
         ],
     }
     return [
-        project / rel_path
-        for rel_path in targets.get(normalize_stage(stage), [])
-        if (project / rel_path).is_file()
+        path
+        for path in targets.get(normalized_stage, [])
+        if path.is_file()
     ]
+
+
+def active_creative_directions_path(project: Path) -> Path:
+    generation_paths = current_creative_generation_paths(project)
+    return generation_paths.get(
+        "directions", project / "AD-creative/creative/creative_directions.md"
+    )
 
 
 def write_adversarial_target_snapshot(
@@ -16924,6 +16976,7 @@ def threadops_role_brief_content(
     task_signature: dict[str, str],
     mode: str,
     write_scope: str,
+    read_first_paths: list[str],
 ) -> str:
     contract = threadops_harness_contract(
         mode=mode,
@@ -16935,7 +16988,7 @@ def threadops_role_brief_content(
     project_facts = "\n".join(
         f"- {key}: {value or 'TBD'}" for key, value in task_signature.items()
     )
-    read_first = "\n".join(f"- `{item}`" for item in spec.read_first)
+    read_first = "\n".join(f"- `{item}`" for item in read_first_paths)
     allowed = "\n".join(f"- {item}" for item in spec.allowed_actions)
     forbidden = "\n".join(f"- {item}" for item in spec.forbidden_actions)
     output = "\n".join(f"- {item}" for item in spec.required_output)
@@ -17022,7 +17075,7 @@ def threadops_worker_prompt_content(
     task_signature: dict[str, str],
     role_brief_path: Path,
     receipt_path: Path,
-    extra_read_first: list[str],
+    read_first_paths: list[str],
     mode: str,
     workspace_path: str,
     write_scope: str,
@@ -17034,8 +17087,7 @@ def threadops_worker_prompt_content(
         stop_condition=spec.stop_condition,
     )
     helper_contract = threadops_helper_contract()
-    read_first = list(dict.fromkeys([*spec.read_first, *extra_read_first]))
-    read_first_text = "\n".join(f"- {item}" for item in read_first)
+    read_first_text = "\n".join(f"- {item}" for item in read_first_paths)
     allowed = "\n".join(f"- {item}" for item in spec.allowed_actions)
     forbidden = "\n".join(f"- {item}" for item in spec.forbidden_actions)
     output = "\n".join(f"- {item}" for item in spec.required_output)
@@ -17382,6 +17434,18 @@ def render_thread_execution_plan(
 
     for index, role in enumerate(roles, 1):
         spec = THREADOPS_ROLE_SPECS[role]
+        role_read_first = list(spec.read_first)
+        if role == "copy_creative":
+            current_directions = safe_rel(project, active_creative_directions_path(project))
+            role_read_first = [
+                current_directions
+                if item == "AD-creative/creative/creative_directions.md"
+                else item
+                for item in role_read_first
+            ]
+        role_read_first = list(
+            dict.fromkeys([*role_read_first, *extra_read_first])
+        )
         lane_id = f"LANE-{index:02d}-{spec.role_id}"
         lane_run_id = f"{work_id}:{lane_id}"
         planned_thread_id = f"planned:{lane_run_id}"
@@ -17415,6 +17479,7 @@ def render_thread_execution_plan(
                 task_signature=task_signature,
                 mode=mode,
                 write_scope=write_scope,
+                read_first_paths=role_read_first,
             ),
         )
         write_text(
@@ -17431,7 +17496,7 @@ def render_thread_execution_plan(
                 task_signature=task_signature,
                 role_brief_path=role_brief_path,
                 receipt_path=receipt_path,
-                extra_read_first=extra_read_first,
+                read_first_paths=role_read_first,
                 mode=mode,
                 workspace_path=workspace_path,
                 write_scope=write_scope,
@@ -17469,7 +17534,7 @@ def render_thread_execution_plan(
                 "mode": mode,
                 "environment": spec.default_environment,
                 "workspace_path": workspace_path,
-                "read_first": ";".join([*spec.read_first, *extra_read_first]),
+                "read_first": ";".join(role_read_first),
                 "write_scope": write_scope,
                 "receipt_path": safe_rel(project, receipt_path),
                 "receipt_status": "missing",
@@ -18560,6 +18625,9 @@ sha256: {sha256 or file_sha256(pptx_path)}
 
 
 def export_editable_pptx(project: Path, output: Path | None = None) -> Path:
+    preflight_errors, _ = validate(project)
+    if preflight_errors:
+        raise ProjectValidationBlocked("PPTX export", preflight_errors)
     lock_path = project / "AD-creative/orchestrator/.version.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as lock_handle:
@@ -19136,6 +19204,111 @@ def command_creative_proposal(args: argparse.Namespace) -> int:
     return _command_creative_brief(args, deprecated=True)
 
 
+def command_creative_assertion_record(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    try:
+        result = record_local_operator_assertion(
+            project,
+            semantics=args.semantics,
+            requirement_ids=args.requirement_id,
+            artifact_bindings=args.artifact_binding,
+            note=args.note,
+        )
+    except ValueError as exc:
+        print("CREATIVE_ASSERTION_RECORD=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    payload = {
+        "creative_assertion_record": "PASS",
+        "assertion_ref": result.assertion_ref,
+        "evidence_path": str(result.evidence_path),
+        "identity_assurance": "NONE",
+        "authority_scope": "local_project_workflow_only",
+        "disclaimer": result.record["disclaimer"],
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print("CREATIVE_ASSERTION_RECORD=PASS")
+        print(f"ASSERTION_REF={result.assertion_ref}")
+        print(f"EVIDENCE_PATH={result.evidence_path}")
+        print("IDENTITY_ASSURANCE=NONE")
+        print("AUTHORITY_SCOPE=local_project_workflow_only")
+        print(f"DISCLAIMER={result.record['disclaimer']}")
+    return 0
+
+
+def command_creative_assertion_status(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().absolute()
+    if project.is_symlink() or not project.is_dir():
+        print("CREATIVE_ASSERTION_STATUS=BLOCKED")
+        print(f"ERROR=project must be an existing non-symlink directory: {project}")
+        return 1
+    try:
+        records = audit_local_operator_assertions(project)
+    except (OSError, ValueError) as exc:
+        print("CREATIVE_ASSERTION_STATUS=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    if args.assertion_ref:
+        records = [
+            item for item in records if item["assertion_ref"] == args.assertion_ref
+        ]
+        if not records:
+            print("CREATIVE_ASSERTION_STATUS=BLOCKED")
+            print(f"ERROR=local assertion not found: {args.assertion_ref}")
+            return 1
+    invalid = [item for item in records if item["status"] == "INVALID"]
+    payload = {
+        "creative_assertion_status": "PASS" if not invalid else "CHECK",
+        "identity_assurance": "NONE",
+        "authority_scope": "local_project_workflow_only",
+        "assertions": records,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"CREATIVE_ASSERTION_STATUS={payload['creative_assertion_status']}")
+        print("IDENTITY_ASSURANCE=NONE")
+        print(f"ASSERTION_COUNT={len(records)}")
+        for item in records:
+            print(
+                "ASSERTION="
+                f"{item['assertion_ref']}|{item['status']}|{item['declared_semantics']}"
+            )
+    return 0 if not invalid else 1
+
+
+def command_creative_assertion_revoke(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    try:
+        record = revoke_local_operator_assertion(
+            project, args.assertion_ref, reason=args.reason
+        )
+    except ValueError as exc:
+        print("CREATIVE_ASSERTION_REVOKE=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    payload = {
+        "creative_assertion_revoke": "PASS",
+        "assertion_ref": record["assertion_ref"],
+        "status": "REVOKED",
+        "revoked_at": record["revoked_at"],
+        "reason": record["reason"],
+        "identity_assurance": "NONE",
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print("CREATIVE_ASSERTION_REVOKE=PASS")
+        print(f"ASSERTION_REF={record['assertion_ref']}")
+        print("STATUS=REVOKED")
+        print(f"REVOKED_AT={record['revoked_at']}")
+    return 0
+
+
 def command_creative_requirement_confirm(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     ensure_project(project)
@@ -19229,7 +19402,12 @@ def command_creative_import(args: argparse.Namespace) -> int:
         return 1
     if project_surface(project) == DELIVERY_SURFACE:
         for artifact_id, artifact_type, path in [
-            ("ART-AUTO-CREATIVE-CANDIDATE", "creative_candidate", result.current_path),
+            ("ART-AUTO-CREATIVE-CANDIDATE", "creative_candidate", result.candidate_path),
+            (
+                "ART-AUTO-CREATIVE-GENERATION-POINTER",
+                "creative_generation_pointer",
+                result.current_path,
+            ),
             (
                 "ART-AUTO-CREATIVE-CANDIDATE-RECEIPT",
                 "creative_candidate_import_receipt",
@@ -19265,7 +19443,9 @@ def command_creative_import(args: argparse.Namespace) -> int:
             "ART-AUTO-CREATIVE-DIRECTIONS",
         ],
         changed_file_paths=[
+            result.candidate_path,
             result.current_path,
+            result.receipt_path,
             result.directions_path,
             result.matrix_path,
         ],
@@ -19273,7 +19453,7 @@ def command_creative_import(args: argparse.Namespace) -> int:
     payload = {
         "creative_import": "PASS" if not incremental.errors else "CHECK",
         "candidate": str(result.candidate_path),
-        "current_candidate": str(result.current_path),
+        "current_generation": str(result.current_path),
         "candidate_sha256": result.candidate_sha256,
         "directions": result.direction_count,
         "warnings": result.warnings,
@@ -19304,9 +19484,11 @@ def command_creative_review(args: argparse.Namespace) -> int:
     ensure_project(project)
     delivery_surface = project_surface(project) == DELIVERY_SURFACE
     try:
+        critic_required = creative_brief_requires_independent_critic(project)
         result = review_creative_candidate(
             project,
-            independent_critic_required=delivery_surface,
+            independent_critic_required=critic_required,
+            persist_receipt=delivery_surface,
         )
     except ValueError as exc:
         print("CREATIVE_REVIEW=BLOCKED")
@@ -19316,8 +19498,8 @@ def command_creative_review(args: argparse.Namespace) -> int:
         assert result.receipt_path is not None
         update_artifact(
             project,
-            "ART-AUTO-CREATIVE-CRITIC-RECEIPT",
-            "creative_critic_receipt",
+            "ART-AUTO-CREATIVE-LINT-RECEIPT",
+            "creative_deterministic_lint_receipt",
             safe_rel(project, result.receipt_path),
             "creative",
             visibility="internal_only",
@@ -19336,7 +19518,9 @@ def command_creative_review(args: argparse.Namespace) -> int:
         )
     payload = {
         "creative_review": result.status,
-        "critic_receipt": str(result.receipt_path) if result.receipt_path else "",
+        "deterministic_lint_receipt": (
+            str(result.receipt_path) if result.receipt_path else ""
+        ),
         "verdict": result.receipt["verdict"],
         "blocking_issues": result.blocking_issues,
         "warnings": result.warnings,
@@ -19349,7 +19533,7 @@ def command_creative_review(args: argparse.Namespace) -> int:
     else:
         print(f"CREATIVE_REVIEW={result.status}")
         print(
-            "CRITIC_RECEIPT="
+            "DETERMINISTIC_LINT_RECEIPT="
             + (str(result.receipt_path) if result.receipt_path else "NOT_RECORDED")
         )
         print(f"VERDICT={result.receipt['verdict']}")
@@ -19444,6 +19628,53 @@ def command_run(args: argparse.Namespace) -> int:
         errors.append("one or more material parsers failed; inspect intake-evidence report")
     result["run"] = "PASS" if not errors else "CHECK"
     result["errors"] = errors
+    organization_review = audit_project_storage(
+        project,
+        material_paths=materials,
+        deep=False,
+    )
+    result["organization_review"] = {
+        key: organization_review[key]
+        for key in [
+            "status",
+            "audit_complete",
+            "errors",
+            "scope",
+            "read_only",
+            "files_scanned",
+            "root_loose_file_count",
+            "root_unorganized_entry_count",
+            "organization_suggestion_count",
+            "duplicate_group_count",
+            "duplicate_file_count",
+            "reclaimable_bytes",
+            "organization_recommended",
+            "organization_suggestions",
+            "duplicate_groups",
+            "policy",
+        ]
+    }
+    if organization_review["audit_complete"] is not True:
+        errors.extend(
+            f"organization audit incomplete: {item}"
+            for item in organization_review["errors"]
+        )
+        result["run"] = "CHECK"
+        result["errors"] = errors
+    result["organization_prompt_required"] = bool(
+        organization_review["organization_recommended"]
+    )
+    if result["organization_prompt_required"]:
+        result["organization_question"] = (
+            "检测到散放资料或精确重复。是否按建议生成整理计划？"
+            "默认只登记原路径，不复制、不移动、不删除。"
+        )
+        result["organization_next_command"] = (
+            f"adco organize-plan {project} --save"
+        )
+    else:
+        result["organization_question"] = ""
+        result["organization_next_command"] = ""
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if not errors else 1
@@ -19467,6 +19698,26 @@ def command_run(args: argparse.Namespace) -> int:
     print(f"SPECIALIST_HANDOFF_COUNT={result['specialist_handoff_count']}")
     print(f"CLIENT_PACK_RUN_COUNT={result['client_pack_run_count']}")
     print(f"FULL_VALIDATION_RUN_COUNT={result['full_validation_run_count']}")
+    print(
+        "ORGANIZATION_REVIEW="
+        + (
+            "INCOMPLETE"
+            if not result["organization_review"]["audit_complete"]
+            else "RECOMMENDED"
+            if result["organization_prompt_required"]
+            else "CLEAN"
+        )
+    )
+    if not result["organization_review"]["audit_complete"]:
+        for error in result["organization_review"]["errors"]:
+            print(f"ORGANIZATION_ERROR={error}")
+    if result["organization_prompt_required"]:
+        review = result["organization_review"]
+        print(f"ROOT_UNORGANIZED_ENTRIES={review['root_unorganized_entry_count']}")
+        print(f"EXACT_DUPLICATE_GROUPS={review['duplicate_group_count']}")
+        print(f"RECLAIMABLE_BYTES={review['reclaimable_bytes']}")
+        print(f"ORGANIZATION_QUESTION={result['organization_question']}")
+        print(f"ORGANIZATION_NEXT_COMMAND={result['organization_next_command']}")
     print(f"NEXT_COMMAND={result['next_command']}")
     print(f"PPT_AUTO_GENERATED={result['ppt_auto_generated']}")
     print("VALIDATORS_RUN=" + ";".join(incremental["validators_run"]))
@@ -19511,6 +19762,13 @@ def _run_sample_content(project: Path, *, force_material: bool) -> dict[str, obj
         "intake": intake_stats,
         "intake_summary": intake_summary,
         "content_answer": intake_summary,
+        "deprecated_fields": {
+            "content_answer": {
+                "replacement": "intake_summary",
+                "removal_target": "0.4.0",
+                "reason": "the value is intake analysis, not a creative answer",
+            }
+        },
         "stats": stats,
         "errors": errors,
     }
@@ -20458,12 +20716,34 @@ def command_film_quality_gate(args: argparse.Namespace) -> int:
 
 def command_export_pptx(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
-    ensure_project(project)
     output = Path(args.output).expanduser().resolve() if args.output else None
-    pptx_path = export_editable_pptx(project, output)
+    try:
+        existing_errors, _ = validate(project)
+        if existing_errors:
+            raise ProjectValidationBlocked("PPTX export", existing_errors)
+        ensure_project(project)
+        pptx_path = export_editable_pptx(project, output)
+    except ProjectValidationBlocked as exc:
+        print("PPTX_EXPORT=TOOL_BLOCKED")
+        print("TARGETED_ARTIFACT=NOT_RUN")
+        print("PROJECT_VALIDATION=CHECK")
+        print("PROJECT_MUTATION=NONE_AFTER_PREFLIGHT")
+        print(
+            "WIP_FALLBACK=derive outside governed export only after explicit scope; "
+            "do not clean, overwrite, move, or copy FinalDelivery"
+        )
+        print("ERRORS:")
+        for error in exc.errors:
+            print(f"- {error}")
+        return 1
+    except (RuntimeError, FileExistsError) as exc:
+        print("PPTX_EXPORT=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
     stats = inspect_pptx(pptx_path)
     dashboard = render_dashboard(project)
     errors, validate_stats = validate(project)
+    print("PPTX_EXPORT=PASS")
     print(f"PPTX={pptx_path}")
     print(f"PPTX_SLIDES={stats['slides']}")
     print(f"PPTX_EDITABLE_TEXT_RUNS={stats['editable_text_runs']}")
@@ -20938,24 +21218,87 @@ def command_visual_layout_gate(args: argparse.Namespace) -> int:
 
 
 def command_dedupe_audit(args: argparse.Namespace) -> int:
-    project = Path(args.project).expanduser().resolve()
-    rows, csv_path, report = dedupe_audit(project)
-    print("DEDUPE_AUDIT=PASS")
-    print(f"CSV={csv_path}")
-    print(f"REPORT={report}")
-    print(f"FILES={len(rows)}")
-    print(f"DUPLICATES={sum(1 for row in rows if row.get('duplicate_of'))}")
-    return 0
+    project = Path(args.project).expanduser().absolute()
+    audit, plan_path = dedupe_audit(project, deep=not args.quick, save=args.save)
+    audit_complete = audit.get("audit_complete") is True
+    if args.json:
+        print(json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if audit_complete else 1
+    print(f"DEDUPE_AUDIT={'REVIEW_ONLY' if audit_complete else 'INCOMPLETE'}")
+    print(f"AUDIT_READ_ONLY=1")
+    print(f"AUDIT_STATUS={audit['status']}")
+    print(f"AUDIT_ERRORS={len(audit['errors'])}")
+    print(f"PLAN_SAVED={int(plan_path is not None)}")
+    print(f"SCOPE={audit['scope']}")
+    print(f"FILES={audit['files_scanned']}")
+    print(f"DUPLICATE_GROUPS={audit['duplicate_group_count']}")
+    print(f"DUPLICATE_FILES={audit['duplicate_file_count']}")
+    print(f"RECLAIMABLE_BYTES={audit['reclaimable_bytes']}")
+    print(f"PLAN={plan_path or 'NOT_SAVED'}")
+    for error in audit["errors"]:
+        print(f"ERROR={error}")
+    return 0 if audit_complete else 1
 
 
 def command_cleanup_plan(args: argparse.Namespace) -> int:
-    project = Path(args.project).expanduser().resolve()
-    plan_path, actions = cleanup_plan(project)
-    print("CLEANUP_PLAN=PASS")
-    print(f"PLAN={plan_path}")
+    project = Path(args.project).expanduser().absolute()
+    audit, plan_path, actions = cleanup_plan(
+        project, deep=not args.quick, save=args.save
+    )
+    audit_complete = audit.get("audit_complete") is True
+    if args.json:
+        payload = {
+            "schema": "adco.cleanup-plan@1.0",
+            "status": audit["status"],
+            "audit_complete": audit_complete,
+            "errors": audit["errors"],
+            "read_only": True,
+            "actions": actions,
+            "saved_plan": str(plan_path) if plan_path else "",
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if audit_complete else 1
+    print(f"CLEANUP_PLAN={'REVIEW_ONLY' if audit_complete else 'INCOMPLETE'}")
+    print("AUDIT_READ_ONLY=1")
+    print(f"AUDIT_STATUS={audit['status']}")
+    print(f"AUDIT_ERRORS={len(audit['errors'])}")
+    print(f"PLAN_SAVED={int(plan_path is not None)}")
+    print(f"PLAN={plan_path or 'NOT_SAVED'}")
     print(f"ACTIONS={len(actions)}")
     print("NO_DELETE=1")
-    return 0
+    for error in audit["errors"]:
+        print(f"ERROR={error}")
+    return 0 if audit_complete else 1
+
+
+def command_organize_plan(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().absolute()
+    audit = audit_project_storage(project, deep=args.deep)
+    audit_complete = audit.get("audit_complete") is True
+    plan_path = (
+        save_storage_plan(project, audit, mode="organize_plan")
+        if args.save and audit_complete
+        else None
+    )
+    if args.json:
+        payload = dict(audit)
+        payload["saved_plan"] = str(plan_path) if plan_path else ""
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if audit_complete else 1
+    print(f"ORGANIZE_PLAN={'REVIEW_ONLY' if audit_complete else 'INCOMPLETE'}")
+    print("AUDIT_READ_ONLY=1")
+    print(f"AUDIT_STATUS={audit['status']}")
+    print(f"AUDIT_ERRORS={len(audit['errors'])}")
+    print(f"PLAN_SAVED={int(plan_path is not None)}")
+    print(f"ROOT_UNORGANIZED_ENTRIES={audit['root_unorganized_entry_count']}")
+    print(f"SUGGESTIONS={audit['organization_suggestion_count']}")
+    print(f"DUPLICATE_GROUPS={audit['duplicate_group_count']}")
+    print(f"RECLAIMABLE_BYTES={audit['reclaimable_bytes']}")
+    print(f"PLAN={plan_path or 'NOT_SAVED'}")
+    print("APPLY_REQUIRES_EXPLICIT_CONFIRMATION=1")
+    for error in audit["errors"]:
+        print(f"ERROR={error}")
+    return 0 if audit_complete else 1
 
 
 def command_final_delivery_lock(args: argparse.Namespace) -> int:
@@ -21204,16 +21547,59 @@ def build_parser() -> argparse.ArgumentParser:
     creative_brief_parser.add_argument("--json", action="store_true")
     creative_brief_parser.set_defaults(func=command_creative_brief)
 
+    creative_assertion_record_parser = subparsers.add_parser(
+        "creative-assertion-record",
+        help="Record a revocable local-operator workflow assertion without claiming user/client identity.",
+    )
+    creative_assertion_record_parser.add_argument("project", help="Project directory.")
+    creative_assertion_record_parser.add_argument(
+        "--semantics",
+        choices=[
+            "creative_requirement_confirmation",
+            "creative_constraint_approval",
+            "creative_constraint_rejection",
+        ],
+        required=True,
+    )
+    creative_assertion_record_parser.add_argument(
+        "--requirement-id", action="append", default=[]
+    )
+    creative_assertion_record_parser.add_argument(
+        "--artifact-binding", action="append", default=[]
+    )
+    creative_assertion_record_parser.add_argument("--note", required=True)
+    creative_assertion_record_parser.add_argument("--json", action="store_true")
+    creative_assertion_record_parser.set_defaults(func=command_creative_assertion_record)
+
+    creative_assertion_status_parser = subparsers.add_parser(
+        "creative-assertion-status",
+        help="Audit active, revoked, and invalid local workflow assertions.",
+    )
+    creative_assertion_status_parser.add_argument("project", help="Project directory.")
+    creative_assertion_status_parser.add_argument("--assertion-ref", default="")
+    creative_assertion_status_parser.add_argument("--json", action="store_true")
+    creative_assertion_status_parser.set_defaults(func=command_creative_assertion_status)
+
+    creative_assertion_revoke_parser = subparsers.add_parser(
+        "creative-assertion-revoke",
+        help="Revoke one local workflow assertion while preserving its audit record.",
+    )
+    creative_assertion_revoke_parser.add_argument("project", help="Project directory.")
+    creative_assertion_revoke_parser.add_argument("--assertion-ref", required=True)
+    creative_assertion_revoke_parser.add_argument("--reason", required=True)
+    creative_assertion_revoke_parser.add_argument("--json", action="store_true")
+    creative_assertion_revoke_parser.set_defaults(func=command_creative_assertion_revoke)
+
     creative_requirement_confirm_parser = subparsers.add_parser(
         "creative-requirement-confirm",
-        help="Confirm one requirement against source evidence and a typed user/client authority event.",
+        help="Bind one requirement to source evidence and an auditable local workflow assertion.",
     )
     creative_requirement_confirm_parser.add_argument("project", help="Project directory.")
     creative_requirement_confirm_parser.add_argument("--requirement-id", required=True)
     creative_requirement_confirm_parser.add_argument(
         "--confirmation-ref",
         required=True,
-        help="Typed user_confirmation:<source_event_id> or client_confirmation:<source_event_id>.",
+        help="local_operator_assertion:<source_event_id>; not user/client identity or approval.",
     )
     creative_requirement_confirm_parser.add_argument("--evidence-ref", default="")
     creative_requirement_confirm_parser.add_argument("--json", action="store_true")
@@ -21223,7 +21609,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     creative_constraint_resolve_parser = subparsers.add_parser(
         "creative-constraint-resolve",
-        help="Record a typed user/client decision for one REVIEW_REQUIRED candidate constraint.",
+        help="Record a local workflow decision for one REVIEW_REQUIRED candidate constraint.",
     )
     creative_constraint_resolve_parser.add_argument("project", help="Project directory.")
     creative_constraint_resolve_parser.add_argument("--file", required=True)
@@ -21232,7 +21618,7 @@ def build_parser() -> argparse.ArgumentParser:
     creative_constraint_resolve_parser.add_argument(
         "--confirmation-ref",
         required=True,
-        help="Typed user_confirmation:<source_event_id> or client_confirmation:<source_event_id>.",
+        help="local_operator_assertion:<source_event_id>; not user/client identity or approval.",
     )
     creative_constraint_resolve_parser.add_argument(
         "--decision", choices=["approved", "rejected"], required=True
@@ -21254,7 +21640,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     creative_review_parser = subparsers.add_parser(
         "creative-review",
-        help="Write a Critic Receipt for structure, mechanism, ownership, visual clarity, and shootability lint.",
+        help="Run deterministic structure, mechanism, ownership, visual-clarity, and shootability lint; Delivery writes an exact-bound lint receipt.",
     )
     creative_review_parser.add_argument("project", help="Project directory.")
     creative_review_parser.add_argument("--json", action="store_true")
@@ -21619,17 +22005,33 @@ def build_parser() -> argparse.ArgumentParser:
 
     dedupe_parser = subparsers.add_parser(
         "dedupe-audit",
-        help="Classify duplicate/cache/preview/final files without deleting anything.",
+        help="Read-only exact duplicate audit; writes only with explicit --save.",
     )
     dedupe_parser.add_argument("project", help="Project directory.")
+    dedupe_parser.add_argument("--quick", action="store_true", help="Inspect root-level files only.")
+    dedupe_parser.add_argument("--save", action="store_true", help="Replace the one stable storage_plan.json snapshot.")
+    dedupe_parser.add_argument("--json", action="store_true")
     dedupe_parser.set_defaults(func=command_dedupe_audit)
 
     cleanup_parser = subparsers.add_parser(
         "cleanup-plan",
-        help="Write a non-destructive cleanup plan with FinalDelivery lock evidence.",
+        help="Review non-destructive cleanup actions; writes only with explicit --save.",
     )
     cleanup_parser.add_argument("project", help="Project directory.")
+    cleanup_parser.add_argument("--quick", action="store_true", help="Inspect root-level files only.")
+    cleanup_parser.add_argument("--save", action="store_true", help="Replace the one stable storage_plan.json snapshot.")
+    cleanup_parser.add_argument("--json", action="store_true")
     cleanup_parser.set_defaults(func=command_cleanup_plan)
+
+    organize_parser = subparsers.add_parser(
+        "organize-plan",
+        help="Suggest destinations for loose project materials without moving or copying them.",
+    )
+    organize_parser.add_argument("project", help="Project directory.")
+    organize_parser.add_argument("--deep", action="store_true", help="Also audit the full project for exact duplicates.")
+    organize_parser.add_argument("--save", action="store_true", help="Replace the one stable storage_plan.json snapshot.")
+    organize_parser.add_argument("--json", action="store_true")
+    organize_parser.set_defaults(func=command_organize_plan)
 
     final_lock_parser = subparsers.add_parser(
         "final-delivery-lock",
@@ -21808,6 +22210,9 @@ def main() -> int:
         "import-intake-analysis",
         "creative-brief",
         "creative-proposal",
+        "creative-assertion-record",
+        "creative-assertion-status",
+        "creative-assertion-revoke",
         "creative-requirement-confirm",
         "creative-constraint-resolve",
         "creative-import",
@@ -21824,6 +22229,9 @@ def main() -> int:
         "render-dashboard",
         "open-dashboard",
         "audit-dashboard",
+        "organize-plan",
+        "dedupe-audit",
+        "cleanup-plan",
     }
     project_arg = getattr(args, "project", None)
     delivery_command = bool(

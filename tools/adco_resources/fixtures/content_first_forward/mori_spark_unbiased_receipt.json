@@ -6,15 +6,15 @@
     },
     "creative_contract": {
       "path": "tools/adco_core/creative_contract.py",
-      "sha256": "43d665083c45b15ccf5b3733261b1e4c3dc84b4e3d85cb8d285f88513fb1187a"
+      "sha256": "fc1da4ecbff0cfa61582f9f99b9e4eecb5eb50291675f416e1930cc19fd16091"
     },
     "creative_reference": {
       "path": "skill_drafts/ad-creative-orchestrator/creative_contract.md",
-      "sha256": "8880b887faca7954b3b161fbc0bf212e448debe9c5c734f3f1ad0f0056b8c6f8"
+      "sha256": "874686cd54c400fa8a13428d0d29a64587746572a0dc1e0af058ac8ab8f98e19"
     },
     "facts": {
       "path": "tools/adco_core/facts.py",
-      "sha256": "6331bce75424d6f5c60d73fd2a1bd790126732bd84ec008df78aeb1a7505fe27"
+      "sha256": "30543d738a73d533e9c433651b2471bcfcfd9befb3dd55ee3511cddedcc1c22f"
     },
     "full_pptx_fixture": {
       "path": "skill_drafts/ad-creative-orchestrator/fixtures/chat-visualization/sample-deck.pptx",
@@ -26,28 +26,30 @@
     },
     "semantic_test": {
       "path": "tools/test_creative_contract.py",
-      "sha256": "cf431945a0d6a8bff409e96bb6eca2db79f41bf3387ebcb4dc5cb4135d679d1f"
+      "sha256": "b372881be3eaeca19650655cc9f7a2257f58f587a82420cf7b0936a63a473430"
     },
     "skill": {
       "path": "skill_drafts/ad-creative-orchestrator/SKILL.md",
-      "sha256": "3be8d86fcd8383d5ed906ae0ff3b0141ab0a1aeb0172d3b4ef12dd3e22133e0f"
+      "sha256": "823e93ff4ca23e61cfe9703659546f1488dfa1b3e65c5162d32c669ebeade57e"
     },
     "skill_tree": {
       "managed_file_count": 43,
       "path": "skill_drafts/ad-creative-orchestrator",
-      "sha256": "2094819f0904f2639d77f4357859c180ee93df7804d566cb8bee441e393bc262"
+      "sha256": "754188c82e7db1764053ed570d93a174bc203bf7d7fe5fb3370c7dd44f8b15c3"
     }
   },
   "captured_at": "2026-07-22T06:37:47+08:00",
   "conversation": {
     "browser": "Chrome",
+    "conversation_id_sha256": "adc667bfd6a30c48dc44b7570cf849b3068183fe27437568c9720ef6f31bca0d",
     "fresh_conversation": true,
     "mode_ui_confirmed": true,
     "provider": "ChatGPT",
     "reasoning_mode": "极高",
-    "url": "https://chatgpt.com/c/6a5ff32f-56a0-83e8-9238-9f7d7f185b7e"
+    "url_redacted": true
   },
-  "evidence_type": "manual_browser_readback_with_hash_bound_artifacts",
+  "current_regression_bindings_refreshed_at": "2026-08-09T18:20:00+08:00",
+  "evidence_type": "historical_manual_readback_with_current_artifact_regression_bindings",
   "observed_result": {
     "answer_character_count": 4066,
     "answer_nonempty": true,
@@ -68,9 +70,9 @@
       "fresh_conversation",
       "reasoning_mode_ui",
       "submitted_material_scope",
-      "conversation_url"
+      "conversation_identity_redacted"
     ],
-    "limitation": "Repository tests validate this receipt and its bound artifacts; they do not independently read the live ChatGPT conversation or attest the Chrome UI."
+    "limitation": "The manual readback is historical. Current artifact hashes are automated regression bindings and do not attest the exact bytes originally submitted. Repository tests do not independently read the live ChatGPT conversation or attest the Chrome UI."
   },
   "unbiased_protocol": {
     "excluded_materials": [

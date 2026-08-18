@@ -64,11 +64,12 @@ adco creative-import <project> --file <candidate.json> [--json]
 adco creative-review <project> [--json]
 ```
 
-When a parsed hard requirement is real but not yet authoritative, confirm only
-that row instead of opening a broader workflow:
+When the local operator intentionally chooses to enforce a parsed hard
+requirement, record and bind only that row instead of opening a broader workflow:
 
 ```text
-adco creative-requirement-confirm <project> --requirement-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> [--evidence-ref <chunk>] [--json]
+adco creative-assertion-record <project> --semantics creative_requirement_confirmation --requirement-id <id> --note <reason> [--json]
+adco creative-requirement-confirm <project> --requirement-id <id> --confirmation-ref <local_operator_assertion:id> [--evidence-ref <chunk>] [--json]
 adco creative-brief <project>
 ```
 
@@ -76,28 +77,33 @@ When one candidate check is explicitly `REVIEW_REQUIRED` because no safe
 deterministic checker exists, resolve that exact candidate/constraint pair:
 
 ```text
-adco creative-constraint-resolve <project> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> --decision <approved|rejected> --note <reason> [--json]
+adco creative-assertion-record <project> --semantics <creative_constraint_approval|creative_constraint_rejection> --requirement-id <id> --artifact-binding <candidate_payload_sha256:...> --artifact-binding <brief_snapshot_sha256:...> --artifact-binding <direction_id:...> --artifact-binding <constraint_id:...> --note <reason> [--json]
+adco creative-constraint-resolve <project> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <local_operator_assertion:id> --decision <approved|rejected> --note <reason> [--json]
+adco creative-assertion-status <project> [--assertion-ref <local_operator_assertion:id>] [--json]
+adco creative-assertion-revoke <project> --assertion-ref <local_operator_assertion:id> --reason <reason> [--json]
 ```
 
 Do not use either command for ordinary internal drafting. They exist only to
 close a real durable-import blocker without creating Council, Thread, Gate, or
 Delivery work.
 
-The referenced `source_events.csv` row is an authority record, not a name:
+The referenced row is deliberately a **local workflow assertion**, not identity,
+consent, client approval, or send authority:
 
-- requirement confirmation: `source_type=user_confirmation|client_confirmation`,
-  matching `source_owner` and `<authority>_confirmed` trust,
+- requirement assertion: `source_type=local_operator_assertion`,
+  `source_owner=local_operator`, `trust_level=local_asserted`,
   `declared_semantics=creative_requirement_confirmation`, exactly one
   `affects_requirements=<requirement_id>`, no `affects_artifacts`, and one
-  project-local evidence file;
-- constraint resolution: the same identity rules, semantics
+  generated project-local assertion record;
+- constraint resolution: the same local-only boundary, semantics
   `creative_constraint_approval|creative_constraint_rejection`, the exact
   requirement id, and semicolon-separated exact artifact bindings for
   `candidate_payload_sha256`, `brief_snapshot_sha256`, `direction_id`, and
   `constraint_id`.
 
-The event row and evidence file are hash-bound in the receipt. A later edit or
-target change invalidates the authority.
+The event row and evidence file are hash-bound in the receipt. A later edit,
+target change, or revocation invalidates its use. Every status/readback repeats
+`identity_assurance=NONE`; project files cannot prove who the human was.
 
 `adco creative-proposal` is a deprecated compatibility alias for
 `creative-brief`. It emits a deprecation notice and does not generate directions.
@@ -117,23 +123,25 @@ It binds current facts, requirements, evidence chunk ids, and open evidence gaps
 It does not write `creative_directions.md`, an option matrix, slogans, a client
 outline, or a PPT.
 
-The manifest binds the exact bytes of every brief member, while the snapshot
-self-hash is recomputed and compared with current evidence/facts/requirements/
-gaps at import and review time. A corrupt, hand-edited, or stale member fails
-closed instead of falling back to a generic direction count.
+The manifest binds the exact bytes of every brief member. Snapshot inputs are
+read once through POSIX anchored, no-follow descriptors; the snapshot binds the
+actual evidence record and text hashes plus the captured facts, requirements,
+gaps, relevant source events, confirmations, and revocations. Its self-hash is
+recomputed and compared at import and review time. A corrupt, hand-edited,
+raced, or stale member fails closed instead of falling back to a generic count.
 
 The contract extracts machine-readable hard constraints when the source is
 explicit: maximum runtime, maximum cast, location allowlist, required or
 prohibited physical product exposure, and prohibited claims. A durable import
 enforces only a requirement whose workflow receipt binds the exact row to a
-registered source/evidence and a typed user/client confirmation event with exact
-owner, trust, semantics, evidence hash, and target binding. A display name is
-never authority.
-Editing status/owner text alone never grants authority. Parser-created
+registered source/evidence and an active local-operator assertion with exact
+semantics, evidence hash, and target binding. This is enforceable only inside
+the local workflow and has no identity assurance. Editing status/owner text
+alone never creates a valid assertion. Parser-created
 `candidate` rows remain `REVIEW_REQUIRED`; parser confidence never upgrades them
 silently. The generation request requires supported constraints to appear in
 checkable direction fields. Any explicit hard clause without a deterministic
-checker remains `REVIEW_REQUIRED` until a typed user/client resolution bound to
+checker remains `REVIEW_REQUIRED` until a local workflow resolution bound to
 the exact candidate payload, direction, constraint, and snapshot approves or
 rejects it.
 
@@ -159,16 +167,21 @@ primary deterministic contract; prose is cross-checked for contradictions.
 Every evidence ref must name an existing evidence chunk. That proves provenance,
 not semantic support for every claim. `creative-import` rejects unbound refs,
 stale snapshots, missing/extra fields, duplicate ids/names, duplicate normalized
-mechanisms, failed hard constraints, and unresolved hard-constraint review items
+mechanisms, prohibited claims in any persisted narrative or product-description
+field, failed hard constraints, and unresolved hard-constraint review items
 before writing any candidate/current/receipt/rendered artifact. Weak or generic
-brand ownership is flagged as a brand-replacement risk. A valid import then
-creates a versioned candidate, current candidate, import receipt, readable
-directions, and option matrix; all remain `internal_only`. The receipt's
+brand ownership is flagged as a brand-replacement risk. A valid import prepares
+one immutable generation directory containing the exact candidate, import
+receipt, readable directions, option matrix, and generation manifest; all remain
+`internal_only`. The receipt's
 `candidate_sha256` hashes the exact persisted version bytes; the separately named
-`candidate_payload_sha256` is only the normalized semantic payload hash. Files
-are atomically replaced; the receipt is written before `current_candidate.json`,
-which is the final pointer switch. Review rejects any exact-byte mismatch across
-the current candidate, version, receipt, brief manifest, directions, or matrix.
+`candidate_payload_sha256` is only the normalized semantic payload hash. Only
+`AD-creative/creative/current_generation.json` is atomically switched after the
+entire generation verifies. Human-readable current views resolve through that
+pointer, so an interrupted switch leaves every old current artifact coherent;
+an unreferenced prepared generation is never current. Review rejects any
+exact-byte mismatch across the pointer, generation manifest, candidate, receipt,
+brief manifest, directions, or matrix.
 
 `creative-review` reports evidence refs as `PROVENANCE_ONLY` and separates that
 from brief adherence. For the

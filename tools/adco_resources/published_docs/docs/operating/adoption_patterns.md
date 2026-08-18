@@ -86,6 +86,10 @@ adco check-pptx <project_dir> --file <project_dir>/AD-creative/ppt/exports/clien
 adco client-pack-gate <project_dir>
 ```
 
+`export-pptx` requires a read-only project-wide validation PASS before writing.
+On CHECK it returns TOOL_BLOCKED and does not mutate the current version or
+FinalDelivery; a targeted WIP result never upgrades project-wide status.
+
 Gate:
 
 ```text

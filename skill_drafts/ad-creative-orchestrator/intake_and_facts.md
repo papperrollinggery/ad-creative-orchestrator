@@ -22,6 +22,27 @@ All material paths and the character budget are checked before project creation.
 Missing, empty/unsupported, recursive, or symlinked material fails with a nonzero
 structured result and no project write.
 
+## Material placement and organization
+
+Treat every supplied material path as a reference to the existing physical
+bytes. Register and inspect it in place. Do not copy the same deck, video,
+reference library, or source folder into `AD-creative/`, a meeting package, a
+concept folder, or `version_archive` merely to make it discoverable.
+
+After intake produces a useful summary, `adco run` performs one read-only check
+over the supplied material scope and project root. If it finds loose root files
+or exact byte duplicates, surface one organization question. Do not interrupt
+content work, create a report, or reorganize automatically. On request, use:
+
+```text
+adco organize-plan <project> [--deep] [--save] [--json]
+```
+
+Without `--save`, the command writes nothing. With `--save`, it atomically
+replaces the single `AD-creative/orchestrator/storage_plan.json`; it never creates
+numbered plan copies. Applying any move, rename, hardlink, or deletion remains a
+separate explicitly confirmed action. FinalDelivery is always protected.
+
 ## Evidence flow
 
 ```text
@@ -102,6 +123,7 @@ AD-creative/orchestrator/gaps.csv
 ```
 
 `adco run --json` reports characters read, evidence chunks, parser errors,
-budget overflows, the intake summary, phase timings, and scoped validators. The
+budget overflows, the intake summary, phase timings, scoped validators, and the
+read-only organization review. The
 default Dashboard count is zero. Treat an overflow or parser error as `CHECK`;
 inspect the intake evidence before advancing.

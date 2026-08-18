@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from .models import EvidenceChunk
-from .safe_write import atomic_write_text
+from .safe_write import atomic_write_text, read_optional_project_text
 
 
 DEFAULT_CHUNK_CHARS = 3000
@@ -1047,23 +1047,42 @@ def parse_file(
     return chunks
 
 
-def load_evidence_chunks(project: Path) -> list[EvidenceChunk]:
-    path = project / EVIDENCE_REL
-    if not path.is_file():
-        return []
+def parse_evidence_chunks_text(text: str) -> list[EvidenceChunk]:
+    """Parse and authenticate one immutable evidence JSONL snapshot."""
     chunks: list[EvidenceChunk] = []
-    with path.open(encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, 1):
-            if not line.strip():
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"invalid evidence chunk JSONL at line {line_number}: {exc}") from exc
-            if not isinstance(payload, dict):
-                raise ValueError(f"invalid evidence chunk record at line {line_number}")
-            chunks.append(EvidenceChunk.from_dict(payload))
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"invalid evidence chunk JSONL at line {line_number}: {exc}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"invalid evidence chunk record at line {line_number}")
+        chunk = EvidenceChunk.from_dict(payload)
+        if not isinstance(chunk.text, str) or not isinstance(chunk.sha256, str):
+            raise ValueError(f"invalid evidence chunk fields at line {line_number}")
+        if not isinstance(chunk.inspection_status, str):
+            raise ValueError(f"invalid evidence inspection status at line {line_number}")
+        if chunk.inspection_status.startswith("requires_"):
+            file_hash = chunk.metadata.get("file_sha256") if isinstance(chunk.metadata, dict) else None
+            if file_hash != chunk.sha256:
+                raise ValueError(
+                    f"evidence file hash mismatch at line {line_number}: {chunk.chunk_id}"
+                )
+        elif sha256_text(chunk.text) != chunk.sha256:
+            raise ValueError(
+                f"evidence chunk text hash mismatch at line {line_number}: {chunk.chunk_id}"
+            )
+        chunks.append(chunk)
     return chunks
+
+
+def load_evidence_chunks(project: Path) -> list[EvidenceChunk]:
+    text = read_optional_project_text(project, project / EVIDENCE_REL)
+    return [] if text is None else parse_evidence_chunks_text(text)
 
 
 def write_evidence_chunks(project: Path, chunks: Iterable[EvidenceChunk]) -> Path:

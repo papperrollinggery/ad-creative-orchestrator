@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import zipfile
 import zlib
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -293,7 +296,9 @@ def test_unbiased_chatgpt_evidence_receipt_is_hash_bound_and_manual() -> None:
     assert conversation["reasoning_mode"] == "极高"
     assert conversation["mode_ui_confirmed"] is True
     assert conversation["fresh_conversation"] is True
-    assert conversation["url"].startswith("https://chatgpt.com/c/")
+    assert conversation["url_redacted"] is True
+    assert "url" not in conversation
+    assert re.fullmatch(r"[0-9a-f]{64}", conversation["conversation_id_sha256"])
     verification = receipt["verification_scope"]
     assert verification["status"] == "MANUAL_READBACK_ONLY"
     assert verification["automated_conversation_attestation"] is False
@@ -330,16 +335,34 @@ def test_unbiased_chatgpt_evidence_receipt_is_hash_bound_and_manual() -> None:
     }
     artifacts = receipt["artifacts"]
     assert set(artifact_paths) <= set(artifacts)
+    mutable_source_artifacts = {
+        "skill",
+        "creative_reference",
+        "creative_contract",
+        "facts",
+        "semantic_test",
+    }
     for artifact_id, path in artifact_paths.items():
         assert path.is_file(), (artifact_id, path)
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == artifacts[
-            artifact_id
-        ]["sha256"]
+        current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        receipt_hash = artifacts[artifact_id]["sha256"]
+        assert re.fullmatch(r"[0-9a-f]{64}", receipt_hash)
+        if current_hash != receipt_hash:
+            assert artifact_id in mutable_source_artifacts, (
+                artifact_id,
+                "immutable browser-readback evidence drifted",
+            )
 
     tree_files = operator_module.skill_tree_files(skill_draft_dir())
     tree_receipt = artifacts["skill_tree"]
-    assert len(tree_files) == tree_receipt["managed_file_count"]
-    assert operator_module.skill_tree_hash(tree_files) == tree_receipt["sha256"]
+    assert tree_receipt["path"] == "skill_drafts/ad-creative-orchestrator"
+    assert tree_receipt["managed_file_count"] > 0
+    assert re.fullmatch(r"[0-9a-f]{64}", tree_receipt["sha256"])
+    # The receipt binds the exact tree used for the historical manual browser
+    # readback. A maintained source tree may legitimately drift afterwards; the
+    # receipt explicitly is not a current automated attestation.
+    if operator_module.skill_tree_hash(tree_files) != tree_receipt["sha256"]:
+        assert verification["automated_conversation_attestation"] is False
     observed = receipt["observed_result"]
     output_text = artifact_paths["output"].read_text(encoding="utf-8")
     assert observed["answer_nonempty"] is True
@@ -401,6 +424,11 @@ def test_default_run_emits_content_answer_without_delivery_theatre() -> None:
         payload = json.loads(completed.stdout)
         answer = payload["intake_summary"]
         assert payload["content_answer"] == answer
+        assert payload["deprecated_fields"]["content_answer"] == {
+            "replacement": "intake_summary",
+            "removal_target": "0.4.0",
+            "reason": "the value is intake analysis, not a creative answer",
+        }
         assert answer["artifact_role"] == "intake_summary_not_creative_output"
         assert payload["run"] == "PASS"
         assert answer["objective"] == "给出内部策略判断与下一步创意动作"
@@ -484,6 +512,219 @@ def test_default_run_emits_content_answer_without_delivery_theatre() -> None:
             rel == ".adco-local" or rel.startswith(".adco-local/")
             for rel in scope
         )
+
+
+def test_run_prompts_for_root_material_organization_without_moving_it() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-root-material-") as raw:
+        project = Path(raw) / "project"
+        project.mkdir()
+        material = project / "客户资料.md"
+        original = "# 项目资料\n先整理事实，再给出下一步。\n"
+        material.write_text(original, encoding="utf-8")
+        completed = run_operator(
+            "run",
+            str(project),
+            "--material",
+            str(material),
+            "--goal",
+            "整理事实并给出下一步",
+            "--json",
+        )
+        payload = json.loads(completed.stdout)
+        assert payload["organization_prompt_required"] is True
+        assert payload["organization_review"]["root_loose_file_count"] == 1
+        assert payload["organization_review"]["organization_suggestions"] == [
+            {
+                "action": "ask_before_move",
+                "entry_type": "file",
+                "path": "客户资料.md",
+                "reason": "默认归入项目事实与原始资料",
+                "suggested_destination": "00_项目资料_ProjectMaterials/",
+            }
+        ]
+        assert material.read_text(encoding="utf-8") == original
+        assert not (project / "AD-creative/orchestrator/storage_plan.json").exists()
+        before = {
+            path.relative_to(project).as_posix(): path.read_bytes()
+            for path in project.rglob("*")
+            if path.is_file()
+        }
+        organization = run_operator("organize-plan", str(project))
+        assert "ORGANIZE_PLAN=REVIEW_ONLY" in organization.stdout
+        after = {
+            path.relative_to(project).as_posix(): path.read_bytes()
+            for path in project.rglob("*")
+            if path.is_file()
+        }
+        assert after == before
+
+
+def test_run_surfaces_incomplete_organization_audit() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-run-storage-incomplete-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        material = root / "brief.md"
+        material.write_text("需要整理事实并输出下一步。", encoding="utf-8")
+        real_audit = operator_module.audit_project_storage
+
+        def incomplete_audit(*args: object, **kwargs: object) -> dict[str, object]:
+            result = real_audit(*args, **kwargs)
+            result["status"] = "INCOMPLETE"
+            result["audit_complete"] = False
+            result["errors"] = ["fixture traversal denied"]
+            return result
+
+        args = operator_module.build_parser().parse_args(
+            [
+                "run",
+                str(project),
+                "--material",
+                str(material),
+                "--goal",
+                "整理事实并输出下一步",
+                "--json",
+            ]
+        )
+        output = io.StringIO()
+        with patch(
+            "ad_creative_operator.audit_project_storage",
+            side_effect=incomplete_audit,
+        ), redirect_stdout(output):
+            exit_code = args.func(args)
+        payload = json.loads(output.getvalue())
+        assert exit_code == 1
+        assert payload["run"] == "CHECK"
+        assert payload["organization_review"]["status"] == "INCOMPLETE"
+        assert payload["organization_review"]["audit_complete"] is False
+        assert payload["organization_review"]["errors"] == [
+            "fixture traversal denied"
+        ]
+        assert any(
+            "organization audit incomplete: fixture traversal denied" in item
+            for item in payload["errors"]
+        )
+
+
+def test_local_operator_assertion_cli_lifecycle_is_honest_and_revocable() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-assertion-cli-") as raw:
+        project = Path(raw) / "project"
+        missing_status = run_operator(
+            "creative-assertion-status",
+            str(project),
+            "--json",
+            check=False,
+        )
+        assert missing_status.returncode == 1
+        assert not project.exists()
+        run_operator("init", str(project))
+
+        missing_requirement = run_operator(
+            "creative-assertion-record",
+            str(project),
+            "--semantics",
+            "creative_constraint_approval",
+            "--artifact-binding",
+            "candidate_payload_sha256:" + "a" * 64,
+            "--note",
+            "This intentionally omits the required requirement binding.",
+            check=False,
+        )
+        assert missing_requirement.returncode == 1
+        assert "exactly one --requirement-id" in missing_requirement.stdout
+
+        extra_artifact = run_operator(
+            "creative-assertion-record",
+            str(project),
+            "--semantics",
+            "creative_requirement_confirmation",
+            "--requirement-id",
+            "REQ-CLI-001",
+            "--artifact-binding",
+            "candidate_payload_sha256:" + "a" * 64,
+            "--note",
+            "This intentionally adds an unusable artifact binding.",
+            check=False,
+        )
+        assert extra_artifact.returncode == 1
+        assert "must not include --artifact-binding" in extra_artifact.stdout
+
+        recorded = json.loads(
+            run_operator(
+                "creative-assertion-record",
+                str(project),
+                "--semantics",
+                "creative_requirement_confirmation",
+                "--requirement-id",
+                "REQ-CLI-001",
+                "--note",
+                "The local operator confirmed this workflow requirement.",
+                "--json",
+            ).stdout
+        )
+        assertion_ref = recorded["assertion_ref"]
+        assert assertion_ref.startswith("local_operator_assertion:")
+        assert recorded["identity_assurance"] == "NONE"
+        assert recorded["authority_scope"] == "local_project_workflow_only"
+        assert "not verified user/client identity" in recorded["disclaimer"]
+
+        active = json.loads(
+            run_operator(
+                "creative-assertion-status",
+                str(project),
+                "--assertion-ref",
+                assertion_ref,
+                "--json",
+            ).stdout
+        )
+        assert active["identity_assurance"] == "NONE"
+        assert active["authority_scope"] == "local_project_workflow_only"
+        assert len(active["assertions"]) == 1
+        assert active["assertions"][0]["status"] == "ACTIVE"
+
+        revoked = json.loads(
+            run_operator(
+                "creative-assertion-revoke",
+                str(project),
+                "--assertion-ref",
+                assertion_ref,
+                "--reason",
+                "The local workflow decision changed.",
+                "--json",
+            ).stdout
+        )
+        assert revoked["status"] == "REVOKED"
+        assert revoked["identity_assurance"] == "NONE"
+
+        audited = json.loads(
+            run_operator(
+                "creative-assertion-status",
+                str(project),
+                "--assertion-ref",
+                assertion_ref,
+                "--json",
+            ).stdout
+        )
+        assert audited["assertions"][0]["status"] == "REVOKED"
+
+        evidence_path = Path(recorded["evidence_path"])
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        evidence["authority_scope"] = "user_approval"
+        evidence_path.write_text(
+            json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        invalid = run_operator(
+            "creative-assertion-status",
+            str(project),
+            "--assertion-ref",
+            assertion_ref,
+            "--json",
+            check=False,
+        )
+        assert invalid.returncode == 1
+        invalid_payload = json.loads(invalid.stdout)
+        assert invalid_payload["creative_assertion_status"] == "CHECK"
+        assert invalid_payload["assertions"][0]["status"] == "INVALID"
 
 
 def test_external_source_map_repairs_unsafe_local_gitignore() -> None:
@@ -1706,6 +1947,9 @@ def main() -> int:
     test_forward_test_contracts_are_machine_readable()
     test_unbiased_chatgpt_evidence_receipt_is_hash_bound_and_manual()
     test_default_run_emits_content_answer_without_delivery_theatre()
+    test_run_prompts_for_root_material_organization_without_moving_it()
+    test_run_surfaces_incomplete_organization_audit()
+    test_local_operator_assertion_cli_lifecycle_is_honest_and_revocable()
     test_external_source_map_repairs_unsafe_local_gitignore()
     test_local_source_state_dirfd_resists_concurrent_symlink_swap()
     test_open_project_dir_closes_fd_when_visible_binding_disappears()

@@ -14,7 +14,7 @@ from typing import Iterable
 
 from .ingestion import EVIDENCE_REL, IngestionReport, ingest_source_rows, load_evidence_chunks
 from .models import EvidenceChunk, FactInventoryItem
-from .safe_write import atomic_write_text
+from .safe_write import atomic_write_text, read_optional_project_text
 from runtime_paths import DELIVERY_SURFACE, project_surface
 
 
@@ -27,19 +27,19 @@ CONTENT_DEFERRED_FACT_KEYS = {
     "brand.logo",
     "policy.ai_client_visibility",
 }
-AUTHORITY_EVENT_TYPES = {"user_confirmation", "client_confirmation"}
-AUTHORITY_EVENT_SEMANTICS = {
+LOCAL_ASSERTION_TYPES = {"local_operator_assertion"}
+LOCAL_ASSERTION_SEMANTICS = {
     "creative_requirement_confirmation",
     "creative_constraint_approval",
     "creative_constraint_rejection",
 }
 
 
-def _is_authority_event(row: dict[str, str]) -> bool:
+def _is_local_assertion_event(row: dict[str, str]) -> bool:
     return (
-        row.get("source_type", "").strip().casefold() in AUTHORITY_EVENT_TYPES
+        row.get("source_type", "").strip().casefold() in LOCAL_ASSERTION_TYPES
         and row.get("declared_semantics", "").strip().casefold()
-        in AUTHORITY_EVENT_SEMANTICS
+        in LOCAL_ASSERTION_SEMANTICS
     )
 
 INTAKE_ANALYSIS_SCHEMA: dict[str, object] = {
@@ -154,23 +154,27 @@ def _next_id(rows: list[dict[str, str]], key: str, prefix: str) -> str:
     return f"{prefix}-{max(numbers, default=0) + 1:03d}"
 
 
-def load_fact_inventory(project: Path) -> list[FactInventoryItem]:
-    path = project / FACT_INVENTORY_REL
-    if not path.is_file():
-        return []
+def parse_fact_inventory_text(text: str) -> list[FactInventoryItem]:
+    """Parse a fact inventory from one already-captured text snapshot."""
     facts: list[FactInventoryItem] = []
-    with path.open(encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, 1):
-            if not line.strip():
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"invalid fact inventory JSONL at line {line_number}: {exc}") from exc
-            if not isinstance(payload, dict):
-                raise ValueError(f"invalid fact inventory record at line {line_number}")
-            facts.append(FactInventoryItem.from_dict(payload))
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"invalid fact inventory JSONL at line {line_number}: {exc}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"invalid fact inventory record at line {line_number}")
+        facts.append(FactInventoryItem.from_dict(payload))
     return facts
+
+
+def load_fact_inventory(project: Path) -> list[FactInventoryItem]:
+    text = read_optional_project_text(project, project / FACT_INVENTORY_REL)
+    return [] if text is None else parse_fact_inventory_text(text)
 
 
 def write_fact_inventory(project: Path, facts: Iterable[FactInventoryItem]) -> Path:
@@ -520,7 +524,9 @@ def run_evidence_intake(
     *,
     max_total_chars: int = 2_000_000,
 ) -> IntakeResult:
-    content_source_rows = [row for row in source_rows if not _is_authority_event(row)]
+    content_source_rows = [
+        row for row in source_rows if not _is_local_assertion_event(row)
+    ]
     parse_started = perf_counter()
     ingestion = ingest_source_rows(
         project,
@@ -532,27 +538,27 @@ def run_evidence_intake(
     _, all_source_rows = _read_csv(
         project / "AD-creative/orchestrator/source_events.csv"
     )
-    authority_source_ids = {
+    local_assertion_source_ids = {
         row.get("source_event_id", "").strip()
         for row in all_source_rows
-        if _is_authority_event(row)
+        if _is_local_assertion_event(row)
     }
     all_loaded_chunks = load_evidence_chunks(project)
-    authority_chunk_ids = {
+    local_assertion_chunk_ids = {
         chunk.chunk_id
         for chunk in all_loaded_chunks
-        if chunk.source_event_id in authority_source_ids
+        if chunk.source_event_id in local_assertion_source_ids
     }
     all_chunks = [
         chunk
         for chunk in all_loaded_chunks
-        if chunk.source_event_id not in authority_source_ids
+        if chunk.source_event_id not in local_assertion_source_ids
     ]
     explicit_facts = explicit_facts_from_evidence(all_chunks)
     existing_facts = [
         fact
         for fact in load_fact_inventory(project)
-        if not set(fact.evidence_refs).intersection(authority_chunk_ids)
+        if not set(fact.evidence_refs).intersection(local_assertion_chunk_ids)
     ]
     facts = merge_facts(existing_facts, explicit_facts)
     fact_analysis_ms = round((perf_counter() - analysis_started) * 1000)

@@ -28,6 +28,7 @@ classifiers = [
   "Intended Audience :: End Users/Desktop",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX",
   "Programming Language :: Python :: 3",
   "Topic :: Office/Business",
   "Topic :: Multimedia :: Graphics"

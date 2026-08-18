@@ -84,7 +84,7 @@ dependency-install-smoke:
 	$(PYTHON) -m pip wheel . --no-deps --wheel-dir $$tmp_dir/wheelhouse >/dev/null; \
 	wheel=$$(find $$tmp_dir/wheelhouse -maxdepth 1 -name 'ad_creative_orchestrator-*.whl' -type f); \
 	test -n "$$wheel"; \
-	wheel_sha=$$(shasum -a 256 "$$wheel" | awk '{print $$1}'); \
+	wheel_sha=$$($(PYTHON) -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$$wheel"); \
 	$(PYTHON) -m venv $$tmp_dir/venv; \
 	$$tmp_dir/venv/bin/python -m pip install --upgrade pip >/dev/null; \
 	$$tmp_dir/venv/bin/python -m pip install "$$wheel" >/dev/null; \

@@ -31,23 +31,13 @@ briefs, concepts, scripts, storyboards, visual analysis, and ordinary revision.
 5. Return a decision-readable answer: conclusion/artifact first, evidence and
    real blockers second, next content action last.
 
-Before returning a creative artifact, silently map every explicit hard constraint
-to the draft and repair violations: locations/sub-locations, cast, duration,
-claims, product exposure, and any ban on invented facts or data. Treat the last
-one literally: do not invent numeric schedules, timestamps, prices, places,
-metrics, testimonials, or product facts as story devices. Only supplied facts and
-clearly labeled production timecodes/runtime/cast may use numbers. Avoid close
-synonyms of prohibited outcomes (for example, sober/clear-headed/low-burden for a
-sobering or health ban), not only the exact banned words. Treat each allowed
-location as physically exact: a living room does not authorize kitchen/fridge
-retrieval; a store entrance does not authorize interior fridges, shelves, or
-checkout. Scene labels cannot cure a mismatch. Make alternatives differ in causal
-mechanism, and revise any idea an adjacent substitute can replace unchanged. For
-named channels, change the hook, pacing, participation, or proof behavior, not
-merely crop or caption. State replacement risk when evidence cannot support
-exclusive ownership. Make no lowest/easiest/safest production claim without a
-visible comparison against every alternative. Do not expose a checklist or create
-records unless needed.
+Before returning creative work, silently map every hard constraint to the draft
+and repair violations. Do not invent facts, data, places, product claims, or
+testimonials; production timecodes and supplied numbers remain allowed. Treat
+locations and bans literally, including close synonyms. Alternatives must differ
+in causal mechanism, and channel adaptations must change behavior rather than
+only crop or caption. Do not claim a route is easiest or safest without a visible
+comparison. Keep this check backstage and create no record unless needed.
 
 For a new project, use:
 
@@ -62,6 +52,15 @@ manually merely to make the process look complete.
 
 Keep durable state proportional to the task. Chat is the primary human decision
 surface; project records preserve evidence but never outrank the creative outcome.
+
+Register materials at their current path; never copy a library merely for ADCO
+ownership. After useful intake, one read-only review may offer organization when
+loose files or exact duplicates exist. Saving replaces one stable plan; moving or
+deleting still needs explicit confirmation. Read `intake_and_facts.md` for details.
+
+For film work, finish a client-readable causal treatment before technical shot
+expansion. Reject attractive frames that break the causal chain, world rules,
+asset truth, or the latest user override.
 
 ## Escalate only at a Delivery Boundary
 

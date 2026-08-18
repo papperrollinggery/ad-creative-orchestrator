@@ -96,8 +96,40 @@ Rules:
 - Reverse supersession links may populate `superseded_by`; never delete the old row.
 - Invalid lifecycle values are diagnostics, not an invitation to drop the row.
 - Fresh `internal_review` and `ready` artifacts are active current-view work; fresh `planned` artifacts are pending work. Neither is legacy debt.
+- Preserve an immutable version by indexing its existing path and hash, not by
+  copying identical bytes into `version_archive`. Create a new physical file only
+  for a genuinely changed version or derivative.
+- Meeting, transfer, and client-review bundles are views or staged transport
+  packages. They reference registered sources when possible and are not permanent
+  second owners of the complete source/reference library.
+- QA previews, contact sheets, text extracts, and temporary renders use one
+  replace-current staging location unless an exact delivery milestone requires
+  an immutable derivative.
 
 Ordinary inactive rows are excluded from current views but preserved in compact history. An inactive row referenced by exact current truth becomes P0/current.
+
+## Current Truth maintenance
+
+Treat `current_truth.md` as a bounded replace-current index, not an event log.
+
+- ADCO owns only the unique snapshot headings from the project template. If an
+  owned heading is duplicated, fail closed rather than choose one silently.
+- The owning authority remains `source_events`/facts/requirements, decisions,
+  version/artifact maps, Gates, Thread receipts, or authorization receipts. The
+  snapshot contains concise pointers and never upgrades authority.
+- Put competing current candidates in the owning authority and summarize the
+  unresolved choice under `Conflicted`; never keep parallel "current" values.
+- Preserve every user-added or dated section byte-for-byte. Do not wholesale
+  rewrite or delete it during migration.
+- Do not append routine events to current truth. Use `events.jsonl` and the
+  owning ledger. Compaction means replacing the fixed snapshot only; historical
+  rows/receipts remain in their authority.
+- `migrate-control-plane --dry-run` reports missing/duplicate owned structure;
+  apply only adds safe missing structure or exact legacy backfills. Ambiguity
+  blocks without selecting an old summary.
+- New user instructions govern the current task, but any change to version,
+  approval, asset, Thread, claim, or delivery state must be written to that
+  authority before chat memory can be treated as durable status.
 
 ## ThreadOps migration
 

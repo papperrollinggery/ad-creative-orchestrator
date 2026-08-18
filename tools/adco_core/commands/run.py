@@ -202,6 +202,13 @@ def execute_lightweight_run(
         # Backward-compatible JSON alias. Human-readable CLI output uses the
         # accurate INTAKE_SUMMARY label.
         "content_answer": intake_summary,
+        "deprecated_fields": {
+            "content_answer": {
+                "replacement": "intake_summary",
+                "removal_target": "0.4.0",
+                "reason": "the value is intake analysis, not a creative answer",
+            }
+        },
         "dashboard": str(dashboard) if dashboard else "",
         "dashboard_render_count": int(dashboard is not None),
         "council_run_count": 0,

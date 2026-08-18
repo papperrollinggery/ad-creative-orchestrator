@@ -10,6 +10,7 @@ import csv
 import hashlib
 import html
 import json
+import os
 import re
 import tempfile
 from dataclasses import dataclass
@@ -1272,6 +1273,23 @@ def validate_output_path(path: Path, test_output: bool) -> None:
             raise VisualizationError("production output must be inside .codex/visualizations")
 
 
+def atomic_write_preview(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_value = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_value)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def write_fragment(
     document: dict[str, Any], output: Path, test_output: bool, force: bool, project_root: Path | None = None
 ) -> None:
@@ -1291,11 +1309,10 @@ def write_fragment(
             raise VisualizationError("; ".join(physical_errors))
     elif previews:
         raise VisualizationError("preview render requires --project-root")
-    output.parent.mkdir(parents=True, exist_ok=True)
     fragment = render_fragment(document, verified, project_root)
     if len(fragment.encode("utf-8")) >= 2_000_000:
         raise VisualizationError("rendered fragment exceeds the 2 MB OpenAI Visualization limit; use a registered preview derivative")
-    output.write_text(fragment, encoding="utf-8")
+    atomic_write_preview(output, fragment)
 
 
 def render_fallback(document: dict[str, Any]) -> str:
@@ -1525,6 +1542,18 @@ def self_test() -> list[str]:
                     failures.append(f"{filename}: rendered forbidden token {forbidden}")
             if "sendFollowUpMessage" not in text or "请先确认我看到的是最新内容" not in text:
                 failures.append(f"{filename}: missing follow-up/revalidation boundary")
+            try:
+                write_fragment(
+                    document,
+                    output,
+                    test_output=True,
+                    force=True,
+                    project_root=SKILL_ROOT if preview_items else None,
+                )
+            except VisualizationError as exc:
+                failures.append(f"{filename}: replace-current render failed: {exc}")
+            if list(output.parent.glob(f".{output.name}.*.tmp")):
+                failures.append(f"{filename}: atomic render left a temporary file")
             visible = re.sub(r"<script[\s\S]*?</script>", "", text, flags=re.IGNORECASE)
             visible = re.sub(r"<style[\s\S]*?</style>", "", visible, flags=re.IGNORECASE).lower()
             visible = re.sub(r"<[^>]+>", " ", visible)
@@ -2061,11 +2090,14 @@ def main() -> int:
                     raise VisualizationError("production confirmation requires --project-root for physical verification")
                 if output.exists() and not args.force:
                     raise VisualizationError(f"refusing to overwrite existing output: {output}")
-                output.parent.mkdir(parents=True, exist_ok=True)
-                output.write_text(render_confirmation(receipt, receipt_path, project_root), encoding="utf-8")
+                atomic_write_preview(
+                    output,
+                    render_confirmation(receipt, receipt_path, project_root),
+                )
                 print("ADCO_CHAT_VISUALIZATION_CONFIRMATION: PASS")
-                print(output.resolve())
-                print(f'::codex-inline-vis{{file="{output.name}"}}')
+                print(f"PREVIEW={output.resolve()}")
+                print("USER_VISIBLE=UNVERIFIED")
+                print("NEXT=return the complete text fallback unless native @Visualize is available and visibly rendered")
         except VisualizationError as exc:
             print(f"ADCO_CHAT_VISUALIZATION_WRITEBACK: FAIL\n- {exc}")
             return 1
@@ -2108,8 +2140,9 @@ def main() -> int:
             project_root = Path(args.project_root) if args.project_root else None
             write_fragment(document, output, args.test_output, args.force, project_root)
             print("ADCO_CHAT_VISUALIZATION_RENDER: PASS")
-            print(output.resolve())
-            print(f'::codex-inline-vis{{file="{output.name}"}}')
+            print(f"PREVIEW={output.resolve()}")
+            print("USER_VISIBLE=UNVERIFIED")
+            print("NEXT=return the complete text fallback unless native @Visualize is available and visibly rendered")
     except VisualizationError as exc:
         print(f"ADCO_CHAT_VISUALIZATION: FAIL\n- {exc}")
         return 1

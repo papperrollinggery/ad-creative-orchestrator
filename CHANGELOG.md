@@ -2,7 +2,13 @@
 
 ## Unreleased
 
-- Bumped the local candidate to 0.3.3 and made the durable creative chain fail closed: a self-verifying brief manifest, typed user/client requirement and exact-candidate constraint confirmation, directory-descriptor-anchored atomic I/O that resists symlink-swap races, a receipt-bound final current pointer, and review-time verification of the full version/current/receipt/brief/derived-artifact chain.
+- Added a read-only storage lifecycle: `run` now surfaces one organization question for loose materials or exact duplicates; `organize-plan`, `dedupe-audit`, and `cleanup-plan` make no project writes by default, stream-hash large files, account for hardlinks, protect FinalDelivery, and use one replace-in-place plan only with explicit `--save`.
+- Replaced empty film placeholders with causal treatment, shot, world-rule, capture-boundary, and Plan B contracts; Film Quality Gate now blocks technically formatted but substantively empty director/production packets.
+- Corrected the OpenAI Visualizations boundary: local HTML and `.codex/visualizations` are offline preview/cache only, the renderer no longer emits a private mount directive, native availability must be feature-detected, and every unverified path returns a complete Markdown/table/Mermaid fallback.
+- Bumped the local candidate to 0.3.3 and made the durable creative chain fail closed: a self-verifying brief manifest, explicit local-only requirement/constraint assertions with capture/audit/revocation commands, directory-descriptor-anchored atomic I/O that resists symlink-swap races, and review-time verification of the full pointer/generation/receipt/brief/derived-artifact chain. Local assertions state `identity_assurance=NONE` and never claim user/client identity or approval.
+- Made brief snapshots read every mutable input once and bind exact captured bytes plus evidence record/content hashes; stale evidence text hashes, symlink swaps, and later reopens now fail closed or remain outside the captured snapshot.
+- Replaced shared candidate/receipt/directions/matrix writes with immutable generation directories and one atomic `current_generation.json` switch, so pointer-write failure leaves every old machine and human current view coherent.
+- Expanded prohibited-claim checks to every persisted claim-bearing narrative field and the product-exposure description, renamed the persistent Critic artifact to a deterministic-lint receipt, declared the POSIX runtime boundary, and added an explicit removal target for the deprecated `content_answer` JSON alias.
 - Expanded prohibited-claim taxonomy and negation tests for clear-headed/sober/low-burden/wellness socializing euphemisms, and made physical-product exposure require an explicit local product/action pair instead of treating the English modal verb `can` as packaging.
 - Renamed the human-facing default result to `INTAKE_SUMMARY` while retaining a JSON compatibility alias, so evidence intake is no longer presented as creative reasoning; release checks now require a real wheel and rerun the installed-package suite with declared dependencies against one exact wheel hash.
 - Added a silent pre-answer creative constraint pass and pre-write fail-closed durable candidate checks for runtime, cast, location allowlists, required/prohibited physical product exposure, and prohibited claims; unconfirmed or unsupported hard requirements now require review, timeline beats and single-person shots no longer masquerade as total runtime/cast, and evidence references report provenance rather than semantic support.
@@ -23,12 +29,7 @@
 - Bound real-candidate review to ADCO's current project/version, artifact registry, source event, human/client authorization, and exact-asset channel checks; illustrative fixtures now use a separate fail-closed path and cannot certify production claims.
 - Fixed confirmation echoes to show recorded choice, preserved content, required rechecks, and next step explicitly, and bound writeback validation to the action actually selected instead of the first action in the surface.
 - Make chat-native asset review distinguish illustrative placeholders from real candidates, derive user-visible usability from source, authorization, and channel-fit status, and block misleading placeholder approval paths.
-- Fixed Codex chat delivery so generated ADCO fragments are mounted with the native `::codex-inline-vis` directive instead of being left as invisible local HTML files.
-- Aligned inline surfaces with the host Visualizations design system, added real 736/320 light/dark keyboard and follow-up browser audits, and separated host-visible acceptance from file/browser checks.
-- Added task-based routing across Mermaid, Codex inline Visualizations, Creative Production image Widgets, optional Data Analytics evidence, and fullscreen MCP Apps without turning ADCO into a dashboard.
-- Added an OpenAI Visualizations-first chat interaction contract for ADCO status, P0-P8 logic, blocking decisions, option comparison, exact asset/PPT review, feedback impact, and confirmation echo.
-- Added a versioned, hash-bound visualization spec/writeback harness with thread-scoped fragments, human-readable follow-up actions, complete Markdown/table/Mermaid fallback, responsive accessibility checks, and fail-closed source/authority validation.
-- Documented how optional Data Analytics evidence and file preview/annotations complement Visualizations without expanding or duplicating the existing local dashboard.
+- Retained the versioned visualization spec, hostile-input verifier, accessibility checks, and source/authority validation as an offline QA harness rather than claiming product-native rendering.
 
 ## 0.3.2 - 2026-07-13
 

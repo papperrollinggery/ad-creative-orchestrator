@@ -49,6 +49,42 @@ def test_present_assets_do_not_become_false_gaps() -> None:
         assert gap_templates([], source.read_text(encoding="utf-8")) == []
 
 
+def test_evidence_claim_client_and_asset_authorization_axes_stay_independent() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-facts-independent-axes-") as raw:
+        project = Path(raw)
+        ensure_delivery_project(project)
+        source = project / "brief.md"
+        source.write_text(
+            "客户已提供产品图。客户要求宣传续航 10 小时，但宣称措辞、法务审批和素材客户可见授权仍待分别确认。",
+            encoding="utf-8",
+        )
+        result = run_evidence_intake(project, [_row("SRC-AXES-001", source, project)])
+        facts = {fact.fact_key: fact for fact in result.facts}
+        assert facts["asset.product_images"].state == "present"
+
+        _, requirements = read_csv_rows(
+            project / "AD-creative/orchestrator/requirements.csv"
+        )
+        assert requirements
+        assert all(not row.get("confirmation_ref", "") for row in requirements)
+        assert all(not row.get("confirmed_by", "") for row in requirements)
+        _, authorizations = read_csv_rows(
+            project / "AD-creative/visual_assets/asset_authorizations.csv"
+        )
+        _, decisions = read_csv_rows(
+            project / "AD-creative/orchestrator/decisions.csv"
+        )
+        assert authorizations == []
+        assert decisions == []
+        truth = (
+            project / "AD-creative/orchestrator/current_truth.md"
+        ).read_text(encoding="utf-8")
+        assert "evidence_source_authority" in truth
+        assert "claim_wording_authority" in truth
+        assert "client_legal_approval_authority" in truth
+        assert "asset_authorization_authority" in truth
+
+
 def test_conflict_and_blocking_unknown_create_evidence_bound_gaps() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-facts-conflict-") as raw:
         project = Path(raw)
@@ -218,6 +254,7 @@ def test_only_uses_word_boundaries_in_english_requirements() -> None:
 
 def main() -> int:
     test_present_assets_do_not_become_false_gaps()
+    test_evidence_claim_client_and_asset_authorization_axes_stay_independent()
     test_conflict_and_blocking_unknown_create_evidence_bound_gaps()
     test_missing_delivery_assets_are_deferred_on_content_and_block_delivery()
     test_only_uses_word_boundaries_in_english_requirements()

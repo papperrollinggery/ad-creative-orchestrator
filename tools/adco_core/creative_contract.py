@@ -8,19 +8,23 @@ import hashlib
 import io
 import json
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from .facts import FACT_INVENTORY_REL, load_fact_inventory
-from .ingestion import EVIDENCE_REL, load_evidence_chunks
+from .facts import FACT_INVENTORY_REL, load_fact_inventory, parse_fact_inventory_text
+from .ingestion import EVIDENCE_REL, load_evidence_chunks, parse_evidence_chunks_text
 from .safe_write import (
     atomic_write_bytes,
     atomic_write_text,
+    project_advisory_lock,
+    read_optional_project_bytes,
+    read_optional_project_text,
     read_project_bytes,
     read_project_text,
-    safe_project_path,
+    unlink_project_file,
 )
 
 
@@ -31,17 +35,20 @@ CANDIDATE_SCHEMA_REL = CREATIVE_ROOT / "creative_candidate.schema.json"
 GENERATION_REQUEST_REL = CREATIVE_ROOT / "creative_generation_request.json"
 OPEN_GAPS_REL = CREATIVE_ROOT / "creative_open_evidence_gaps.json"
 BRIEF_MANIFEST_REL = CREATIVE_ROOT / "creative_brief_manifest.json"
-CURRENT_CANDIDATE_REL = CREATIVE_ROOT / "current_candidate.json"
-CANDIDATE_IMPORT_RECEIPT_REL = CREATIVE_ROOT / "candidate_import_receipt.json"
-CRITIC_RECEIPT_REL = CREATIVE_ROOT / "creative_critic_receipt.json"
+CURRENT_GENERATION_REL = CREATIVE_ROOT / "current_generation.json"
+GENERATIONS_REL = CREATIVE_ROOT / "generations"
+LEGACY_CURRENT_CANDIDATE_REL = CREATIVE_ROOT / "current_candidate.json"
+DETERMINISTIC_LINT_RECEIPT_REL = CREATIVE_ROOT / "creative_deterministic_lint_receipt.json"
 CONSTRAINT_RESOLUTIONS_REL = CREATIVE_ROOT / "constraint_resolutions.json"
-CREATIVE_DIRECTIONS_REL = CREATIVE_ROOT / "creative_directions.md"
-OPTION_MATRIX_REL = CREATIVE_ROOT / "option_matrix.csv"
 REQUIREMENTS_REL = Path("AD-creative/orchestrator/requirements.csv")
 GAPS_REL = Path("AD-creative/orchestrator/gaps.csv")
 SOURCE_EVENTS_REL = Path("AD-creative/orchestrator/source_events.csv")
 REQUIREMENT_CONFIRMATIONS_REL = Path(
     "AD-creative/orchestrator/requirement_confirmations.json"
+)
+LOCAL_ASSERTIONS_REL = Path("AD-creative/orchestrator/local_assertions")
+LOCAL_ASSERTION_REVOCATIONS_REL = Path(
+    "AD-creative/orchestrator/local_assertion_revocations.json"
 )
 REQUIREMENT_CONFIRMATION_FIELDS = [
     "evidence_ref",
@@ -49,9 +56,8 @@ REQUIREMENT_CONFIRMATION_FIELDS = [
     "confirmed_by",
     "confirmed_at",
 ]
-CONFIRMATION_AUTHORITY: dict[str, tuple[str, str]] = {
-    "user_confirmation": ("user", "user_confirmed"),
-    "client_confirmation": ("client", "client_confirmed"),
+LOCAL_ASSERTION_CLASS: dict[str, tuple[str, str]] = {
+    "local_operator_assertion": ("local_operator", "local_asserted"),
 }
 REQUIREMENT_CONFIRMATION_SEMANTICS = {"creative_requirement_confirmation"}
 CONSTRAINT_CONFIRMATION_SEMANTICS = {
@@ -59,7 +65,7 @@ CONSTRAINT_CONFIRMATION_SEMANTICS = {
     "rejected": "creative_constraint_rejection",
 }
 POST_BRIEF_CONTROL_SEMANTICS = set(CONSTRAINT_CONFIRMATION_SEMANTICS.values())
-AUTHORITY_EVENT_SEMANTICS = (
+LOCAL_ASSERTION_SEMANTICS = (
     REQUIREMENT_CONFIRMATION_SEMANTICS | POST_BRIEF_CONTROL_SEMANTICS
 )
 BRIEF_ARTIFACT_RELS = (
@@ -94,6 +100,12 @@ CREATIVE_STRUCTURE_FIELDS = [
     "product_exposure",
     "claims",
 ]
+
+CLAIM_BEARING_FIELDS = tuple(
+    field
+    for field in CREATIVE_NARRATIVE_FIELDS
+    if field not in {"direction_id", "evidence_refs"}
+)
 
 CREATIVE_DIRECTION_FIELDS = CREATIVE_NARRATIVE_FIELDS + CREATIVE_STRUCTURE_FIELDS
 
@@ -211,6 +223,13 @@ class ConstraintResolutionResult:
     resolution: dict[str, object]
 
 
+@dataclass
+class LocalAssertionResult:
+    assertion_ref: str
+    evidence_path: Path
+    record: dict[str, object]
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
@@ -239,13 +258,14 @@ def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _read_csv(project: Path, relative: Path) -> list[dict[str, str]]:
-    path = project / relative
-    if not path.exists():
-        return []
-    text = read_project_text(project, path)
+def _parse_csv_text(text: str) -> list[dict[str, str]]:
     with io.StringIO(text, newline="") as handle:
         return [dict(row) for row in csv.DictReader(handle)]
+
+
+def _read_csv(project: Path, relative: Path) -> list[dict[str, str]]:
+    text = read_optional_project_text(project, project / relative)
+    return [] if text is None else _parse_csv_text(text)
 
 
 def _csv_bytes(fields: list[str], rows: Iterable[dict[str, object]]) -> bytes:
@@ -269,39 +289,68 @@ def _read_json(project: Path, path: Path) -> object:
 
 
 def _optional_json_list(project: Path, relative: Path) -> list[dict[str, object]]:
-    path = project / relative
-    if not path.exists():
+    text = read_optional_project_text(project, project / relative)
+    if text is None:
         return []
-    payload = _read_json(project, path)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid project JSON artifact {relative}: {exc}") from exc
     if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
         raise ValueError(f"{relative.as_posix()} must be a JSON array of objects")
     return [dict(item) for item in payload]
 
 
-def _validate_snapshot_inputs(project: Path) -> None:
-    for relative in (
+def _snapshot_input_bytes(project: Path) -> dict[Path, bytes | None]:
+    """Capture every mutable brief input exactly once through anchored I/O."""
+    return {
+        relative: read_optional_project_bytes(project, project / relative)
+        for relative in (
         EVIDENCE_REL,
         FACT_INVENTORY_REL,
         REQUIREMENTS_REL,
         GAPS_REL,
         SOURCE_EVENTS_REL,
         REQUIREMENT_CONFIRMATIONS_REL,
-    ):
-        path = project / relative
-        if path.exists() or path.is_symlink():
-            safe_project_path(project, path, require_file=True)
+        LOCAL_ASSERTION_REVOCATIONS_REL,
+        )
+    }
+
+
+def _decode_snapshot_input(
+    captured: dict[Path, bytes | None], relative: Path
+) -> str | None:
+    data = captured[relative]
+    if data is None:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"snapshot input must be UTF-8: {relative.as_posix()}"
+        ) from exc
 
 
 def _current_snapshot(project: Path) -> dict[str, object]:
-    _validate_snapshot_inputs(project)
-    all_source_events = _read_csv(project, SOURCE_EVENTS_REL)
-    authority_event_ids = {
+    captured = _snapshot_input_bytes(project)
+    source_events_text = _decode_snapshot_input(captured, SOURCE_EVENTS_REL)
+    evidence_text = _decode_snapshot_input(captured, EVIDENCE_REL)
+    facts_text = _decode_snapshot_input(captured, FACT_INVENTORY_REL)
+    requirements_text = _decode_snapshot_input(captured, REQUIREMENTS_REL)
+    gaps_text = _decode_snapshot_input(captured, GAPS_REL)
+    confirmations_text = _decode_snapshot_input(captured, REQUIREMENT_CONFIRMATIONS_REL)
+    revocations_text = _decode_snapshot_input(captured, LOCAL_ASSERTION_REVOCATIONS_REL)
+
+    all_source_events = (
+        [] if source_events_text is None else _parse_csv_text(source_events_text)
+    )
+    assertion_event_ids = {
         str(item.get("source_event_id", "")).strip()
         for item in all_source_events
         if str(item.get("declared_semantics", "")).strip().casefold()
-        in AUTHORITY_EVENT_SEMANTICS
+        in LOCAL_ASSERTION_SEMANTICS
         and str(item.get("source_type", "")).strip().casefold()
-        in CONFIRMATION_AUTHORITY
+        in LOCAL_ASSERTION_CLASS
     }
     post_brief_control_ids = {
         str(item.get("source_event_id", "")).strip()
@@ -309,46 +358,106 @@ def _current_snapshot(project: Path) -> dict[str, object]:
         if str(item.get("declared_semantics", "")).strip().casefold()
         in POST_BRIEF_CONTROL_SEMANTICS
         and str(item.get("source_type", "")).strip().casefold()
-        in CONFIRMATION_AUTHORITY
+        in LOCAL_ASSERTION_CLASS
     }
-    all_chunks = load_evidence_chunks(project)
-    authority_event_chunk_ids = {
+    all_chunks = (
+        [] if evidence_text is None else parse_evidence_chunks_text(evidence_text)
+    )
+    assertion_event_chunk_ids = {
         item.chunk_id
         for item in all_chunks
-        if item.source_event_id in authority_event_ids
+        if item.source_event_id in assertion_event_ids
     }
     chunks = [
         item
         for item in all_chunks
-        if item.source_event_id not in authority_event_ids
+        if item.source_event_id not in assertion_event_ids
     ]
     facts = [
         item
-        for item in load_fact_inventory(project)
-        if not set(item.evidence_refs).intersection(authority_event_chunk_ids)
+        for item in (
+            [] if facts_text is None else parse_fact_inventory_text(facts_text)
+        )
+        if not set(item.evidence_refs).intersection(assertion_event_chunk_ids)
     ]
     requirements = [
         item
-        for item in _read_csv(project, REQUIREMENTS_REL)
+        for item in (
+            [] if requirements_text is None else _parse_csv_text(requirements_text)
+        )
         if str(item.get("source_event_id", "")).strip()
-        not in authority_event_ids
+        not in assertion_event_ids
     ]
-    gaps = _read_csv(project, GAPS_REL)
+    gaps = [] if gaps_text is None else _parse_csv_text(gaps_text)
     source_events = [
         _snapshot_source_event(project, item)
         for item in all_source_events
         if str(item.get("source_event_id", "")).strip()
         not in post_brief_control_ids
     ]
-    confirmations = _optional_json_list(project, REQUIREMENT_CONFIRMATIONS_REL)
+    if confirmations_text is None:
+        confirmations: list[dict[str, object]] = []
+    else:
+        try:
+            raw_confirmations = json.loads(confirmations_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"invalid project JSON artifact {REQUIREMENT_CONFIRMATIONS_REL}: {exc}"
+            ) from exc
+        if not isinstance(raw_confirmations, list) or not all(
+            isinstance(item, dict) for item in raw_confirmations
+        ):
+            raise ValueError(
+                f"{REQUIREMENT_CONFIRMATIONS_REL.as_posix()} must be a JSON array of objects"
+            )
+        confirmations = [dict(item) for item in raw_confirmations]
+    if revocations_text is None:
+        revocations: list[dict[str, object]] = []
+    else:
+        try:
+            raw_revocations = json.loads(revocations_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"invalid project JSON artifact {LOCAL_ASSERTION_REVOCATIONS_REL}: {exc}"
+            ) from exc
+        if not isinstance(raw_revocations, list) or not all(
+            isinstance(item, dict) for item in raw_revocations
+        ):
+            raise ValueError(
+                f"{LOCAL_ASSERTION_REVOCATIONS_REL.as_posix()} must be a JSON array of objects"
+            )
+        revocations = [dict(item) for item in raw_revocations]
+    input_files: dict[str, dict[str, object]] = {}
+    for relative, data in captured.items():
+        if data is None:
+            input_files[relative.as_posix()] = {"status": "missing"}
+            continue
+        if relative == SOURCE_EVENTS_REL:
+            # Post-brief control assertions are intentionally outside the brief
+            # truth set. Bind the exact canonical records that remain after that
+            # explicit filter, not unrelated rows added later.
+            bound_bytes = canonical_json_bytes(source_events)
+            binding = "canonical_filtered_records"
+        else:
+            bound_bytes = data
+            binding = "exact_file_bytes"
+        input_files[relative.as_posix()] = {
+            "status": "captured",
+            "binding": binding,
+            "sha256": hashlib.sha256(bound_bytes).hexdigest(),
+            "byte_length": len(bound_bytes),
+        }
     payload: dict[str, object] = {
-        "snapshot_version": "1.1",
+        "snapshot_version": "1.2",
+        "input_files": input_files,
         "evidence": [
             {
                 "chunk_id": item.chunk_id,
                 "source_event_id": item.source_event_id,
                 "source_path": item.source_path,
                 "sha256": item.sha256,
+                "content_sha256": hashlib.sha256(item.text.encode("utf-8")).hexdigest(),
+                "record_sha256": payload_sha256(item.as_dict()),
                 "inspection_status": item.inspection_status,
             }
             for item in chunks
@@ -358,6 +467,7 @@ def _current_snapshot(project: Path) -> dict[str, object]:
         "gaps": gaps,
         "source_events": source_events,
         "requirement_confirmations": confirmations,
+        "local_assertion_revocations": revocations,
     }
     payload["brief_snapshot_sha256"] = payload_sha256(payload)
     return payload
@@ -646,6 +756,347 @@ def _source_event_sha256(source_event: dict[str, object]) -> str:
     )
 
 
+def _validate_local_assertion_binding_shape(
+    semantics: str,
+    requirements: set[str],
+    artifacts: set[str],
+) -> None:
+    if semantics in REQUIREMENT_CONFIRMATION_SEMANTICS:
+        if len(requirements) != 1:
+            raise ValueError(
+                "requirement confirmation assertion needs exactly one --requirement-id"
+            )
+        if artifacts:
+            raise ValueError(
+                "requirement confirmation assertion must not include --artifact-binding"
+            )
+        return
+    if semantics in POST_BRIEF_CONTROL_SEMANTICS:
+        if len(requirements) != 1:
+            raise ValueError(
+                "constraint assertion needs exactly one --requirement-id"
+            )
+        if not artifacts:
+            raise ValueError("constraint assertion needs exact --artifact-binding values")
+        bindings: dict[str, str] = {}
+        for artifact in artifacts:
+            key, separator, value = artifact.partition(":")
+            if not separator or not key or not value or key in bindings:
+                raise ValueError(
+                    "constraint assertion needs one non-empty value for every exact artifact binding"
+                )
+            bindings[key] = value
+        expected = {
+            "candidate_payload_sha256",
+            "brief_snapshot_sha256",
+            "direction_id",
+            "constraint_id",
+        }
+        if set(bindings) != expected:
+            raise ValueError(
+                "constraint assertion needs exactly candidate_payload_sha256, "
+                "brief_snapshot_sha256, direction_id, and constraint_id bindings"
+            )
+        for key in ("candidate_payload_sha256", "brief_snapshot_sha256"):
+            if re.fullmatch(r"[0-9a-f]{64}", bindings[key], re.IGNORECASE) is None:
+                raise ValueError(f"constraint assertion {key} must be a SHA-256 digest")
+
+
+def _validated_assertion_bindings(values: Iterable[str], label: str) -> set[str]:
+    result: set[str] = set()
+    for raw in values:
+        value = raw.strip()
+        if not value:
+            continue
+        if re.search(r"[;\r\n]", value):
+            raise ValueError(f"{label} must not contain semicolon or newline delimiters")
+        result.add(value)
+    return result
+
+
+def record_local_operator_assertion(
+    project: Path,
+    *,
+    semantics: str,
+    requirement_ids: Iterable[str] = (),
+    artifact_bindings: Iterable[str] = (),
+    note: str,
+) -> LocalAssertionResult:
+    """Create an auditable local assertion without claiming human identity."""
+    normalized_semantics = semantics.strip().casefold()
+    if normalized_semantics not in LOCAL_ASSERTION_SEMANTICS:
+        raise ValueError(
+            "local assertion semantics must be one of: "
+            + ", ".join(sorted(LOCAL_ASSERTION_SEMANTICS))
+        )
+    requirement_set = _validated_assertion_bindings(
+        requirement_ids, "requirement binding"
+    )
+    artifact_set = _validated_assertion_bindings(
+        artifact_bindings, "artifact binding"
+    )
+    _validate_local_assertion_binding_shape(
+        normalized_semantics,
+        requirement_set,
+        artifact_set,
+    )
+    requirements = sorted(requirement_set)
+    artifacts = sorted(artifact_set)
+    if not note.strip():
+        raise ValueError("local assertion note must not be empty")
+
+    with project_advisory_lock(project, "local-operator-assertions"):
+        return _record_local_operator_assertion_locked(
+            project,
+            normalized_semantics=normalized_semantics,
+            requirements=requirements,
+            artifacts=artifacts,
+            note=note.strip(),
+        )
+
+
+def _record_local_operator_assertion_locked(
+    project: Path,
+    *,
+    normalized_semantics: str,
+    requirements: list[str],
+    artifacts: list[str],
+    note: str,
+) -> LocalAssertionResult:
+
+    source_text = read_project_text(project, project / SOURCE_EVENTS_REL)
+    with io.StringIO(source_text, newline="") as handle:
+        reader = csv.DictReader(handle)
+        fields = list(reader.fieldnames or [])
+        rows = [dict(row) for row in reader]
+    required_fields = {
+        "source_event_id",
+        "received_at",
+        "source_owner",
+        "source_type",
+        "declared_semantics",
+        "file_paths",
+        "trust_level",
+        "affects_requirements",
+        "affects_artifacts",
+    }
+    missing = sorted(required_fields - set(fields))
+    if missing:
+        raise ValueError("source_events.csv missing fields: " + ", ".join(missing))
+    event_id = (
+        "ASSERT-"
+        + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        + "-"
+        + secrets.token_hex(6)
+    )
+    evidence_path = project / LOCAL_ASSERTIONS_REL / f"{event_id}.json"
+    assertion_ref = f"local_operator_assertion:{event_id}"
+    created_at = now_iso()
+    evidence = {
+        "protocol_id": "adco.local-operator-assertion",
+        "assertion_version": "1.0",
+        "assertion_ref": assertion_ref,
+        "source_event_id": event_id,
+        "declared_semantics": normalized_semantics,
+        "affects_requirements": requirements,
+        "affects_artifacts": artifacts,
+        "note": note,
+        "recorded_at": created_at,
+        "identity_assurance": "NONE",
+        "authority_scope": "local_project_workflow_only",
+        "disclaimer": (
+            "Recorded by the local project operator; this is not verified user/client "
+            "identity, consent, approval, or send authorization."
+        ),
+    }
+    atomic_write_bytes(project, evidence_path, persisted_json_bytes(evidence))
+    row = {field: "" for field in fields}
+    row.update(
+        {
+            "source_event_id": event_id,
+            "received_at": created_at,
+            "source_owner": "local_operator",
+            "source_type": "local_operator_assertion",
+            "declared_semantics": normalized_semantics,
+            "file_paths": evidence_path.relative_to(project).as_posix(),
+            "raw_summary": note,
+            "trust_level": "local_asserted",
+            "affects_requirements": ";".join(requirements),
+            "affects_artifacts": ";".join(artifacts),
+            "notes": "Local workflow assertion only; no user/client identity assurance.",
+        }
+    )
+    rows.append(row)
+    try:
+        atomic_write_bytes(project, project / SOURCE_EVENTS_REL, _csv_bytes(fields, rows))
+    except BaseException:
+        unlink_project_file(project, evidence_path, missing_ok=True)
+        raise
+    return LocalAssertionResult(
+        assertion_ref=assertion_ref,
+        evidence_path=evidence_path,
+        record=evidence,
+    )
+
+
+def revoke_local_operator_assertion(
+    project: Path, assertion_ref: str, *, reason: str
+) -> dict[str, object]:
+    match = re.fullmatch(
+        r"local_operator_assertion:(?P<event_id>[A-Za-z0-9][A-Za-z0-9._-]{0,127})",
+        assertion_ref.strip(),
+    )
+    if match is None:
+        raise ValueError("assertion_ref must be local_operator_assertion:<source_event_id>")
+    if not reason.strip():
+        raise ValueError("revocation reason must not be empty")
+    with project_advisory_lock(project, "local-operator-assertions"):
+        return _revoke_local_operator_assertion_locked(
+            project,
+            assertion_ref=assertion_ref.strip(),
+            event_id=match.group("event_id"),
+            reason=reason.strip(),
+        )
+
+
+def _revoke_local_operator_assertion_locked(
+    project: Path,
+    *,
+    assertion_ref: str,
+    event_id: str,
+    reason: str,
+) -> dict[str, object]:
+    matches = [
+        row
+        for row in _read_csv(project, SOURCE_EVENTS_REL)
+        if str(row.get("source_event_id", "")).strip() == event_id
+        and str(row.get("source_type", "")).strip().casefold()
+        == "local_operator_assertion"
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"local operator assertion does not exist: {event_id}")
+    revocations = _optional_json_list(project, LOCAL_ASSERTION_REVOCATIONS_REL)
+    existing = next(
+        (
+            item
+            for item in revocations
+            if str(item.get("source_event_id", "")).strip() == event_id
+        ),
+        None,
+    )
+    if existing is not None:
+        return existing
+    record: dict[str, object] = {
+        "protocol_id": "adco.local-operator-assertion-revocation",
+        "revocation_version": "1.0",
+        "assertion_ref": assertion_ref,
+        "source_event_id": event_id,
+        "revoked_at": now_iso(),
+        "reason": reason,
+    }
+    revocations.append(record)
+    revocations.sort(key=lambda item: str(item.get("source_event_id", "")))
+    _write_json(project, project / LOCAL_ASSERTION_REVOCATIONS_REL, revocations)
+    return record
+
+
+def audit_local_operator_assertions(project: Path) -> list[dict[str, object]]:
+    """Return verifiable active/revoked/invalid state for every local assertion."""
+    revocations = {
+        str(item.get("source_event_id", "")).strip(): item
+        for item in _optional_json_list(project, LOCAL_ASSERTION_REVOCATIONS_REL)
+    }
+    sources = [
+        source
+        for source in _read_csv(project, SOURCE_EVENTS_REL)
+        if str(source.get("source_type", "")).strip().casefold()
+        == "local_operator_assertion"
+    ]
+    event_id_counts: dict[str, int] = {}
+    for source in sources:
+        event_id = str(source.get("source_event_id", "")).strip()
+        event_id_counts[event_id] = event_id_counts.get(event_id, 0) + 1
+    results: list[dict[str, object]] = []
+    for source in sources:
+        event_id = str(source.get("source_event_id", "")).strip()
+        assertion_ref = f"local_operator_assertion:{event_id}"
+        semantics = str(source.get("declared_semantics", "")).strip().casefold()
+        status = "REVOKED" if event_id in revocations else "ACTIVE"
+        error = ""
+        try:
+            if not event_id or event_id_counts[event_id] != 1:
+                raise ValueError(
+                    "local assertion source_event_id must be non-empty and unique: "
+                    + (event_id or "<missing>")
+                )
+            raw_path = str(source.get("file_paths", "")).strip()
+            expected_path = LOCAL_ASSERTIONS_REL / f"{event_id}.json"
+            if Path(raw_path) != expected_path or Path(raw_path).as_posix() != raw_path:
+                raise ValueError(
+                    f"local assertion evidence path must be {expected_path.as_posix()}"
+                )
+            if semantics not in LOCAL_ASSERTION_SEMANTICS:
+                raise ValueError(f"invalid local assertion semantics: {semantics or 'missing'}")
+            requirement_bindings = _binding_tokens(
+                source.get("affects_requirements", "")
+            )
+            artifact_bindings = _binding_tokens(source.get("affects_artifacts", ""))
+            _validate_local_assertion_binding_shape(
+                semantics,
+                requirement_bindings,
+                artifact_bindings,
+            )
+            if str(source.get("source_owner", "")).strip().casefold() != "local_operator":
+                raise ValueError("local assertion source_owner must be local_operator")
+            if str(source.get("trust_level", "")).strip().casefold() != "local_asserted":
+                raise ValueError("local assertion trust_level must be local_asserted")
+            evidence_bytes = read_project_bytes(project, project / expected_path)
+            evidence = json.loads(evidence_bytes)
+            expected_evidence = {
+                "protocol_id": "adco.local-operator-assertion",
+                "assertion_version": "1.0",
+                "assertion_ref": assertion_ref,
+                "source_event_id": event_id,
+                "declared_semantics": semantics,
+                "affects_requirements": sorted(
+                    requirement_bindings
+                ),
+                "affects_artifacts": sorted(
+                    artifact_bindings
+                ),
+                "recorded_at": str(source.get("received_at", "")).strip(),
+                "identity_assurance": "NONE",
+                "authority_scope": "local_project_workflow_only",
+            }
+            if not isinstance(evidence, dict):
+                raise ValueError("local assertion evidence must be a JSON object")
+            for key, expected_value in expected_evidence.items():
+                if evidence.get(key) != expected_value:
+                    raise ValueError(f"local assertion evidence {key} mismatch")
+            if not str(evidence.get("note", "")).strip():
+                raise ValueError("local assertion evidence note is empty")
+            evidence_sha = hashlib.sha256(evidence_bytes).hexdigest()
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            status = "INVALID"
+            error = str(exc)
+            evidence_sha = ""
+        results.append(
+            {
+                "assertion_ref": assertion_ref,
+                "source_event_id": event_id,
+                "status": status,
+                "declared_semantics": semantics,
+                "affects_requirements": sorted(_binding_tokens(source.get("affects_requirements", ""))),
+                "affects_artifacts": sorted(_binding_tokens(source.get("affects_artifacts", ""))),
+                "evidence_sha256": evidence_sha,
+                "identity_assurance": "NONE",
+                "authority_scope": "local_project_workflow_only",
+                "error": error,
+            }
+        )
+    return sorted(results, key=lambda item: str(item["source_event_id"]))
+
+
 def _snapshot_source_event(
     project: Path, source_event: dict[str, object]
 ) -> dict[str, object]:
@@ -655,7 +1106,7 @@ def _snapshot_source_event(
     source_type = str(source_event.get("source_type", "")).strip().casefold()
     if (
         semantics not in REQUIREMENT_CONFIRMATION_SEMANTICS
-        or source_type not in CONFIRMATION_AUTHORITY
+        or source_type not in LOCAL_ASSERTION_CLASS
     ):
         return snapshot_event
     raw_path = str(source_event.get("file_paths", "")).strip()
@@ -682,25 +1133,30 @@ def _typed_confirmation_event(
     required_requirements: set[str],
     required_artifacts: set[str],
 ) -> dict[str, str]:
-    """Validate one authority event and its immutable project-local evidence.
+    """Validate one auditable local assertion and its project-local evidence.
 
-    A display name is never accepted as authority. The reference must resolve
-    to one typed user/client confirmation event whose owner, trust class,
-    semantics, and exact target bindings all agree.
+    This is deliberately not a user/client identity or authorization claim.
+    It records only what the operator of this local project asserted.
     """
     match = re.fullmatch(
-        r"(?P<kind>user_confirmation|client_confirmation):"
+        r"(?P<kind>local_operator_assertion):"
         r"(?P<event_id>[A-Za-z0-9][A-Za-z0-9._-]{0,127})",
         confirmation_ref.strip(),
     )
     if match is None:
         raise ValueError(
-            "confirmation_ref must be user_confirmation:<source_event_id> or "
-            "client_confirmation:<source_event_id>"
+            "confirmation_ref must be local_operator_assertion:<source_event_id>; "
+            "this records local workflow intent, not verified user/client identity"
         )
     kind = match.group("kind")
     event_id = match.group("event_id")
-    authority_class, required_trust = CONFIRMATION_AUTHORITY[kind]
+    asserted_by, required_trust = LOCAL_ASSERTION_CLASS[kind]
+    revoked_ids = {
+        str(item.get("source_event_id", "")).strip()
+        for item in _optional_json_list(project, LOCAL_ASSERTION_REVOCATIONS_REL)
+    }
+    if event_id in revoked_ids:
+        raise ValueError(f"local operator assertion is revoked: {event_id}")
     matches = [
         item
         for item in _read_csv(project, SOURCE_EVENTS_REL)
@@ -713,15 +1169,15 @@ def _typed_confirmation_event(
     source = matches[0]
     if str(source.get("source_type", "")).strip().casefold() != kind:
         raise ValueError(
-            f"confirmation source_type must be {kind}: {event_id}"
+            f"local assertion source_type must be {kind}: {event_id}"
         )
-    if str(source.get("source_owner", "")).strip().casefold() != authority_class:
+    if str(source.get("source_owner", "")).strip().casefold() != asserted_by:
         raise ValueError(
-            f"confirmation source_owner must be {authority_class}: {event_id}"
+            f"local assertion source_owner must be {asserted_by}: {event_id}"
         )
     if str(source.get("trust_level", "")).strip().casefold() != required_trust:
         raise ValueError(
-            f"confirmation trust_level must be {required_trust}: {event_id}"
+            f"local assertion trust_level must be {required_trust}: {event_id}"
         )
     semantics = str(source.get("declared_semantics", "")).strip().casefold()
     if semantics not in expected_semantics:
@@ -765,11 +1221,37 @@ def _typed_confirmation_event(
         raise ValueError(
             f"confirmation evidence path must be canonical and project-relative: {event_id}"
         )
+    expected_evidence_rel = LOCAL_ASSERTIONS_REL / f"{event_id}.json"
+    if relative_path != expected_evidence_rel:
+        raise ValueError(
+            f"local assertion evidence path must be {expected_evidence_rel.as_posix()}: {event_id}"
+        )
     evidence_bytes = read_project_bytes(project, project / relative_path)
+    try:
+        evidence = json.loads(evidence_bytes)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"local assertion evidence is invalid JSON: {event_id}") from exc
+    if not isinstance(evidence, dict):
+        raise ValueError(f"local assertion evidence must be a JSON object: {event_id}")
+    expected_evidence = {
+        "protocol_id": "adco.local-operator-assertion",
+        "assertion_ref": confirmation_ref.strip(),
+        "source_event_id": event_id,
+        "declared_semantics": semantics,
+        "affects_requirements": sorted(required_requirements),
+        "affects_artifacts": sorted(required_artifacts),
+        "identity_assurance": "NONE",
+        "authority_scope": "local_project_workflow_only",
+    }
+    for key, expected_value in expected_evidence.items():
+        if evidence.get(key) != expected_value:
+            raise ValueError(
+                f"local assertion evidence {key} does not match source event: {event_id}"
+            )
     return {
         "confirmation_ref": confirmation_ref.strip(),
         "confirmation_id": event_id,
-        "authority_class": authority_class,
+        "asserted_by": asserted_by,
         "source_event_sha256": _source_event_sha256(source),
         "evidence_path": relative_path.as_posix(),
         "evidence_sha256": hashlib.sha256(evidence_bytes).hexdigest(),
@@ -814,7 +1296,23 @@ def confirm_creative_requirement(
     confirmation_ref: str,
     evidence_ref: str = "",
 ) -> RequirementConfirmationResult:
-    """Bind one requirement to source evidence and a typed authority event."""
+    """Bind one requirement to evidence and an auditable local assertion."""
+    with project_advisory_lock(project, "local-operator-assertions"):
+        return _confirm_creative_requirement_locked(
+            project,
+            requirement_id,
+            confirmation_ref=confirmation_ref,
+            evidence_ref=evidence_ref,
+        )
+
+
+def _confirm_creative_requirement_locked(
+    project: Path,
+    requirement_id: str,
+    *,
+    confirmation_ref: str,
+    evidence_ref: str = "",
+) -> RequirementConfirmationResult:
     requirements_path = project / REQUIREMENTS_REL
     text = read_project_text(project, requirements_path)
     with io.StringIO(text, newline="") as handle:
@@ -876,7 +1374,7 @@ def confirm_creative_requirement(
             "confidence": "1.0",
             "evidence_ref": selected_ref,
             "confirmation_ref": confirmation["confirmation_ref"],
-            "confirmed_by": confirmation["authority_class"],
+            "confirmed_by": confirmation["asserted_by"],
             "confirmed_at": confirmed_at,
         }
     )
@@ -897,8 +1395,10 @@ def confirm_creative_requirement(
         "confirmation_source_event_sha256": confirmation["source_event_sha256"],
         "confirmation_evidence_path": confirmation["evidence_path"],
         "confirmation_evidence_sha256": confirmation["evidence_sha256"],
-        "authority_class": confirmation["authority_class"],
-        "confirmed_by": confirmation["authority_class"],
+        "asserted_by": confirmation["asserted_by"],
+        "identity_assurance": "NONE",
+        "authority_scope": "local_project_workflow_only",
+        "confirmed_by": confirmation["asserted_by"],
         "confirmed_at": confirmed_at,
     }
     confirmations = _optional_json_list(project, REQUIREMENT_CONFIRMATIONS_REL)
@@ -923,7 +1423,7 @@ def confirm_creative_requirement(
     )
 
 
-def _requirement_authority(
+def _requirement_workflow_assertion(
     project: Path,
     snapshot: dict[str, object],
     requirement: dict[str, object],
@@ -988,30 +1488,32 @@ def _requirement_authority(
             == confirmation_event.get("evidence_path")
             and item.get("confirmation_evidence_sha256")
             == confirmation_event.get("evidence_sha256")
-            and item.get("authority_class")
-            == confirmation_event.get("authority_class")
+            and item.get("asserted_by")
+            == confirmation_event.get("asserted_by")
         ),
         None,
     )
-    authoritative = bool(
+    enforceable = bool(
         status in CONFIRMED_REQUIREMENT_STATUSES
         and owner in {"client", "operator"}
         and source_event_id in source_ids
         and isinstance(linked_chunk, dict)
         and linked_chunk.get("source_event_id") == source_event_id
         and isinstance(confirmation_event, dict)
-        and confirmed_by == confirmation_event.get("authority_class")
+        and confirmed_by == confirmation_event.get("asserted_by")
         and confirmed_at == confirmation_event.get("received_at")
         and confirmed_at
         and confirmation is not None
     )
     reason = (
-        "workflow-confirmed requirement bound to source evidence and an exact typed authority event"
-        if authoritative
-        else "requirement authority is not workflow-confirmed against source evidence and a typed authority event"
+        "workflow-confirmed requirement bound to source evidence and an exact local assertion"
+        if enforceable
+        else "requirement is not workflow-confirmed against source evidence and a local assertion"
     )
     return {
-        "authoritative": authoritative,
+        "enforceable_in_local_workflow": enforceable,
+        "identity_assurance": "NONE",
+        "authority_scope": "local_project_workflow_only",
         "status": status or "missing",
         "owner": owner or "missing",
         "source_event_id": source_event_id or "missing",
@@ -1047,7 +1549,9 @@ def _extract_hard_constraints(
         if not statement:
             continue
         requirement_id = str(requirement.get("requirement_id", "")).strip() or f"REQ-{index:03d}"
-        authority = _requirement_authority(project, snapshot, requirement)
+        workflow_assertion = _requirement_workflow_assertion(
+            project, snapshot, requirement
+        )
         used_ids: set[str] = set()
         for clause_index, clause in enumerate(_hard_requirement_clauses(statement), start=1):
             extracted: list[tuple[str, object]] = []
@@ -1089,7 +1593,7 @@ def _extract_hard_constraints(
                         "kind": kind,
                         "value": value,
                         "statement": clause,
-                        "authority": authority,
+                        "workflow_assertion": workflow_assertion,
                     }
                 )
     return constraints
@@ -1244,7 +1748,7 @@ def create_creative_brief(project: Path) -> CreativeBriefResult:
             ),
             "Differentiate creative mechanism, not only name or wording.",
             "Bind every direction to evidence_refs from the snapshot.",
-            "Treat every authoritative hard_constraint as mandatory; keep unconfirmed or manual_review constraints unresolved and do not import until reviewed. Evidence refs alone never prove compliance.",
+            "Treat every hard_constraint with enforceable_in_local_workflow=true as mandatory for this local workflow; keep unasserted or manual_review constraints unresolved. This does not represent verified user/client identity, consent, or approval. Evidence refs alone never prove compliance.",
             "Populate runtime_seconds, cast_count, locations, product_exposure, and claims as machine-checkable fields; keep prose consistent with them.",
             "Do not introduce a location or sub-location outside a location_allowlist, and do not use any prohibited_claim.",
             (
@@ -1451,33 +1955,6 @@ def validate_creative_candidate(
     return _candidate_validation_errors(project, payload)
 
 
-def _candidate_version_path(project: Path, exact_bytes: bytes) -> Path:
-    current = project / CURRENT_CANDIDATE_REL
-    if current.exists() and read_project_bytes(project, current) == exact_bytes:
-        directory = project / CREATIVE_ROOT / "candidates"
-        if directory.exists():
-            safe_project_path(project, directory / ".sentinel", create_parent=False)
-        matching = [
-            path
-            for path in sorted(
-                directory.glob("candidate_v*.json") if directory.exists() else []
-            )
-            if path.is_file() and read_project_bytes(project, path) == exact_bytes
-        ]
-        if matching:
-            return matching[-1]
-    directory = project / CREATIVE_ROOT / "candidates"
-    safe_project_path(project, directory / ".sentinel", create_parent=True)
-    versions = [
-        int(match.group(1))
-        for path in directory.glob("candidate_v*.json")
-        if path.is_file()
-        and not path.is_symlink()
-        and (match := re.fullmatch(r"candidate_v(\d+)\.json", path.name))
-    ]
-    return directory / f"candidate_v{max(versions, default=0) + 1:03d}.json"
-
-
 def _render_directions(payload: dict[str, object]) -> str:
     directions = payload["directions"]
     assert isinstance(directions, list)
@@ -1624,7 +2101,7 @@ def _constraint_resolution_map(
             and item.get("decision") == decision
             and direction_id
             and constraint_id
-            and item.get("reviewed_by") == confirmation["authority_class"]
+            and item.get("reviewed_by") == confirmation["asserted_by"]
             and item.get("reviewed_at") == confirmation["received_at"]
             and item.get("confirmation_id") == confirmation["confirmation_id"]
             and item.get("confirmation_source_event_sha256")
@@ -1649,11 +2126,33 @@ def resolve_creative_constraint(
     decision: str,
     note: str,
 ) -> ConstraintResolutionResult:
-    """Record a typed authority decision for one non-deterministic constraint."""
+    """Record a local workflow decision for one non-deterministic constraint."""
     if decision not in {"approved", "rejected"}:
         raise ValueError("decision must be approved or rejected")
     if not note.strip():
         raise ValueError("a non-empty human review note is required")
+    with project_advisory_lock(project, "local-operator-assertions"):
+        return _resolve_creative_constraint_locked(
+            project,
+            candidate_file,
+            direction_id=direction_id,
+            constraint_id=constraint_id,
+            confirmation_ref=confirmation_ref,
+            decision=decision,
+            note=note,
+        )
+
+
+def _resolve_creative_constraint_locked(
+    project: Path,
+    candidate_file: Path,
+    *,
+    direction_id: str,
+    constraint_id: str,
+    confirmation_ref: str,
+    decision: str,
+    note: str,
+) -> ConstraintResolutionResult:
     try:
         payload = json.loads(candidate_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -1714,7 +2213,7 @@ def resolve_creative_constraint(
         "confirmation_source_event_sha256": confirmation["source_event_sha256"],
         "confirmation_evidence_path": confirmation["evidence_path"],
         "confirmation_evidence_sha256": confirmation["evidence_sha256"],
-        "reviewed_by": confirmation["authority_class"],
+        "reviewed_by": confirmation["asserted_by"],
         "reviewed_at": confirmation["received_at"],
         "note": note.strip(),
     }
@@ -1777,7 +2276,124 @@ def _candidate_hard_constraint_blockers(
     return blockers
 
 
+GENERATION_FILE_NAMES = {
+    "candidate": "candidate.json",
+    "receipt": "candidate_import_receipt.json",
+    "directions": "creative_directions.md",
+    "matrix": "option_matrix.csv",
+}
+
+
+def _generation_file_record(project: Path, path: Path, data: bytes) -> dict[str, object]:
+    return {
+        "path": path.relative_to(project).as_posix(),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "byte_length": len(data),
+    }
+
+
+def _current_generation_bundle(
+    project: Path,
+) -> tuple[dict[str, object], dict[str, object], dict[str, Path], dict[str, bytes]]:
+    """Resolve one committed generation through the single current pointer."""
+    current_path = project / CURRENT_GENERATION_REL
+    pointer_bytes = read_optional_project_bytes(project, current_path)
+    if pointer_bytes is None:
+        raise ValueError("current creative generation is missing; run creative-import first")
+    try:
+        pointer = json.loads(pointer_bytes)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"current creative generation pointer is invalid JSON: {exc}") from exc
+    if not isinstance(pointer, dict):
+        raise ValueError("current creative generation pointer must be a JSON object")
+    if (
+        pointer.get("protocol_id") != "adco.creative-current-generation"
+        or pointer.get("pointer_version") != "1.0"
+    ):
+        raise ValueError("current creative generation pointer protocol/version is invalid")
+    generation_id = str(pointer.get("generation_id", ""))
+    if not re.fullmatch(r"gen-[0-9a-f]{16}-[0-9a-f]{32}", generation_id):
+        raise ValueError("current creative generation id is invalid")
+    generation_rel = GENERATIONS_REL / generation_id
+    manifest_rel = generation_rel / "generation_manifest.json"
+    if pointer.get("generation_manifest_path") != manifest_rel.as_posix():
+        raise ValueError("current creative generation manifest path is invalid")
+    manifest_path = project / manifest_rel
+    manifest_bytes = read_project_bytes(project, manifest_path)
+    if pointer.get("generation_manifest_sha256") != hashlib.sha256(manifest_bytes).hexdigest():
+        raise ValueError("current creative generation manifest hash does not match pointer")
+    try:
+        manifest = json.loads(manifest_bytes)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"creative generation manifest is invalid JSON: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("creative generation manifest must be a JSON object")
+    if (
+        manifest.get("protocol_id") != "adco.creative-generation"
+        or manifest.get("manifest_version") != "1.0"
+        or manifest.get("generation_id") != generation_id
+    ):
+        raise ValueError("creative generation manifest protocol/version/id is invalid")
+    files = manifest.get("files")
+    if not isinstance(files, dict) or set(files) != set(GENERATION_FILE_NAMES):
+        raise ValueError("creative generation manifest file inventory is invalid")
+    paths: dict[str, Path] = {"current": current_path, "manifest": manifest_path}
+    data_by_role: dict[str, bytes] = {"pointer": pointer_bytes, "manifest": manifest_bytes}
+    for role, filename in GENERATION_FILE_NAMES.items():
+        record = files.get(role)
+        expected_rel = generation_rel / filename
+        if not isinstance(record, dict) or record.get("path") != expected_rel.as_posix():
+            raise ValueError(f"creative generation {role} path is invalid")
+        artifact_path = project / expected_rel
+        artifact_bytes = read_project_bytes(project, artifact_path)
+        if record.get("sha256") != hashlib.sha256(artifact_bytes).hexdigest():
+            raise ValueError(f"creative generation {role} hash does not match manifest")
+        if record.get("byte_length") != len(artifact_bytes):
+            raise ValueError(f"creative generation {role} byte length does not match manifest")
+        paths[role] = artifact_path
+        data_by_role[role] = artifact_bytes
+    return pointer, manifest, paths, data_by_role
+
+
+def current_creative_generation_paths(project: Path) -> dict[str, Path]:
+    """Return verified current paths; return an empty map before first import."""
+    if read_optional_project_bytes(project, project / CURRENT_GENERATION_REL) is None:
+        generations_root = project / GENERATIONS_REL
+        if generations_root.is_symlink():
+            raise ValueError("creative generations root must not be a symlink")
+        try:
+            generation_entries = (
+                list(generations_root.iterdir()) if generations_root.is_dir() else []
+            )
+        except OSError as exc:
+            raise ValueError(f"cannot inspect creative generations root: {exc}") from exc
+        if generation_entries:
+            raise ValueError(
+                "current creative generation pointer is missing while generation artifacts exist"
+            )
+        return {}
+    _pointer, _manifest, paths, _data = _current_generation_bundle(project)
+    return paths
+
+
+def creative_brief_requires_independent_critic(project: Path) -> bool:
+    """Read the verified brief contract's explicit independent-Critic policy."""
+    _snapshot, contract, _manifest = _verified_brief(project)
+    candidate_contract = contract.get("candidate_contract")
+    if not isinstance(candidate_contract, dict):
+        raise ValueError("creative brief candidate_contract is invalid")
+    return candidate_contract.get("critic_required_by_brief") is True
+
+
 def import_creative_candidate(project: Path, candidate_file: Path) -> CreativeImportResult:
+    """Validate and publish one immutable candidate generation atomically."""
+    with project_advisory_lock(project, "local-operator-assertions"):
+        return _import_creative_candidate_locked(project, candidate_file)
+
+
+def _import_creative_candidate_locked(
+    project: Path, candidate_file: Path
+) -> CreativeImportResult:
     try:
         payload = json.loads(candidate_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -1792,31 +2408,36 @@ def import_creative_candidate(project: Path, candidate_file: Path) -> CreativeIm
             "creative candidate hard-constraint validation failed before persistence: "
             + "; ".join(hard_constraint_blockers[:20])
         )
+
     semantic_digest = payload_sha256(payload)
-    exact_bytes = persisted_json_bytes(payload)
-    candidate_path = _candidate_version_path(project, exact_bytes)
-    current_path = project / CURRENT_CANDIDATE_REL
-    if not candidate_path.exists():
-        atomic_write_bytes(project, candidate_path, exact_bytes)
-    if read_project_bytes(project, candidate_path) != exact_bytes:
-        raise ValueError("persisted creative candidate bytes do not match import payload")
-    candidate_digest = hashlib.sha256(exact_bytes).hexdigest()
-    directions_path = project / CREATIVE_DIRECTIONS_REL
+    candidate_bytes = persisted_json_bytes(payload)
+    candidate_digest = hashlib.sha256(candidate_bytes).hexdigest()
     directions_bytes = _render_directions(payload).encode("utf-8")
-    matrix_path = project / OPTION_MATRIX_REL
     matrix_bytes = _render_option_matrix(payload)
-    manifest_bytes = read_project_bytes(project, project / BRIEF_MANIFEST_REL)
+    brief_manifest_bytes = read_project_bytes(project, project / BRIEF_MANIFEST_REL)
+    generation_id = f"gen-{candidate_digest[:16]}-{secrets.token_hex(16)}"
+    generation_rel = GENERATIONS_REL / generation_id
+    generation_dir = project / generation_rel
+    candidate_path = generation_dir / GENERATION_FILE_NAMES["candidate"]
+    receipt_path = generation_dir / GENERATION_FILE_NAMES["receipt"]
+    directions_path = generation_dir / GENERATION_FILE_NAMES["directions"]
+    matrix_path = generation_dir / GENERATION_FILE_NAMES["matrix"]
+    manifest_path = generation_dir / "generation_manifest.json"
+    current_path = project / CURRENT_GENERATION_REL
+
     receipt = {
         "protocol_id": "adco.creative-candidate-import",
-        "receipt_version": "1.1",
+        "receipt_version": "1.2",
+        "generation_id": generation_id,
         "candidate_path": candidate_path.relative_to(project).as_posix(),
         "candidate_sha256": candidate_digest,
         "candidate_payload_sha256": semantic_digest,
-        "candidate_byte_length": len(exact_bytes),
-        "current_candidate_sha256": candidate_digest,
+        "candidate_byte_length": len(candidate_bytes),
         "brief_snapshot_sha256": payload["brief_snapshot_sha256"],
-        "brief_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "brief_manifest_sha256": hashlib.sha256(brief_manifest_bytes).hexdigest(),
+        "creative_directions_path": directions_path.relative_to(project).as_posix(),
         "creative_directions_sha256": hashlib.sha256(directions_bytes).hexdigest(),
+        "option_matrix_path": matrix_path.relative_to(project).as_posix(),
         "option_matrix_sha256": hashlib.sha256(matrix_bytes).hexdigest(),
         "direction_count": len(payload["directions"]),
         "warnings": warnings,
@@ -1825,18 +2446,54 @@ def import_creative_candidate(project: Path, candidate_file: Path) -> CreativeIm
         "creative_quality": "NOT_EVALUATED",
         "imported_at": now_iso(),
     }
-    receipt_path = project / CANDIDATE_IMPORT_RECEIPT_REL
+    receipt_bytes = persisted_json_bytes(receipt)
+    artifact_bytes = {
+        "candidate": candidate_bytes,
+        "receipt": receipt_bytes,
+        "directions": directions_bytes,
+        "matrix": matrix_bytes,
+    }
+    artifact_paths = {
+        "candidate": candidate_path,
+        "receipt": receipt_path,
+        "directions": directions_path,
+        "matrix": matrix_path,
+    }
+    generation_manifest = {
+        "protocol_id": "adco.creative-generation",
+        "manifest_version": "1.0",
+        "generation_id": generation_id,
+        "brief_snapshot_sha256": payload["brief_snapshot_sha256"],
+        "files": {
+            role: _generation_file_record(project, artifact_paths[role], data)
+            for role, data in artifact_bytes.items()
+        },
+        "created_at": receipt["imported_at"],
+    }
+    generation_manifest_bytes = persisted_json_bytes(generation_manifest)
 
-    # Version and derived views are prepared first. The receipt is committed
-    # next and current_candidate.json is the final atomic pointer switch. A
-    # crash can therefore produce a detectable receipt/current mismatch, never
-    # a new current candidate accepted under an old receipt.
-    atomic_write_bytes(project, directions_path, directions_bytes)
-    atomic_write_bytes(project, matrix_path, matrix_bytes)
-    _write_json(project, receipt_path, receipt)
-    atomic_write_bytes(project, current_path, exact_bytes)
-    if read_project_bytes(project, current_path) != exact_bytes:
-        raise ValueError("current creative candidate bytes do not match versioned candidate")
+    # Prepare a complete immutable generation before publishing it. These files
+    # are unreachable as current truth until the one pointer write succeeds.
+    for role in ("candidate", "directions", "matrix", "receipt"):
+        atomic_write_bytes(project, artifact_paths[role], artifact_bytes[role])
+        if read_project_bytes(project, artifact_paths[role]) != artifact_bytes[role]:
+            raise ValueError(f"persisted creative generation {role} bytes do not match")
+    atomic_write_bytes(project, manifest_path, generation_manifest_bytes)
+    if read_project_bytes(project, manifest_path) != generation_manifest_bytes:
+        raise ValueError("persisted creative generation manifest bytes do not match")
+
+    pointer = {
+        "protocol_id": "adco.creative-current-generation",
+        "pointer_version": "1.0",
+        "generation_id": generation_id,
+        "generation_manifest_path": manifest_path.relative_to(project).as_posix(),
+        "generation_manifest_sha256": hashlib.sha256(
+            generation_manifest_bytes
+        ).hexdigest(),
+        "switched_at": now_iso(),
+    }
+    atomic_write_bytes(project, current_path, persisted_json_bytes(pointer))
+    _current_generation_bundle(project)
     return CreativeImportResult(
         candidate_path=candidate_path,
         current_path=current_path,
@@ -1851,42 +2508,31 @@ def import_creative_candidate(project: Path, candidate_file: Path) -> CreativeIm
 
 def _verified_import(
     project: Path,
-) -> tuple[dict[str, object], dict[str, object], Path]:
-    current_path = project / CURRENT_CANDIDATE_REL
-    receipt_path = project / CANDIDATE_IMPORT_RECEIPT_REL
-    if not current_path.exists():
-        raise ValueError("current creative candidate is missing; run creative-import first")
-    if not receipt_path.exists():
-        raise ValueError("creative candidate import receipt is missing; run creative-import again")
-    current_bytes = read_project_bytes(project, current_path)
-    receipt = _read_json(project, receipt_path)
+) -> tuple[dict[str, object], dict[str, object], Path, dict[str, Path]]:
+    pointer, _generation_manifest, paths, data = _current_generation_bundle(project)
+    candidate_path = paths["candidate"]
+    candidate_bytes = data["candidate"]
+    try:
+        receipt = json.loads(data["receipt"])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"creative candidate import receipt is invalid JSON: {exc}") from exc
     if not isinstance(receipt, dict):
         raise ValueError("creative candidate import receipt must be a JSON object")
     if (
         receipt.get("protocol_id") != "adco.creative-candidate-import"
-        or receipt.get("receipt_version") != "1.1"
+        or receipt.get("receipt_version") != "1.2"
+        or receipt.get("generation_id") != pointer.get("generation_id")
     ):
-        raise ValueError("creative candidate import receipt protocol/version is invalid")
-    raw_candidate_path = str(receipt.get("candidate_path", ""))
-    if not re.fullmatch(
-        r"AD-creative/creative/candidates/candidate_v\d{3,}\.json",
-        raw_candidate_path,
-    ):
+        raise ValueError("creative candidate import receipt protocol/version/generation is invalid")
+    if receipt.get("candidate_path") != candidate_path.relative_to(project).as_posix():
         raise ValueError("creative candidate import receipt candidate_path is invalid")
-    candidate_path = project / Path(raw_candidate_path)
-    candidate_bytes = read_project_bytes(project, candidate_path)
     candidate_sha = hashlib.sha256(candidate_bytes).hexdigest()
-    current_sha = hashlib.sha256(current_bytes).hexdigest()
-    if current_bytes != candidate_bytes:
-        raise ValueError("current creative candidate bytes do not match receipt version")
     if receipt.get("candidate_sha256") != candidate_sha:
         raise ValueError("creative candidate version hash does not match import receipt")
-    if receipt.get("current_candidate_sha256") != current_sha:
-        raise ValueError("current creative candidate hash does not match import receipt")
     if receipt.get("candidate_byte_length") != len(candidate_bytes):
         raise ValueError("creative candidate byte length does not match import receipt")
     try:
-        payload = json.loads(current_bytes)
+        payload = json.loads(candidate_bytes)
     except json.JSONDecodeError as exc:
         raise ValueError(f"current creative candidate is invalid JSON: {exc}") from exc
     if not isinstance(payload, dict):
@@ -1900,20 +2546,24 @@ def _verified_import(
         raise ValueError("creative candidate direction count does not match import receipt")
 
     _snapshot, _contract, _manifest = _verified_brief(project)
-    manifest_bytes = read_project_bytes(project, project / BRIEF_MANIFEST_REL)
-    if receipt.get("brief_manifest_sha256") != hashlib.sha256(manifest_bytes).hexdigest():
+    brief_manifest_bytes = read_project_bytes(project, project / BRIEF_MANIFEST_REL)
+    if receipt.get("brief_manifest_sha256") != hashlib.sha256(brief_manifest_bytes).hexdigest():
         raise ValueError("creative candidate import receipt is bound to a different brief manifest")
-    directions_bytes = read_project_bytes(project, project / CREATIVE_DIRECTIONS_REL)
-    matrix_bytes = read_project_bytes(project, project / OPTION_MATRIX_REL)
+    directions_bytes = data["directions"]
+    matrix_bytes = data["matrix"]
     if directions_bytes != _render_directions(payload).encode("utf-8"):
         raise ValueError("creative directions view is not derived from the current candidate")
     if matrix_bytes != _render_option_matrix(payload):
         raise ValueError("creative option matrix is not derived from the current candidate")
+    if receipt.get("creative_directions_path") != paths["directions"].relative_to(project).as_posix():
+        raise ValueError("creative directions path does not match import receipt")
+    if receipt.get("option_matrix_path") != paths["matrix"].relative_to(project).as_posix():
+        raise ValueError("creative option matrix path does not match import receipt")
     if receipt.get("creative_directions_sha256") != hashlib.sha256(directions_bytes).hexdigest():
         raise ValueError("creative directions view does not match import receipt")
     if receipt.get("option_matrix_sha256") != hashlib.sha256(matrix_bytes).hexdigest():
         raise ValueError("creative option matrix does not match import receipt")
-    return payload, receipt, candidate_path
+    return payload, receipt, candidate_path, paths
 
 
 GENERIC_CREATIVE_PATTERN = re.compile(
@@ -2017,6 +2667,7 @@ CLAIM_VARIANT_PATTERNS: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
         re.compile(
             r"改善健康|更健康|健康功效|低负担社交|轻负担社交|"
             r"health(?:y|ier)?\s+(?:benefit|choice)|"
+            r"(?:makes?\s+)?sociali[sz]ing\s+(?:feel\s+)?healthier|"
             r"wellness\s+choice|low[ -]?burden\s+sociali[sz]ing",
             re.I,
         ),
@@ -2122,14 +2773,17 @@ def _evaluate_hard_constraint(
 ) -> dict[str, str]:
     kind = str(constraint["kind"])
     value = constraint["value"]
-    authority = constraint.get("authority")
-    if isinstance(authority, dict) and authority.get("authoritative") is not True:
+    workflow_assertion = constraint.get("workflow_assertion")
+    if not isinstance(workflow_assertion, dict) or workflow_assertion.get(
+        "enforceable_in_local_workflow"
+    ) is not True:
+        assertion = workflow_assertion if isinstance(workflow_assertion, dict) else {}
         return _status_map(
             "REVIEW_REQUIRED",
-            "unconfirmed requirement authority: "
-            f"status={authority.get('status')}; owner={authority.get('owner')}; "
-            f"source_event_id={authority.get('source_event_id')}; "
-            f"confidence={authority.get('confidence')}",
+            "requirement lacks an active local workflow assertion: "
+            f"status={assertion.get('status')}; owner={assertion.get('owner')}; "
+            f"source_event_id={assertion.get('source_event_id')}; "
+            f"confidence={assertion.get('confidence')}",
         )
     if kind == "manual_review":
         if resolution is not None:
@@ -2233,23 +2887,16 @@ def _evaluate_hard_constraint(
             ),
         )
     if kind == "prohibited_claims":
-        narrative_claim_text = _direction_text(
-            raw,
-            (
-                "name",
-                "human_tension",
-                "single_minded_proposition",
-                "creative_mechanism",
-                "key_visual",
-                "story_or_behavior",
-                "product_role",
-                "channel_execution",
-            ),
-        )
+        narrative_claim_text = _direction_text(raw, CLAIM_BEARING_FIELDS)
         declared_claims = raw.get("claims")
         if not isinstance(declared_claims, list):
             return _status_map("REVIEW_REQUIRED", "claims are not declared")
-        claim_text = " ".join(str(item) for item in declared_claims) + " " + narrative_claim_text
+        exposure = raw.get("product_exposure")
+        exposure_description = (
+            str(exposure.get("description", "")) if isinstance(exposure, dict) else ""
+        )
+        claim_text = " ".join(str(item) for item in declared_claims)
+        claim_text += " " + narrative_claim_text + " " + exposure_description
         claims = [str(item) for item in value] if isinstance(value, list) else []
         violations: list[str] = []
         for claim in claims:
@@ -2313,9 +2960,9 @@ def review_creative_candidate(
     project: Path,
     *,
     independent_critic_required: bool = False,
+    persist_receipt: bool = False,
 ) -> CreativeReviewResult:
-    path = project / CURRENT_CANDIDATE_REL
-    payload, import_receipt, candidate_path = _verified_import(project)
+    payload, import_receipt, candidate_path, import_paths = _verified_import(project)
     errors, import_warnings = _candidate_validation_errors(project, payload)
     if errors:
         raise ValueError("current creative candidate is invalid: " + "; ".join(errors[:20]))
@@ -2325,13 +2972,15 @@ def review_creative_candidate(
     hard_constraints = _extract_hard_constraints(project, snapshot)
     resolutions = _constraint_resolution_map(project, payload, hard_constraints)
     receipt: dict[str, object] = {
-        "protocol_id": "adco.creative-critic-receipt",
+        "protocol_id": "adco.creative-deterministic-lint-receipt",
         "receipt_version": "1.0",
-        "candidate_sha256": hashlib.sha256(read_project_bytes(project, path)).hexdigest(),
+        "candidate_sha256": hashlib.sha256(
+            read_project_bytes(project, candidate_path)
+        ).hexdigest(),
         "candidate_payload_sha256": payload_sha256(payload),
         "candidate_version_path": candidate_path.relative_to(project).as_posix(),
         "candidate_import_receipt_sha256": hashlib.sha256(
-            read_project_bytes(project, project / CANDIDATE_IMPORT_RECEIPT_REL)
+            read_project_bytes(project, import_paths["receipt"])
         ).hexdigest(),
         "candidate_imported_at": import_receipt.get("imported_at"),
         "brief_snapshot_sha256": payload["brief_snapshot_sha256"],
@@ -2459,8 +3108,8 @@ def review_creative_candidate(
     )
     receipt["reviewed_at"] = now_iso()
     receipt_path = (
-        _write_json(project, project / CRITIC_RECEIPT_REL, receipt)
-        if independent_critic_required
+        _write_json(project, project / DETERMINISTIC_LINT_RECEIPT_REL, receipt)
+        if independent_critic_required or persist_receipt
         else None
     )
     return CreativeReviewResult(

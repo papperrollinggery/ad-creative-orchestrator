@@ -13,12 +13,15 @@ from .creative_contract import (
     BRIEF_CONTRACT_REL,
     BRIEF_SNAPSHOT_REL,
     CANDIDATE_SCHEMA_REL,
-    CURRENT_CANDIDATE_REL,
+    CURRENT_GENERATION_REL,
+    LEGACY_CURRENT_CANDIDATE_REL,
+    current_creative_generation_paths,
     payload_sha256,
     validate_creative_candidate,
 )
 from .facts import FACT_INVENTORY_REL, FACT_STATES, load_fact_inventory
 from .ingestion import EVIDENCE_REL, load_evidence_chunks, sha256_text
+from .safe_write import read_project_text
 
 
 ALL_SCOPES = [
@@ -132,7 +135,12 @@ def _scope_for_path(raw_path: str) -> str | None:
         for item in [BRIEF_SNAPSHOT_REL, BRIEF_CONTRACT_REL, CANDIDATE_SCHEMA_REL]
     ):
         return "creative_brief"
-    if "creative/candidates/" in path or path.endswith(CURRENT_CANDIDATE_REL.as_posix().lower()):
+    if (
+        "creative/candidates/" in path
+        or "creative/generations/" in path
+        or path.endswith(CURRENT_GENERATION_REL.as_posix().lower())
+        or path.endswith(LEGACY_CURRENT_CANDIDATE_REL.as_posix().lower())
+    ):
         return "creative_candidate"
     if "client_review/client_outline" in path:
         return "client_outline"
@@ -342,12 +350,17 @@ def _validate_creative_brief(project: Path) -> tuple[list[str], list[str]]:
 
 
 def _validate_creative_candidate(project: Path) -> tuple[list[str], list[str]]:
-    path = project / CURRENT_CANDIDATE_REL
-    if not path.is_file():
+    try:
+        generation_paths = current_creative_generation_paths(project)
+    except ValueError as exc:
+        return [str(exc)], []
+    if not generation_paths:
         return ["current creative candidate is missing"], []
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        payload = json.loads(
+            read_project_text(project, generation_paths["candidate"])
+        )
+    except (OSError, json.JSONDecodeError) as exc:
         return [f"current creative candidate invalid JSON: {exc}"], []
     return validate_creative_candidate(project, payload)
 

@@ -202,12 +202,20 @@ Receipt identity must match dispatch identity. Worker self-report is not host pr
 
 Use `adco thread-reconcile` after receipt arrival. The control thread must:
 
-1. Compare the actual host diff to the dispatch baseline and exact write scope.
-2. Reject undeclared/out-of-scope changes.
-3. Persist a hash-bound host scope proof.
-4. Record `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, or `BLOCKED` with reason.
-5. Update both registry and agent run rows.
-6. Archive the consumed worker and record cleanup.
+1. Pass the dispatch-bound real worker receipt to `--receipt-path`; never pass
+   `thread_cleanup_<work_id>.md`, a hand-written note, or another lane's receipt.
+2. Compare the actual host diff to the dispatch baseline and exact write scope.
+3. Reject undeclared/out-of-scope changes.
+4. Persist a hash-bound host scope proof.
+5. Record `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, or `BLOCKED` with reason.
+6. Update both registry and agent run rows.
+7. Refresh the host-owned cleanup projection and archive the consumed worker.
+
+`thread-plan` creates `thread_cleanup_<work_id>.md`; reconciliation refreshes it
+from the registry. It is neither the worker receipt nor authority. If the final
+project-wide validation fails, reconciliation rolls back the registry, proof,
+projection, cleanup, and archive candidate and returns `BLOCKED`; never invent a
+receipt or report the worker as adopted.
 
 Read-only lanes can close only as receipt-only review/needs-user/blocked/failed. They cannot produce adopted writable output or advance production state.
 

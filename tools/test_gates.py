@@ -39,6 +39,7 @@ from ad_creative_operator import (
     write_csv_rows,
     write_text,
     update_markdown_sections,
+    update_artifact,
     write_manual_review_checklist,
     write_json_object,
     write_adversarial_target_snapshot,
@@ -660,6 +661,7 @@ def test_visual_quality_rejects_asset_self_stamp_without_hash_bound_authorizatio
         status, findings, _ = review_visual_quality(project)
         assert status == "BLOCKED", (status, findings)
         assert any("独立授权 receipt" in item for item in findings), findings
+
         _, current_assets = read_csv_rows(
             project / "AD-creative/visual_assets/asset_current_manifest.csv"
         )
@@ -684,6 +686,58 @@ def test_visual_quality_rejects_asset_self_stamp_without_hash_bound_authorizatio
         status, findings, _ = review_visual_quality(project)
         assert status == "BLOCKED", (status, findings)
         assert any("独立授权 receipt" in item for item in findings), findings
+
+        for authorization_id, asset_sha256, scope, revoked_at in [
+            ("AUTH-WRONG-HASH", "f" * 64, "client_review", ""),
+            ("AUTH-WRONG-SCOPE", current["sha256"], "internal_only", ""),
+            (
+                "AUTH-REVOKED",
+                current["sha256"],
+                "client_review",
+                "2026-07-05T00:30:00Z",
+            ),
+        ]:
+            add_row(
+                project,
+                "AD-creative/visual_assets/asset_authorizations.csv",
+                {
+                    "authorization_id": authorization_id,
+                    "asset_id": current["asset_id"],
+                    "asset_sha256": asset_sha256,
+                    "approval_scope": scope,
+                    "approved_by": "fixture-human-reviewer",
+                    "approved_at": "2026-07-05T00:00:00Z",
+                    "evidence_ref": f"user_confirmation:{authorization_id}",
+                    "evidence_sha256": "",
+                    "status": "approved",
+                    "revoked_at": revoked_at,
+                    "notes": "independent-axis regression",
+                },
+            )
+        status, findings, _ = review_visual_quality(project)
+        assert status == "BLOCKED", (status, findings)
+        assert any("独立授权 receipt" in item for item in findings), findings
+
+        add_row(
+            project,
+            "AD-creative/visual_assets/asset_authorizations.csv",
+            {
+                "authorization_id": "AUTH-VALID-001",
+                "asset_id": current["asset_id"],
+                "asset_sha256": current["sha256"],
+                "approval_scope": "client_review",
+                "approved_by": "fixture-human-reviewer",
+                "approved_at": "2026-07-05T01:00:00Z",
+                "evidence_ref": "user_confirmation:asset-auth-fixture",
+                "evidence_sha256": "",
+                "status": "approved",
+                "revoked_at": "",
+                "notes": "exact hash and scope",
+            },
+        )
+        status, findings, _ = review_visual_quality(project)
+        assert status != "BLOCKED", (status, findings)
+        assert not any("独立授权 receipt" in item for item in findings), findings
 
 
 def test_client_pack_blocks_without_editable_pptx() -> None:
@@ -1287,6 +1341,40 @@ def test_creative_quality_blocks_humanizer_writing_risks() -> None:
         assert_valid(project)
 
 
+def test_creative_quality_rejects_escaping_client_visible_artifact_paths() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-client-path-boundary-") as raw:
+        root = Path(raw)
+        project = root / "project"
+        ensure_delivery_project(project)
+        outside = root / "outside.txt"
+        outside.write_text("client-facing prompt leak fixture", encoding="utf-8")
+        update_artifact(
+            project,
+            "ART-ESCAPING-CLIENT-TEXT",
+            "creative_proposal",
+            "../outside.txt",
+            "creative",
+            visibility="client_visible",
+        )
+        status, findings, _ = review_creative_quality(project)
+        assert status == "BLOCKED", findings
+        assert any("invalid client-visible artifact path" in item for item in findings), findings
+
+        linked = project / "linked-outside"
+        linked.symlink_to(root, target_is_directory=True)
+        update_artifact(
+            project,
+            "ART-SYMLINKED-CLIENT-TEXT",
+            "creative_proposal",
+            "linked-outside/outside.txt",
+            "creative",
+            visibility="client_visible",
+        )
+        status, findings, _ = review_creative_quality(project)
+        assert status == "BLOCKED", findings
+        assert any("must not be a symlink" in item for item in findings), findings
+
+
 def test_validation_pass_is_not_creative_quality_pass() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-creative-validation-") as raw_project:
         project = Path(raw_project)
@@ -1329,6 +1417,7 @@ def main() -> int:
     test_creative_quality_structural_pass_still_requires_independent_critic()
     test_creative_quality_blocks_unsupported_case_claim()
     test_creative_quality_blocks_humanizer_writing_risks()
+    test_creative_quality_rejects_escaping_client_visible_artifact_paths()
     test_validation_pass_is_not_creative_quality_pass()
     if OPTIONAL_SKIPS:
         print("TEST_GATES_OPTIONAL_SKIPS=" + "; ".join(OPTIONAL_SKIPS))

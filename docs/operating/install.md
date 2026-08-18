@@ -2,6 +2,11 @@
 
 Status: current GitHub Release, source checkout, and local package install supported
 
+Platform boundary: Python 3.10+ on POSIX (currently macOS or Linux). Secure
+project-artifact reads and writes require `dir_fd`, `O_DIRECTORY`, and
+`O_NOFOLLOW`; unsupported platforms fail closed rather than silently weakening
+the integrity contract.
+
 Current public release: [`v0.3.2`](https://github.com/papperrollinggery/ad-creative-orchestrator/releases/tag/v0.3.2). The Release tag target is the authoritative source commit.
 
 `v0.3.2` packages the public documentation set, so installed-wheel `adco docs` must list real README/operating-document paths and every listed file must exist.

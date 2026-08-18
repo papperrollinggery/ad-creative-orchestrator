@@ -29,8 +29,11 @@ adco run <project> --material <path> [--material <path> ...] [--max-total-chars 
 adco migrate-control-plane <project> [--dry-run] [--json]
 adco agency-audit <project>
 adco creative-brief <project> [--work-id <id>] [--json]
-adco creative-requirement-confirm <project> --requirement-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> [--evidence-ref <chunk>] [--json]
-adco creative-constraint-resolve <project> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <user_confirmation:id|client_confirmation:id> --decision <approved|rejected> --note <reason> [--json]
+adco creative-assertion-record <project> --semantics <creative_requirement_confirmation|creative_constraint_approval|creative_constraint_rejection> --requirement-id <exactly-one-id> [--artifact-binding <binding> ...] --note <reason> [--json]
+adco creative-assertion-status <project> [--assertion-ref <local_operator_assertion:id>] [--json]
+adco creative-assertion-revoke <project> --assertion-ref <local_operator_assertion:id> --reason <reason> [--json]
+adco creative-requirement-confirm <project> --requirement-id <id> --confirmation-ref <local_operator_assertion:id> [--evidence-ref <chunk>] [--json]
+adco creative-constraint-resolve <project> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <local_operator_assertion:id> --decision <approved|rejected> --note <reason> [--json]
 adco creative-import <project> --file <candidate.json> [--json]
 adco creative-review <project> [--json]
 adco creative-proposal <project> [--work-id <id>] [--json]
@@ -51,8 +54,9 @@ adco client-pack-gate <project>
 adco client-send-readiness-gate <project>
 adco final-delivery-lock <project>
 adco final-delivery-reconcile <project> --old-path <path> --new-path <path> --kind <rename|supersession> --confirmed-by <human> --confirmed-at <timezone-aware-iso> --evidence-ref <project-relative-structured-confirmation.json> [--version-id <id>]
-adco dedupe-audit <project>
-adco cleanup-plan <project>
+adco organize-plan <project> [--deep] [--save] [--json]
+adco dedupe-audit <project> [--quick] [--save] [--json]
+adco cleanup-plan <project> [--quick] [--save] [--json]
 adco handoff-readiness-gate <project>
 adco profile-analyze <project> [--source-id <id>] --brand <brand> --company <company> [--dashboard]
 adco hygiene <project>
@@ -78,8 +82,18 @@ through the same capped pipe. An unreadable,
 unparseable, changed, or oversized candidate blocks the Gate.
 
 Thread and specialist commands are documented in their dedicated references.
+`adco.specialist-exchange` is the protocol id, not an executable command. The
+CLI entrypoints are `adco specialist-handoff` and `adco specialist-adopt`.
 
 `install-skill` owns only the current packaged files it writes. Its schema-v2 install manifest binds current managed paths to SHA-256 digests for parity checks, but a writable target-side manifest is never trusted as deletion authority. Stale, user-modified, and unrelated files are always preserved and reported for explicit cleanup; installation never auto-deletes them. A root symlink is accepted only for the canonical `~/.codex/skills/ad-creative-orchestrator` to `~/.skillshub/ad-creative-orchestrator` compatibility layout, checked before path resolution.
+
+`run` performs a read-only organization review after intake. Loose root material
+or exact duplicate bytes produce one visible organization question. It does not
+copy or move the material. The three storage commands are read-only by default;
+`--save` replaces one `AD-creative/orchestrator/storage_plan.json` snapshot and
+still performs no move, copy, delete, FinalDelivery lock, artifact registration,
+or Gate write. A missing/non-directory/symlinked project root or any unreadable
+file makes the audit `INCOMPLETE`, returns non-zero, and suppresses plan saving.
 
 ## Phase/Gate order
 
@@ -191,7 +205,8 @@ Migration manifests are written only when legacy evidence exists. They are immut
 
 ## Gate semantics
 
-- `creative-import`: pre-write structural, hard-constraint, and provenance validation for one to six candidates matching the brief's requested count; rejects stale/unbound evidence, unconfirmed or unsupported hard requirements, semantic violations, and duplicate mechanisms before changing current/version artifacts, then binds the receipt to exact persisted bytes. Evidence refs prove provenance only, not semantic claim support; weak brand ownership is flagged.
+- `creative-assertion-*`: public capture, audit, and revocation for `identity_assurance=NONE` local workflow assertions. They never represent user/client identity, consent, approval, or send authority.
+- `creative-import`: pre-write structural, hard-constraint, and provenance validation for one to six candidates matching the brief's requested count; rejects stale/unbound evidence, unasserted or unsupported hard requirements, semantic violations across every persisted claim-bearing field, and duplicate mechanisms. It prepares one immutable generation and atomically switches only `current_generation.json`; a failed switch leaves all old current human and machine views coherent. Evidence refs prove provenance only, not semantic claim support; weak brand ownership is flagged.
 - `creative-review`: deterministic structure/semantic/language lint; Content returns it read-only without a receipt, while Delivery may persist an exact-bound Critic receipt.
 - `creative-quality-gate`: downstream legacy proposal completeness and client-safety checks; it is not Sol generation, independent Critic judgment, or client approval.
 - `client-outline-gate`: complete page framework plus explicit hash-bound human/client confirmation.
