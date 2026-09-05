@@ -35,14 +35,14 @@ contracts.
 
 - Default `adco init`: 9 files, Content Surface, host root `AGENTS.md`
   preserved.
-- First `adco run`: 11 project files, a machine-readable content answer, 0
+- First `adco run`: 11 project files, a machine-readable intake summary, 0
   Dashboard/Council/full-validation runs, and no Gate, Thread, artifact, version,
   or six-folder index files.
 - Explicit `goal-plan` promoted the same project to Delivery Surface without
   overwriting existing content. Re-running `init` did not downgrade it.
 - Delivery `run`, `sample`, and legacy-project repair retained linked intake
   work, artifacts, Gate entries, and audit events.
-- The macOS launcher produced a content answer and its explicitly requested
+- The macOS launcher produced an intake summary and its explicitly requested
   Dashboard, while creating no artifact registry or client outline.
 
 ### Headless internal creative task
@@ -59,7 +59,7 @@ Fixture: `tools/fixtures/content_first_forward/brief.md`
 - Dashboard, Council, Thread, Git, and delivery-ledger operations were all 0.
 - It created no project control plane or delivery artifact.
 
-Result: `HEADLESS_CONTENT_ANSWER=PASS`
+Result: `HEADLESS_INTAKE_SUMMARY=PASS`
 
 ### Headless client-send boundary
 

@@ -37,7 +37,11 @@ def main() -> int:
     skill_root = skill_draft_dir()
     metadata = read_required(skill_root / "agents/openai.yaml")
     skill = read_required(skill_root / "SKILL.md")
+    read_required(skill_root / "creative_contract.md")
+    creative_work = read_required(skill_root / "creative_work.md")
+    thread_operations = read_required(skill_root / "thread_operations.md")
     normalized_skill = " ".join(skill.split())
+    normalized_creative_work = " ".join(creative_work.split())
     project_agents = read_required(template_root() / AGENTS_REL)
 
     assert "allow_implicit_invocation: false" in metadata
@@ -48,6 +52,14 @@ def main() -> int:
     assert "ordinary advertising questions" in normalized_skill
     assert "ordinary code tasks" in normalized_skill
     assert "without ADCO project context" in normalized_skill
+    assert "An internal second opinion remains on the Content Surface" in skill
+    assert "explicit parallel isolation or independent review" not in skill
+    assert (
+        "An internal second judgment stays on the Content Surface"
+        in normalized_creative_work
+    )
+    assert "no Council, Gate, persistent receipt" in normalized_creative_work
+    assert "same-task internal second opinion stays on the\nContent Surface" in thread_operations
 
     # The metadata is the executable activation boundary: every implicit case is
     # disabled, while the explicit default prompt remains available.

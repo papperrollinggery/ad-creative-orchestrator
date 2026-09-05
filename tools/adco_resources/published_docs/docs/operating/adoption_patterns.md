@@ -29,12 +29,13 @@ NEXT_STATUS
 DOCS_MODE
 ```
 
-The default route emits a content answer and runs affected-scope validators only.
+The default route emits an intake summary, not creative output, and runs
+affected-scope validators only.
 It renders no dashboard unless requested and does not run Council, create a
 Thread, dispatch a specialist, create a client outline/PPT/Client Pack, or run
 full validation.
 
-No Gate is required for an internal intake answer. Add a Gate only when the
+No Gate is required for an internal intake summary. Add a Gate only when the
 requested output crosses the corresponding delivery boundary.
 
 ## Pattern 2: Brand Research Lane
@@ -84,6 +85,10 @@ adco export-pptx <project_dir>
 adco check-pptx <project_dir> --file <project_dir>/AD-creative/ppt/exports/client_review_vNNN.pptx
 adco client-pack-gate <project_dir>
 ```
+
+`export-pptx` requires a read-only project-wide validation PASS before writing.
+On CHECK it returns TOOL_BLOCKED and does not mutate the current version or
+FinalDelivery; a targeted WIP result never upgrades project-wide status.
 
 Gate:
 

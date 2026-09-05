@@ -6,7 +6,95 @@ from pathlib import Path
 from time import perf_counter
 from typing import Callable
 
+from adco_core.ingestion import material_files
 from adco_core.incremental_validation import run_incremental_validation
+
+
+class RunPreflightError(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def preflight_material_inputs(
+    project: Path,
+    materials: list[Path],
+    max_total_chars: int,
+) -> None:
+    """Validate all runtime inputs before ADCO creates or changes project files."""
+    if int(max_total_chars) <= 0:
+        raise RunPreflightError(
+            "invalid_character_budget",
+            "max_total_chars must be greater than zero",
+        )
+    if project.is_symlink():
+        raise RunPreflightError(
+            "unsafe_project_symlink",
+            "project root must not be a symlink",
+        )
+    for managed in (project / "AD-creative", project / ".adco-local"):
+        if managed.is_symlink():
+            raise RunPreflightError(
+                "unsafe_project_symlink",
+                f"managed project path must not be a symlink: {managed.name}",
+            )
+
+    project_root = project.resolve()
+    for material in materials:
+        label = material.name or "<material>"
+        if material.is_symlink():
+            raise RunPreflightError(
+                "unsafe_material_symlink",
+                f"material must not be a symlink: {label}",
+            )
+        if not material.exists():
+            raise RunPreflightError(
+                "material_not_found",
+                f"material not found: {label}",
+            )
+        if not material.is_file() and not material.is_dir():
+            raise RunPreflightError(
+                "unsupported_material",
+                f"material must be a regular file or directory: {label}",
+            )
+        material_root = material.resolve()
+        try:
+            project_relative = material_root.relative_to(project_root)
+        except ValueError:
+            project_relative = None
+        try:
+            material_contains_project = project_root.relative_to(material_root)
+        except ValueError:
+            material_contains_project = None
+        if project_relative == Path() or (
+            project_relative is not None
+            and project_relative.parts
+            and project_relative.parts[0] == "AD-creative"
+        ) or material_contains_project is not None:
+            raise RunPreflightError(
+                "recursive_project_material",
+                (
+                    "material must not be the project root, a parent containing the "
+                    f"project, or the managed AD-creative tree: {label}"
+                ),
+            )
+        try:
+            supported = material_files(material)
+        except ValueError as exc:
+            raise RunPreflightError(
+                "unsafe_material_symlink",
+                f"material tree contains a symlink: {label}",
+            ) from exc
+        if not supported:
+            raise RunPreflightError(
+                "empty_or_unsupported_material",
+                f"material contains no supported files: {label}",
+            )
+        if not any(path.stat().st_size > 0 for path in supported):
+            raise RunPreflightError(
+                "empty_material",
+                f"material contains no non-empty supported files: {label}",
+            )
 
 
 def _elapsed_ms(started: float) -> int:
@@ -20,17 +108,22 @@ def execute_lightweight_run(
     goal: str,
     max_total_chars: int,
     ensure_project: Callable[[Path], tuple[int, int]],
-    register_materials: Callable[[Path, list[Path], str], list[str]],
+    register_materials: Callable[[Path, list[Path], str, int], list[str]],
     ensure_intake_work: Callable[[Path, list[str], str], str] | None,
     perform_intake: Callable[..., dict[str, int]],
     render_handoff: Callable[[Path, str, list[str]], dict[str, object]],
     render_dashboard: Callable[..., Path],
     render_optional_dashboard: bool = False,
 ) -> dict[str, object]:
+    preflight_material_inputs(project, materials, max_total_chars)
     total_started = perf_counter()
     write_started = perf_counter()
     created, skipped = ensure_project(project)
-    source_ids = register_materials(project, materials, goal) if materials else []
+    source_ids = (
+        register_materials(project, materials, goal, max_total_chars)
+        if materials
+        else []
+    )
     if ensure_intake_work is not None and (source_ids or goal):
         ensure_intake_work(project, source_ids, goal)
     setup_write_ms = _elapsed_ms(write_started)
@@ -58,7 +151,8 @@ def execute_lightweight_run(
         }
 
     handoff_started = perf_counter()
-    content_answer = render_handoff(project, goal, source_ids)
+    intake_summary = render_handoff(project, goal, source_ids)
+    intake_summary["artifact_role"] = "intake_summary_not_creative_output"
     handoff_write_ms = _elapsed_ms(handoff_started)
 
     dashboard = None
@@ -108,7 +202,17 @@ def execute_lightweight_run(
         "registered_sources": len(source_ids),
         "source_ids": source_ids,
         "intake": intake_stats,
-        "content_answer": content_answer,
+        "intake_summary": intake_summary,
+        # Backward-compatible JSON alias. Human-readable CLI output uses the
+        # accurate INTAKE_SUMMARY label.
+        "content_answer": intake_summary,
+        "deprecated_fields": {
+            "content_answer": {
+                "replacement": "intake_summary",
+                "removal_target": "0.4.0",
+                "reason": "the value is intake analysis, not a creative answer",
+            }
+        },
         "dashboard": str(dashboard) if dashboard else "",
         "dashboard_render_count": int(dashboard is not None),
         "council_run_count": 0,

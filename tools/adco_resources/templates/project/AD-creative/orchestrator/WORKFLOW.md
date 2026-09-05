@@ -56,7 +56,7 @@ Every execution worker must have exact write_scope before spawn.
 Every lane declares action_space, observation_contract, error_recovery_contract, context_budget, iteration_budget, eval_gate, loop_state, replay_trigger, freeze_trigger, and stop_condition.
 Every execution worker returns files_changed, validation_result, dirty_state_impact, manifest/index updates, QA/gate status, open questions, recurrence guard, adoption/rejection recommendation, and cleanup actions.
 Dispatch captures a host-computed scope baseline after the real thread id is bound. Reconciliation must prove the actual host diff equals the receipt declaration and stays inside exact write_scope, then persist a hash-bound host scope proof.
-Main/control thread archives the worker thread after consuming and reconciling the receipt.
+Main/control passes the dispatch-bound real worker receipt to `thread-reconcile`, records adoption/rejection, refreshes the host-owned cleanup projection, then archives the consumed worker. A cleanup note is never a worker receipt.
 Main/control records adoption_decision and rejection_reason before merging or discarding worker output.
 Worker receipts contain worker_recommendation, not main adoption_decision.
 Live Codex Thread creation remains outside this repository; prompt artifacts instruct main/control to create real Codex Threads and record thread_id/receipt. No subagent fallback.
@@ -93,9 +93,9 @@ Do not let staff model/tools/frontmatter override AD-creative thread budget, ver
 Version update flow:
 
 ```text
-`adco export-pptx` always writes a new immutable client_review_vNNN.pptx and refuses overwrite.
-Before editing any legacy client-visible version, hash/stat the existing PPTX/PDF and archive immutable copies.
-Register archive entries in artifact_index.csv and version_map.csv.
+`adco export-pptx` first requires project-wide validation PASS, then writes a new immutable client_review_vNNN.pptx and refuses overwrite. On CHECK it writes nothing and reports TOOL_BLOCKED.
+Before superseding any legacy client-visible version, hash/stat and register its existing path; never blanket-copy identical bytes into version_archive.
+Register real changed milestones and lifecycle supersession in artifact_index.csv and version_map.csv.
 Create the next material version name, for example v2 or v3.
 Treat final/professional/影视版/文案版 names as aliases only; truth is version_map.csv plus current_truth.md.
 ```

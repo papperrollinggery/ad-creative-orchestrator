@@ -1,31 +1,31 @@
 # Creative Contract and Candidate Quality Standard
 
-用途：把公开行业框架转成 Ad Creative Orchestrator 的 evidence-bound creative contract、候选导入和人工/独立 Critic 复核项。
+用途：说明直接广告创作的质量方法，以及需要 durable contract 时的候选导入和人工/独立 Critic 复核项。
 
 ## 定位
 
-Ad Creative Orchestrator 不是视频生成器、图片生成器、PPT 模板生成器，也不替代创意总监或客户审批。
+Ad Creative Orchestrator 使用当前主模型和按需工具完成广告内容工作；它不替代创意总监或客户审批。
 
 它负责：
 
 ```text
-项目控制
-资料和参考追溯
-creative brief contract 和候选 provenance
-质量 Gate
-交接和版本归属
+直接创作：从资料完成策略、概念、脚本、treatment、分镜或提案内容
+durable 工作：资料和参考追溯、creative brief contract、候选 provenance、交接和版本归属
 ```
 
-`creative-brief` 只把当前 evidence chunks、facts、requirements 和 open gaps 冻结为 brief snapshot、contract、candidate schema 与 generation request；它不生成创意方向。
+普通内容先直接完成，不要求 `creative-brief`、候选导入、artifact index 或 Gate。方法见 `skill_drafts/ad-creative-orchestrator/creative_work.md`：从目标与受众行为阻力，推出有证据的产品因果和可见机制；多个方向必须机制不同，并说明有依据的推荐。脚本要有动作、台词/声音（如适用）和收束；客户提案先完成故事与内容，再进入 PPT。
 
-GPT-5.6 Sol 或明确选择的专业 Specialist 负责创意推理：生成 4-6 个候选。独立 Critic 负责 brief adherence、insight、brand ownership、mechanism difference、key visual、shootability、production risk 和 brand replacement test，去重后保留 2-3 个。
+`creative-brief` 只在 durable candidate exchange 中冻结当前 evidence chunks、facts、requirements 和 open gaps 为 brief snapshot、contract、candidate schema 与 generation request；它不生成创意方向。当前主模型或明确选择的 Specialist 负责创意推理：数量服从用户请求；未指定时只生成最小充分集合（1-6 个）。独立 Critic 只在用户明确要求或高后果决策边界启用，负责 brief adherence、insight、brand ownership、mechanism difference、key visual、shootability、production risk 和 brand replacement test；不为流程完整感制造额外候选。
 
-`creative-import` 验证候选结构、snapshot/evidence 绑定与机制差异；`creative-review` 是确定性结构/语言 lint。两者都不等于独立创意判断、客户偏好、商业效果或最终发送审批。`creative-proposal` 只是 `creative-brief` 的弃用兼容 alias。
+`creative-import` 验证候选结构、manifest/snapshot/provenance 绑定、机制差异、所有落盘声明字段、local workflow assertion 和待人工复核项；parser 生成的 candidate requirement 不会自动升级为硬事实，直接改 CSV 状态也不算确认。local assertion 明确为 `identity_assurance=NONE`，不代表用户/客户身份、批准或发送授权。receipt 的 `candidate_sha256` 绑定精确落盘字节；完整 immutable generation 验证后只原子切换 `current_generation.json`。`creative-review` 重新核对 pointer/generation/import receipt/brief/派生视图，并执行确定性结构/语义/语言 lint；evidence refs 只报告 `PROVENANCE_ONLY`，不声称语义支持。两者都不等于独立创意判断、客户偏好、商业效果或最终发送审批。`creative-proposal` 只是 `creative-brief` 的弃用兼容 alias。
 
 命令：
 
 ```text
 adco creative-brief <project> [--work-id <id>] [--json]
+adco creative-assertion-record <project> --semantics <creative_requirement_confirmation|creative_constraint_approval|creative_constraint_rejection> --requirement-id <id> [--artifact-binding <binding> ...] --note <reason> [--json]
+adco creative-requirement-confirm <project> --requirement-id <id> --confirmation-ref <local_operator_assertion:id> [--evidence-ref <chunk>] [--json]
+adco creative-constraint-resolve <project> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <local_operator_assertion:id> --decision <approved|rejected> --note <reason> [--json]
 adco creative-import <project> --file <candidate.json> [--json]
 adco creative-review <project> [--json]
 ```
@@ -34,8 +34,8 @@ adco creative-review <project> [--json]
 
 ```text
 VALIDATION=PASS = 项目结构和追溯关系通过
-creative-import = candidate contract / exact evidence binding 通过
-creative-review = deterministic structure/language lint，不是独立 Critic
+creative-import = pre-write candidate contract / hard-constraint / exact-byte binding 通过
+creative-review = deterministic structure/semantic/language lint，不是独立 Critic
 independent Critic = 创意判断与 brand replacement challenge
 human/client approval = 人工或客户最终判断
 ```
@@ -44,7 +44,9 @@ human/client approval = 人工或客户最终判断
 
 ## 必需输入
 
-运行 creative brief/import/review 前，至少要有：
+直接创作至少要有能支持当前判断的资料；确认事实、推断与未知分开。缺独有事实时只暂停受影响部分，不把创作虚构情节当作伪造客户事实。明确禁止虚构数据/数字或严格地点范围时，仍按原文严格执行。
+
+运行 durable creative brief/import/review 前，至少要有：
 
 ```text
 AD-creative/orchestrator/requirements.csv
@@ -52,12 +54,11 @@ AD-creative/orchestrator/current_truth.md
 AD-creative/orchestrator/source_events.csv
 AD-creative/orchestrator/evidence_chunks.jsonl
 AD-creative/orchestrator/fact_inventory.jsonl
-AD-creative/orchestrator/artifact_index.csv
 参考来源或 search plan
 客户/导演/用户待确认项
 ```
 
-缺少关键客户目标、受众、品牌禁区、投放场景、参考来源或最终决策人时，open evidence gaps 必须保留，不能写 client-ready。候选不能以 assumption 文本代替现有 evidence chunk id。
+`artifact_index.csv` 仅在 Delivery Surface 需要版本/交付绑定时是必需输入。缺少关键客户目标、受众、品牌禁区、投放场景、参考来源或最终决策人时，open evidence gaps 必须保留，不能写 client-ready。候选不能以 assumption 文本代替现有 evidence chunk id。
 
 ## Source Mapping
 
@@ -79,7 +80,7 @@ AD-creative/orchestrator/artifact_index.csv
 brief_snapshot_sha256 是否仍是 exact current
 每个方向是否绑定现有 evidence chunk
 insight 是否能从 brief evidence 推导，而不是复述 brief
-2-3 个保留方向是否具有不同的 creative mechanism
+请求范围内的保留方向是否具有不同的 creative mechanism
 why_brand_can_own_it 是否能通过品牌替换测试
 key visual 是否清楚，story/behavior 是否可拍
 production risk 是否具体
@@ -106,13 +107,33 @@ PPT/DOCX/XLSX 固定模板已生成
 
 | 需求 | 归属模块 | adco 责任 |
 | --- | --- | --- |
-| 创意推理与 4-6 个候选 | GPT-5.6 Sol 或专业 Specialist | 提供 brief contract、证据边界和输出 schema |
-| 2-3 个 post-Critic 候选、option matrix | ADCO import/control plane | 验证证据、机制差异、版本和 provenance |
-| 视频脚本、分镜、导演阐述、视频 prompt | `dircreative` 或专门 film workflow | 通过 Specialist Exchange 写清需求、证据和交付边界，再独立采用 |
+| 创意推理与按需候选 | 当前主模型；需要明确专长时才选 Specialist | 直接完成内容，或为 durable exchange 提供 brief contract、证据边界和动态数量 schema |
+| 1-6 个请求内候选、option matrix | ADCO import/control plane | 验证硬约束、证据、机制差异、版本和 provenance |
+| 视频脚本、分镜、导演阐述、视频 prompt | 当前主模型直接完成；需要边界明确的外部专长时选相应 film workflow | 只有明确 handoff 才通过 Specialist Exchange 写清需求、证据和交付边界，再独立采用 |
 | image / KV / 背景图 / moodboard / visual asset | `imagegen` 或 Creative Production | 生成 image job spec、导入 asset、跑 visual-quality-gate |
 | 固定 PPT / DOCX / XLSX 模板和版式系统 | Template Creator 或专门文档模板流程 | 输出内容结构、字段、追溯关系、审阅 Gate |
 
 ADCO 可以起草 brief contract、检查来源、导入候选、登记结果和维护版本；不要把确定性模板或 lint 描述成完整创意、视频、图片或固定模板生成引擎。
+
+## Film / Director Mode Acceptance
+
+导演阐述必须先成为客户可读 treatment，再展开技术镜头表。最低可接受内容：
+
+```text
+一句导演命题
+受众前后状态变化
+品牌或产品不可替换的因果角色
+逐段 cause -> visible action -> effect
+空间、时间、材质、身体、物件和 UI 的世界规则
+摄影、调度、表演、声音与剪辑为什么服务叙事
+每个关键效果的实拍 / 合成 / 模拟边界
+关键资产、场地、界面或预算失效时的 Plan B
+参考片只借鉴什么、禁止复制什么
+```
+
+镜头表的每一行必须包含 `story_function`、`causal_input`、`visible_action`、`causal_output`、`physical_space`、`capture_method`、`brand_or_product_role`、`risk` 和 `fallback`。只有氛围词、漂亮构图、镜头焦段或技术术语，不算完成。
+
+Film Gate 还执行四个反证：去掉品牌后故事是否仍原样成立；相邻镜头是否真的互为因果；人物、物件、界面和材质是否遵守同一物理世界；关键制作条件失败后核心承诺是否仍可拍。任一项无法回答时保持 `BLOCKED`，专业 Specialist 的 `completed` 或 domain QA 不能替代 ADCO 独立采用判断。
 
 ## Humanized Writing Rules
 

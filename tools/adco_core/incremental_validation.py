@@ -11,14 +11,20 @@ from typing import Callable, Iterable
 
 from .creative_contract import (
     BRIEF_CONTRACT_REL,
+    BRIEF_MANIFEST_REL,
     BRIEF_SNAPSHOT_REL,
     CANDIDATE_SCHEMA_REL,
-    CURRENT_CANDIDATE_REL,
-    payload_sha256,
+    CURRENT_GENERATION_REL,
+    GENERATION_REQUEST_REL,
+    LEGACY_CURRENT_CANDIDATE_REL,
+    OPEN_GAPS_REL,
+    _verified_brief,
+    current_creative_generation_paths,
     validate_creative_candidate,
 )
 from .facts import FACT_INVENTORY_REL, FACT_STATES, load_fact_inventory
 from .ingestion import EVIDENCE_REL, load_evidence_chunks, sha256_text
+from .safe_write import read_project_text
 
 
 ALL_SCOPES = [
@@ -129,10 +135,18 @@ def _scope_for_path(raw_path: str) -> str | None:
         return "requirements_gaps"
     if any(
         path.endswith(item.as_posix().lower())
-        for item in [BRIEF_SNAPSHOT_REL, BRIEF_CONTRACT_REL, CANDIDATE_SCHEMA_REL]
+        for item in [
+            BRIEF_SNAPSHOT_REL, BRIEF_CONTRACT_REL, CANDIDATE_SCHEMA_REL,
+            BRIEF_MANIFEST_REL, GENERATION_REQUEST_REL, OPEN_GAPS_REL,
+        ]
     ):
         return "creative_brief"
-    if "creative/candidates/" in path or path.endswith(CURRENT_CANDIDATE_REL.as_posix().lower()):
+    if (
+        "creative/candidates/" in path
+        or "creative/generations/" in path
+        or path.endswith(CURRENT_GENERATION_REL.as_posix().lower())
+        or path.endswith(LEGACY_CURRENT_CANDIDATE_REL.as_posix().lower())
+    ):
         return "creative_candidate"
     if "client_review/client_outline" in path:
         return "client_outline"
@@ -316,38 +330,27 @@ def _validate_requirements_gaps(project: Path) -> tuple[list[str], list[str]]:
 
 
 def _validate_creative_brief(project: Path) -> tuple[list[str], list[str]]:
-    errors: list[str] = []
-    payloads: dict[Path, object] = {}
-    for rel_path in [BRIEF_SNAPSHOT_REL, BRIEF_CONTRACT_REL, CANDIDATE_SCHEMA_REL]:
-        path = project / rel_path
-        if not path.is_file():
-            errors.append(f"creative brief artifact missing: {rel_path}")
-            continue
-        try:
-            payloads[rel_path] = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            errors.append(f"creative brief artifact invalid JSON: {rel_path}: {exc}")
-    snapshot = payloads.get(BRIEF_SNAPSHOT_REL)
-    if isinstance(snapshot, dict):
-        expected = snapshot.get("brief_snapshot_sha256")
-        basis = dict(snapshot)
-        basis.pop("brief_snapshot_sha256", None)
-        if expected != payload_sha256(basis):
-            errors.append("creative brief snapshot digest mismatch")
-    contract = payloads.get(BRIEF_CONTRACT_REL)
-    if isinstance(snapshot, dict) and isinstance(contract, dict):
-        if contract.get("brief_snapshot_sha256") != snapshot.get("brief_snapshot_sha256"):
-            errors.append("creative brief contract snapshot binding mismatch")
-    return errors, []
+    # Share the exact-byte and current-input contract used by import/review;
+    # a second, weaker snapshot-only checker can incorrectly certify stale work.
+    try:
+        _verified_brief(project)
+    except (OSError, ValueError) as exc:
+        return [str(exc)], []
+    return [], []
 
 
 def _validate_creative_candidate(project: Path) -> tuple[list[str], list[str]]:
-    path = project / CURRENT_CANDIDATE_REL
-    if not path.is_file():
+    try:
+        generation_paths = current_creative_generation_paths(project)
+    except ValueError as exc:
+        return [str(exc)], []
+    if not generation_paths:
         return ["current creative candidate is missing"], []
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        payload = json.loads(
+            read_project_text(project, generation_paths["candidate"])
+        )
+    except (OSError, json.JSONDecodeError) as exc:
         return [f"current creative candidate invalid JSON: {exc}"], []
     return validate_creative_candidate(project, payload)
 
@@ -394,6 +397,16 @@ def run_incremental_validation(
         changed_file_paths=changed_file_paths,
         changed_hashes=changed_hashes,
     )
+    # Intake need not create downstream work. Once a brief exists, however,
+    # upstream changes must check its freshness without rendering or rewriting it.
+    brief_exists = any(
+        (project / relative).exists() or (project / relative).is_symlink()
+        for relative in (BRIEF_MANIFEST_REL, BRIEF_SNAPSHOT_REL, BRIEF_CONTRACT_REL)
+    )
+    if brief_exists and "creative_brief" in plan["affected_scopes"]:
+        selected = set(plan["validators_run"]) | {"validate_creative_brief"}
+        plan["validators_run"] = [name for name in ALL_VALIDATORS if name in selected]
+        plan["validators_skipped"] = [name for name in ALL_VALIDATORS if name not in selected]
     errors: list[str] = []
     warnings: list[str] = []
     for validator_name in plan["validators_run"]:

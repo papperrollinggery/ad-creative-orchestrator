@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
-from adco_core.ingestion import ingest_source_rows
+from adco_core.ingestion import ingest_source_rows, parse_file
 
 
 def _write_pdf(path: Path, text: str) -> None:
@@ -163,9 +166,103 @@ def test_budget_overflow_is_reported_not_silently_truncated() -> None:
         assert report.over_budget[0]["reason"] == "total_character_budget_exceeded"
 
 
+def test_media_hashing_is_streaming_and_exif_is_allowlisted() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-ingestion-media-") as raw:
+        project = Path(raw)
+        video = project / "reference.mp4"
+        video.write_bytes(b"streaming-media-fixture")
+        expected_hash = hashlib.sha256(video.read_bytes()).hexdigest()
+
+        with patch.object(Path, "read_bytes", side_effect=AssertionError("whole-file read")):
+            video_chunks = parse_file(project, video, "SRC-VIDEO")
+        assert video_chunks[0].metadata["file_sha256"] == expected_hash
+
+        private_marker = "PRIVATE-LOCATION-31.2304-121.4737"
+        ffprobe_payload = {
+            "format": {
+                "duration": "12.5",
+                "filename": str(video),
+                "tags": {
+                    "creation_time": "2026-07-21T12:34:56Z",
+                    "location": private_marker,
+                    "comment": private_marker,
+                },
+            },
+            "streams": [
+                {
+                    "index": 0,
+                    "codec_type": "video",
+                    "codec_name": "h264",
+                    "width": 1920,
+                    "height": 1080,
+                    "r_frame_rate": "30000/1001",
+                    "tags": {
+                        "handler_name": private_marker,
+                        "encoder": private_marker,
+                        "comment": private_marker,
+                    },
+                }
+            ],
+        }
+        completed = subprocess.CompletedProcess(
+            args=["ffprobe"],
+            returncode=0,
+            stdout=json.dumps(ffprobe_payload),
+            stderr="",
+        )
+        with (
+            patch("adco_core.ingestion.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("adco_core.ingestion.subprocess.run", return_value=completed),
+            patch.object(Path, "read_bytes", side_effect=AssertionError("whole-file read")),
+        ):
+            sanitized_chunks = parse_file(project, video, "SRC-VIDEO-SANITIZED")
+        serialized_video = json.dumps(
+            sanitized_chunks[0].metadata,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        assert private_marker not in serialized_video
+        assert str(video) not in serialized_video
+        assert "creation_time" not in serialized_video
+        assert "handler_name" not in serialized_video
+        assert sanitized_chunks[0].metadata["ffprobe"] == {
+            "format": {"duration": "12.5"},
+            "streams": [
+                {
+                    "index": 0,
+                    "codec_type": "video",
+                    "codec_name": "h264",
+                    "width": 1920,
+                    "height": 1080,
+                    "r_frame_rate": "30000/1001",
+                }
+            ],
+        }
+
+        if importlib.util.find_spec("PIL"):
+            from PIL import Image
+
+            image_path = project / "private.jpg"
+            image = Image.new("RGB", (16, 12), (20, 40, 60))
+            exif = Image.Exif()
+            exif[271] = "Private Camera Maker"
+            exif[272] = "Private Camera Model"
+            exif[306] = "2026:07:21 12:34:56"
+            exif[274] = 1
+            image.save(image_path, exif=exif)
+            with patch.object(Path, "read_bytes", side_effect=AssertionError("whole-file read")):
+                image_chunks = parse_file(project, image_path, "SRC-IMAGE")
+            metadata = image_chunks[0].metadata
+            assert metadata.get("exif") == {"Orientation": "1"}, metadata
+            serialized = json.dumps(metadata, ensure_ascii=False)
+            assert "Private Camera" not in serialized
+            assert "2026:07:21" not in serialized
+
+
 def main() -> int:
     test_all_available_formats_and_long_material()
     test_budget_overflow_is_reported_not_silently_truncated()
+    test_media_hashing_is_streaming_and_exif_is_allowlisted()
     print("TEST_MULTIFORMAT_INGESTION=PASS")
     return 0
 

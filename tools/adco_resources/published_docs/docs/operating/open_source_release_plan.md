@@ -1,13 +1,13 @@
 # Open Source Release Plan
 
-Status: public release baseline at `v0.3.2`; subsequent changes require a new versioned Release.
+Status: public release baseline at `v0.3.3`; subsequent changes require a new versioned Release.
 
 ## Current Public Baseline
 
 ```text
-release: v0.3.2
+release: v0.3.3
 commit: use the immutable tag target recorded by the GitHub Release
-GitHub Release: https://github.com/papperrollinggery/ad-creative-orchestrator/releases/tag/v0.3.2
+GitHub Release: https://github.com/papperrollinggery/ad-creative-orchestrator/releases/tag/v0.3.3
 GitHub Actions: check PASS on Python 3.10 and 3.12
 ```
 
@@ -24,7 +24,7 @@ ADCO is a local-first, Codex-first control plane for advertising creative projec
 | Lifecycle safety | Human Workspace v2 is current-first; schema-v2 migration, legacy quarantine, tombstones, and FinalDelivery reconciliation remain fail-closed. |
 | Thread safety | Thread dispatch proof is immutable per work/lane/attempt, worker writes are scope-bound, and host reconciliation remains authoritative. |
 | Specialist boundary | DIRcreative and other providers return bounded recommendations/receipts; ADCO alone owns adoption, version, PPT, FinalDelivery, and send readiness. |
-| Validation | `make release-check`, distribution inspection, editable-install smoke, package-install smoke, and GitHub Actions pass. |
+| Validation | `make release-check`, distribution inspection, editable-install smoke, package-install smoke, clean declared-dependency install smoke, and GitHub Actions pass. |
 | User-facing limits | `VALIDATION=PASS` is structural/traceability evidence only; no client or creative approval is implied. |
 
 ## Release Sequence

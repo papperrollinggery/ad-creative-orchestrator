@@ -11,7 +11,7 @@ python3 tools/render_demo_transcript.py
 ```console
 $ adco demo /tmp/adco-first-run --no-open
 DEMO=PASS
-CONTENT_ANSWER:
+INTAKE_SUMMARY:
 ## 当前目标
 基于内置 brief 提炼品牌策略，并提出三条机制不同的内部创意方向。
 
@@ -36,12 +36,12 @@ CONTENT_ANSWER:
 - 无
 
 ## 现在可以推进
-- 可以基于已锁定要求继续内部分析和方案构思，不需要先建立交付账本。
-- 下一步应把证据转成内容判断或创意 brief，并优先检查真实素材语义。
+- 结合已读资料完成本轮目标：基于内置 brief 提炼品牌策略，并提出三条机制不同的内部创意方向。
+- 将真实素材与产品证据转成可用的内容判断、脚本或视觉方案。
 - 交付格式已被识别，但只有真正进入客户可见版本时才升级到 Delivery Surface。
 
 ## 下一步
-基于当前证据生成或更新 creative brief，再进入专业内容推理。
+基于已读资料完成本轮目标：基于内置 brief 提炼品牌策略，并提出三条机制不同的内部创意方向。
 PROJECT=/tmp/adco-first-run
 PROJECT_SURFACE=content
 CREATED_FILES=9

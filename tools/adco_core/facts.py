@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import io
 import json
 import re
 from time import perf_counter
@@ -13,20 +15,45 @@ from typing import Iterable
 
 from .ingestion import EVIDENCE_REL, IngestionReport, ingest_source_rows, load_evidence_chunks
 from .models import EvidenceChunk, FactInventoryItem
+from .safe_write import atomic_write_text, read_optional_project_text
+from runtime_paths import DELIVERY_SURFACE, project_surface
 
 
 FACT_INVENTORY_REL = Path("AD-creative/orchestrator/fact_inventory.jsonl")
 ANALYSIS_REQUEST_REL = Path("AD-creative/orchestrator/intake_analysis_request.json")
 FACT_STATES = {"present", "missing", "unknown", "conflicting"}
 FACT_OWNERS = {"client", "operator", "model"}
+CONTENT_DEFERRED_FACT_KEYS = {
+    "asset.product_images",
+    "brand.logo",
+    "policy.ai_client_visibility",
+}
+LOCAL_ASSERTION_TYPES = {"local_operator_assertion"}
+LOCAL_ASSERTION_SEMANTICS = {
+    "creative_requirement_confirmation",
+    "creative_constraint_approval",
+    "creative_constraint_rejection",
+}
+
+
+def _is_local_assertion_event(row: dict[str, str]) -> bool:
+    return (
+        row.get("source_type", "").strip().casefold() in LOCAL_ASSERTION_TYPES
+        and row.get("declared_semantics", "").strip().casefold()
+        in LOCAL_ASSERTION_SEMANTICS
+    )
 
 INTAKE_ANALYSIS_SCHEMA: dict[str, object] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "ADCO evidence-bound intake analysis",
     "type": "object",
-    "required": ["analysis_version", "facts"],
+    "required": ["analysis_version", "evidence_snapshot_sha256", "facts"],
     "properties": {
         "analysis_version": {"const": "1.0"},
+        "evidence_snapshot_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+        },
         "facts": {
             "type": "array",
             "items": {
@@ -101,6 +128,19 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
+def evidence_snapshot_sha256(chunks: Iterable[EvidenceChunk]) -> str:
+    """Bind intake analysis to every current evidence record, not just its cited IDs."""
+    records = [chunk.as_dict() for chunk in chunks]
+    records.sort(key=lambda item: str(item.get("chunk_id", "")))
+    canonical = json.dumps(
+        records,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     if not path.is_file():
         return [], []
@@ -109,13 +149,18 @@ def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
         return list(reader.fieldnames or []), [dict(row) for row in reader]
 
 
-def _write_csv(path: Path, fields: list[str], rows: Iterable[dict[str, str]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({field: row.get(field, "") for field in fields})
+def _write_csv(
+    project: Path,
+    path: Path,
+    fields: list[str],
+    rows: Iterable[dict[str, str]],
+) -> None:
+    handle = io.StringIO(newline="")
+    writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({field: row.get(field, "") for field in fields})
+    atomic_write_text(project, path, handle.getvalue())
 
 
 def _next_id(rows: list[dict[str, str]], key: str, prefix: str) -> str:
@@ -127,35 +172,39 @@ def _next_id(rows: list[dict[str, str]], key: str, prefix: str) -> str:
     return f"{prefix}-{max(numbers, default=0) + 1:03d}"
 
 
-def load_fact_inventory(project: Path) -> list[FactInventoryItem]:
-    path = project / FACT_INVENTORY_REL
-    if not path.is_file():
-        return []
+def parse_fact_inventory_text(text: str) -> list[FactInventoryItem]:
+    """Parse a fact inventory from one already-captured text snapshot."""
     facts: list[FactInventoryItem] = []
-    with path.open(encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, 1):
-            if not line.strip():
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"invalid fact inventory JSONL at line {line_number}: {exc}") from exc
-            if not isinstance(payload, dict):
-                raise ValueError(f"invalid fact inventory record at line {line_number}")
-            facts.append(FactInventoryItem.from_dict(payload))
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"invalid fact inventory JSONL at line {line_number}: {exc}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"invalid fact inventory record at line {line_number}")
+        facts.append(FactInventoryItem.from_dict(payload))
     return facts
+
+
+def load_fact_inventory(project: Path) -> list[FactInventoryItem]:
+    text = read_optional_project_text(project, project / FACT_INVENTORY_REL)
+    return [] if text is None else parse_fact_inventory_text(text)
 
 
 def write_fact_inventory(project: Path, facts: Iterable[FactInventoryItem]) -> Path:
     path = project / FACT_INVENTORY_REL
-    path.parent.mkdir(parents=True, exist_ok=True)
     ordered = sorted(facts, key=lambda item: item.fact_key)
-    path.write_text(
+    atomic_write_text(
+        project,
+        path,
         "".join(
             json.dumps(item.as_dict(), ensure_ascii=False, sort_keys=True) + "\n"
             for item in ordered
         ),
-        encoding="utf-8",
     )
     return path
 
@@ -214,7 +263,7 @@ EXPLICIT_FACT_PATTERNS: list[tuple[str, str, re.Pattern[str], bool]] = [
     (
         "policy.ai_client_visibility",
         "present",
-        re.compile(r"(?:允许|可用于|可以).{0,24}(?:AI|生成图).{0,24}(?:客户|审阅|client)", re.I),
+        re.compile(r"(?<!不)(?:允许|可用于|可以).{0,24}(?:AI|生成图).{0,24}(?:客户|审阅|client)", re.I),
         False,
     ),
     (
@@ -282,7 +331,9 @@ def explicit_facts_from_evidence(chunks: Iterable[EvidenceChunk]) -> list[FactIn
 
 
 REQUIREMENT_TRIGGER_PATTERN = re.compile(
-    r"项目|客户希望|希望|要求|交付|方向|关键画面|关键帧|moodboard|参考|PPT|不要|不能|必须|需要|新增要求|客户明确|deliver|must|should",
+    r"项目|客户希望|希望|要求|交付|方向|关键画面|关键帧|moodboard|参考|PPT|"
+    r"不要|不能|不得|禁止|最多|不超过|以内|只能|仅限|必须|需要|新增要求|客户明确|"
+    r"deliver|must|should|max(?:imum)?|up\s+to|\bonly\b|prohibit|forbid",
     re.I,
 )
 
@@ -295,7 +346,21 @@ def _clean_statement(value: str) -> str:
 
 def classify_requirement(statement: str) -> tuple[str, str, str]:
     lowered = statement.lower()
-    if any(token in statement for token in ["不要", "禁区", "不能", "未经授权", "禁止"]):
+    if any(
+        token in statement
+        for token in [
+            "不要",
+            "禁区",
+            "不能",
+            "不得",
+            "未经授权",
+            "禁止",
+            "最多",
+            "不超过",
+            "只能",
+            "仅限",
+        ]
+    ) or re.search(r"must\s+not|\bonly\b|\bmaximum\b|\bmax\s", lowered):
         return "constraint", "high", "client_review"
     if any(token in lowered for token in ["交付", "ppt", "可编辑", "slidespec", "deliver"]):
         return "delivery", "high", "ppt_gate"
@@ -340,7 +405,11 @@ def requirement_candidates(chunks: Iterable[EvidenceChunk]) -> list[RequirementC
     return candidates
 
 
-def fact_gap_templates(facts: Iterable[FactInventoryItem]) -> list[dict[str, str]]:
+def fact_gap_templates(
+    facts: Iterable[FactInventoryItem],
+    *,
+    delivery_surface: bool = True,
+) -> list[dict[str, str]]:
     gaps: list[dict[str, str]] = []
     for fact in facts:
         if fact.state not in {"missing", "conflicting"} and not (
@@ -352,13 +421,30 @@ def fact_gap_templates(facts: Iterable[FactInventoryItem]) -> list[dict[str, str
             "conflicting": "冲突",
             "unknown": "待确认",
         }[fact.state]
+        deferred_on_content = (
+            not delivery_surface
+            and fact.fact_key in CONTENT_DEFERRED_FACT_KEYS
+            and fact.state != "conflicting"
+        )
+        impact = (
+            "low"
+            if deferred_on_content
+            else "blocking"
+            if fact.blocking or fact.state == "conflicting"
+            else "high_impact"
+        )
+        recommended_action = (
+            f"记录 {fact.fact_key}，在进入客户可见交付前补齐；当前内部内容工作可继续。"
+            if deferred_on_content
+            else f"核对 {fact.fact_key} 的来源证据并由 {fact.owner} 补充或裁决。"
+        )
         gaps.append(
             {
                 "linked_requirement_id": "",
-                "impact": "blocking" if fact.blocking or fact.state == "conflicting" else "high_impact",
+                "impact": impact,
                 "status": "open",
                 "description": f"fact:{fact.fact_key} {state_label}；仅依据已绑定证据，不由关键词反推。",
-                "recommended_action": f"核对 {fact.fact_key} 的来源证据并由 {fact.owner} 补充或裁决。",
+                "recommended_action": recommended_action,
                 "owner": fact.owner,
                 "question_for_user": "" if fact.owner == "client" else f"请确认 {fact.fact_key}。",
                 "question_for_client": f"请补充或确认 {fact.fact_key}。" if fact.owner == "client" else "",
@@ -369,17 +455,57 @@ def fact_gap_templates(facts: Iterable[FactInventoryItem]) -> list[dict[str, str
 
 
 def _sync_requirements(
-    project: Path, candidates: Iterable[RequirementCandidate]
+    project: Path,
+    candidates: Iterable[RequirementCandidate],
+    *,
+    replace_source_ids: set[str] | None = None,
+    current_evidence_ids: set[str] | None = None,
 ) -> list[dict[str, str]]:
     path = project / "AD-creative/orchestrator/requirements.csv"
     fields, rows = _read_csv(path)
-    existing = {row.get("statement", "").casefold() for row in rows}
+    for field in (
+        "evidence_ref",
+        "confirmation_ref",
+        "confirmed_by",
+        "confirmed_at",
+    ):
+        if field not in fields:
+            fields.append(field)
+    replace_source_ids = replace_source_ids or set()
+    retained_rows = [
+        row
+        for row in rows
+        if not (
+            row.get("source_event_id", "") in replace_source_ids
+            and row.get("status", "").strip().casefold() == "candidate"
+            and not row.get("confirmation_ref", "").strip()
+            and not row.get("confirmed_by", "").strip()
+            and not row.get("confirmed_at", "").strip()
+        )
+    ]
+    changed = len(retained_rows) != len(rows)
+    if current_evidence_ids is not None:
+        for row in retained_rows:
+            if (
+                row.get("source_event_id", "") in replace_source_ids
+                and row.get("status", "").strip().casefold() != "candidate"
+                and row.get("evidence_ref", "").strip()
+                not in current_evidence_ids
+            ):
+                row["status"] = "needs_reconfirmation"
+                row["open_questions"] = (
+                    "source evidence was replaced; reconfirm this requirement before use"
+                )
+                changed = True
+    existing = {row.get("statement", "").casefold() for row in retained_rows}
     new_rows: list[dict[str, str]] = []
     for candidate in candidates:
         if candidate.statement.casefold() in existing:
             continue
         row = {
-            "requirement_id": _next_id([*rows, *new_rows], "requirement_id", "REQ"),
+            "requirement_id": _next_id(
+                [*retained_rows, *new_rows], "requirement_id", "REQ"
+            ),
             "source_event_id": candidate.source_event_id,
             "owner": candidate.owner,
             "statement": candidate.statement,
@@ -392,11 +518,15 @@ def _sync_requirements(
             "linked_artifacts": "",
             "supersedes_requirement_id": "",
             "open_questions": f"evidence_ref:{candidate.evidence_ref}",
+            "evidence_ref": candidate.evidence_ref,
+            "confirmation_ref": "",
+            "confirmed_by": "",
+            "confirmed_at": "",
         }
         new_rows.append(row)
         existing.add(candidate.statement.casefold())
-    if new_rows:
-        _write_csv(path, fields, [*rows, *new_rows])
+    if new_rows or changed:
+        _write_csv(project, path, fields, [*retained_rows, *new_rows])
     return new_rows
 
 
@@ -405,19 +535,36 @@ def sync_fact_gaps(
 ) -> list[dict[str, str]]:
     path = project / "AD-creative/orchestrator/gaps.csv"
     fields, rows = _read_csv(path)
-    existing = {row.get("description", "") for row in rows}
+    existing = {row.get("description", ""): row for row in rows}
     new_rows: list[dict[str, str]] = []
-    for template in fact_gap_templates(facts):
-        if template["description"] in existing:
+    changed = False
+    for template in fact_gap_templates(
+        facts,
+        delivery_surface=project_surface(project) == DELIVERY_SURFACE,
+    ):
+        current = existing.get(template["description"])
+        if current is not None:
+            for key, value in template.items():
+                if key == "status":
+                    if (
+                        template["impact"] in {"blocking", "high_impact"}
+                        and current.get("status", "").strip().lower() != "open"
+                    ):
+                        current["status"] = "open"
+                        changed = True
+                    continue
+                if current.get(key, "") != value:
+                    current[key] = value
+                    changed = True
             continue
         row = {
             "gap_id": _next_id([*rows, *new_rows], "gap_id", "GAP"),
             **template,
         }
         new_rows.append(row)
-        existing.add(template["description"])
-    if new_rows:
-        _write_csv(path, fields, [*rows, *new_rows])
+        existing[template["description"]] = row
+    if new_rows or changed:
+        _write_csv(project, path, fields, [*rows, *new_rows])
     return new_rows
 
 
@@ -427,22 +574,59 @@ def run_evidence_intake(
     *,
     max_total_chars: int = 2_000_000,
 ) -> IntakeResult:
+    content_source_rows = [
+        row for row in source_rows if not _is_local_assertion_event(row)
+    ]
     parse_started = perf_counter()
     ingestion = ingest_source_rows(
         project,
-        source_rows,
+        content_source_rows,
         max_total_chars=max_total_chars,
     )
     parse_ms = round((perf_counter() - parse_started) * 1000)
     analysis_started = perf_counter()
-    all_chunks = load_evidence_chunks(project)
+    _, all_source_rows = _read_csv(
+        project / "AD-creative/orchestrator/source_events.csv"
+    )
+    local_assertion_source_ids = {
+        row.get("source_event_id", "").strip()
+        for row in all_source_rows
+        if _is_local_assertion_event(row)
+    }
+    all_loaded_chunks = load_evidence_chunks(project)
+    local_assertion_chunk_ids = {
+        chunk.chunk_id
+        for chunk in all_loaded_chunks
+        if chunk.source_event_id in local_assertion_source_ids
+    }
+    all_chunks = [
+        chunk
+        for chunk in all_loaded_chunks
+        if chunk.source_event_id not in local_assertion_source_ids
+    ]
+    current_evidence_ids = {chunk.chunk_id for chunk in all_chunks}
     explicit_facts = explicit_facts_from_evidence(all_chunks)
-    existing_facts = load_fact_inventory(project)
+    existing_facts = [
+        fact
+        for fact in load_fact_inventory(project)
+        if not set(fact.evidence_refs).intersection(local_assertion_chunk_ids)
+        and bool(fact.evidence_refs)
+        and set(fact.evidence_refs).issubset(current_evidence_ids)
+    ]
     facts = merge_facts(existing_facts, explicit_facts)
     fact_analysis_ms = round((perf_counter() - analysis_started) * 1000)
     write_started = perf_counter()
     write_fact_inventory(project, facts)
-    new_requirements = _sync_requirements(project, requirement_candidates(ingestion.chunks))
+    new_requirements = _sync_requirements(
+        project,
+        requirement_candidates(ingestion.chunks),
+        replace_source_ids={
+            row.get("source_event_id", "")
+            for row in content_source_rows
+            if row.get("source_event_id", "")
+        },
+        current_evidence_ids=current_evidence_ids,
+    )
     new_gaps = sync_fact_gaps(project, facts)
     write_ms = round((perf_counter() - write_started) * 1000)
     return IntakeResult(
@@ -464,30 +648,40 @@ def export_intake_analysis_request(project: Path) -> tuple[dict[str, object], Pa
         raise ValueError("no evidence chunks; run intake-evidence first")
     payload: dict[str, object] = {
         "protocol_id": "adco.intake-analysis-request",
-        "request_version": "1.0",
+        "request_version": "1.1",
         "instructions": [
             "Return only facts supported by evidence_refs from this request.",
+            "Copy evidence_snapshot_sha256 from this request into the analysis response exactly.",
             "Use missing only when evidence explicitly says an item is absent.",
             "Use unknown when evidence is insufficient; mark blocking only when it stops downstream work.",
             "Use conflicting when bound evidence disagrees.",
         ],
         "analysis_schema": INTAKE_ANALYSIS_SCHEMA,
         "evidence_path": EVIDENCE_REL.as_posix(),
+        "evidence_snapshot_sha256": evidence_snapshot_sha256(chunks),
         "evidence_chunks": [chunk.as_dict() for chunk in chunks],
     }
     path = project / ANALYSIS_REQUEST_REL
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_write_text(
+        project,
+        path,
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    )
     return payload, path
 
 
 def validate_analysis_payload(
-    payload: object, evidence_ids: set[str]
+    payload: object, evidence_ids: set[str], evidence_snapshot_digest: str
 ) -> list[FactInventoryItem]:
     if not isinstance(payload, dict):
         raise ValueError("intake analysis must be a JSON object")
     if payload.get("analysis_version") != "1.0":
         raise ValueError("intake analysis_version must be 1.0")
+    if payload.get("evidence_snapshot_sha256") != evidence_snapshot_digest:
+        raise ValueError(
+            "intake analysis evidence snapshot does not match current evidence; "
+            "export a new intake analysis request"
+        )
     raw_facts = payload.get("facts")
     if not isinstance(raw_facts, list):
         raise ValueError("intake analysis facts must be an array")
@@ -561,8 +755,13 @@ def import_intake_analysis(
         payload = json.loads(analysis_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read intake analysis: {exc}") from exc
-    evidence_ids = {chunk.chunk_id for chunk in load_evidence_chunks(project)}
-    imported = validate_analysis_payload(payload, evidence_ids)
+    chunks = load_evidence_chunks(project)
+    evidence_ids = {chunk.chunk_id for chunk in chunks}
+    imported = validate_analysis_payload(
+        payload,
+        evidence_ids,
+        evidence_snapshot_sha256(chunks),
+    )
     existing = [fact for fact in load_fact_inventory(project) if fact.fact_key not in {item.fact_key for item in imported}]
     facts = merge_facts(existing, imported)
     path = write_fact_inventory(project, facts)

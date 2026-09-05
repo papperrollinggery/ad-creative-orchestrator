@@ -109,9 +109,9 @@
 
 ### PRD-P4 Immutable PPT
 
-目标：只从 fresh confirmed outline 创建新的 immutable current PPT version。范围：`export-pptx`、vNNN identity、current truth/version/artifact pointers、exact-current derivatives。非范围：覆盖旧版、任意 `--output` 路径、把导出当交付完成。
+目标：只在全项目 validation PASS 且 outline confirmation fresh 时创建新的 immutable current PPT version。范围：`export-pptx`、vNNN identity、current truth/version/artifact pointers、exact-current derivatives。非范围：覆盖旧版、任意 `--output` 路径、为导出清理 FinalDelivery、把定向导出当全项目完成。
 
-关键里程碑：新 `client_review_vNNN.pptx` 不覆盖；version/artifact/current truth 一致。风险：legacy alias 被当 truth、transaction 失败留下半更新、confirmation stale。验收标准：导出只落 canonical exports path，失败回滚，旧版本保持原 hash。
+关键里程碑：新 `client_review_vNNN.pptx` 不覆盖；version/artifact/current truth 一致。风险：legacy alias 被当 truth、project-wide CHECK、confirmation stale。验收标准：CHECK 在写前 `TOOL_BLOCKED`；通过后只落 canonical exports path；旧版本保持原 hash。
 
 测试清单：连续导出 vNNN、拒绝覆盖/任意路径、核对 version chain。责任人：Main Controller、PPT Producer。预计时长：0.5 工作日。依据：Version Safety Rule。
 

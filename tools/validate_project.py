@@ -2977,6 +2977,50 @@ def validate_client_delivery_readiness(
     """Validate facts required before a package can be called client-deliverable."""
     errors: list[str] = []
 
+    fact_path = project / "AD-creative/orchestrator/fact_inventory.jsonl"
+    unresolved_facts: list[str] = []
+    if fact_path.is_file():
+        try:
+            for line_number, line in enumerate(
+                fact_path.read_text(encoding="utf-8").splitlines(),
+                1,
+            ):
+                if not line.strip():
+                    continue
+                payload = json.loads(line)
+                if not isinstance(payload, dict):
+                    raise ValueError(f"line {line_number} is not an object")
+                state = str(payload.get("state", "")).strip().lower()
+                blocking = bool(payload.get("blocking")) or state == "conflicting"
+                if state in {"missing", "conflicting"} and blocking:
+                    unresolved_facts.append(str(payload.get("fact_key", "unknown")))
+                elif state == "unknown" and blocking:
+                    unresolved_facts.append(str(payload.get("fact_key", "unknown")))
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            errors.append(f"client delivery fact inventory is invalid: {exc}")
+    if unresolved_facts:
+        errors.append(
+            "client delivery has unresolved blocking facts: "
+            + ";".join(sorted(set(unresolved_facts)))
+        )
+
+    gap_path = project / "AD-creative/orchestrator/gaps.csv"
+    if gap_path.is_file():
+        with gap_path.open(newline="", encoding="utf-8") as handle:
+            gap_rows = list(csv.DictReader(handle))
+        unresolved_gap_ids = [
+            row.get("gap_id", "")
+            for row in gap_rows
+            if row.get("impact", "").strip().lower() in {"blocking", "high_impact"}
+            and row.get("status", "").strip().lower()
+            not in {"resolved", "closed", "done"}
+        ]
+        if unresolved_gap_ids:
+            errors.append(
+                "client delivery has unresolved blocking gaps: "
+                + ";".join(item for item in unresolved_gap_ids if item)
+            )
+
     current_truth = project / "AD-creative/orchestrator/current_truth.md"
     try:
         current_truth_text = current_truth.read_text(encoding="utf-8")

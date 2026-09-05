@@ -1,1 +1,1 @@
-requirement_id,source_event_id,owner,statement,requirement_type,priority,status,confidence,scope,affected_stage,linked_artifacts,supersedes_requirement_id,open_questions
+requirement_id,source_event_id,owner,statement,requirement_type,priority,status,confidence,scope,affected_stage,linked_artifacts,supersedes_requirement_id,open_questions,evidence_ref,confirmation_ref,confirmed_by,confirmed_at

@@ -1,0 +1,76 @@
+{
+  "python": "<source-checkout>/.venv/bin/python",
+  "material_characters": 145028,
+  "material_sha256": "1a29f51563bc5d1416b35d5b8e2ff7ae8c7772df9f4458558cf078eb6ef8f75f",
+  "operator_sha256": "81ec7d70c414e905222dbfc1654c6c6a9db272180a4b381fec0857ed5f0b7d78",
+  "repetitions": 5,
+  "measure": "local repeat command, includes process launch; byte hashing is still performed",
+  "medians": {
+    "first_process_ms": 332.85,
+    "repeat_process_ms": 350.13,
+    "repeat_run_ms": 87,
+    "repeat_parser_characters": 158024,
+    "repeat_materials_processed": 1,
+    "source_events_after_two_runs": 2,
+    "evidence_after_two_runs": 106,
+    "default_dashboard_runs": 0,
+    "default_full_validation_runs": 0
+  },
+  "runs": [
+    {
+      "first_process_ms": 332.85,
+      "repeat_process_ms": 349.02,
+      "repeat_run_ms": 87,
+      "repeat_parser_characters": 158024,
+      "repeat_materials_processed": 1,
+      "source_events_after_two_runs": 2,
+      "evidence_after_two_runs": 106,
+      "default_dashboard_runs": 0,
+      "default_full_validation_runs": 0
+    },
+    {
+      "first_process_ms": 341.74,
+      "repeat_process_ms": 359.33,
+      "repeat_run_ms": 90,
+      "repeat_parser_characters": 158024,
+      "repeat_materials_processed": 1,
+      "source_events_after_two_runs": 2,
+      "evidence_after_two_runs": 106,
+      "default_dashboard_runs": 0,
+      "default_full_validation_runs": 0
+    },
+    {
+      "first_process_ms": 332.18,
+      "repeat_process_ms": 347.82,
+      "repeat_run_ms": 86,
+      "repeat_parser_characters": 158024,
+      "repeat_materials_processed": 1,
+      "source_events_after_two_runs": 2,
+      "evidence_after_two_runs": 106,
+      "default_dashboard_runs": 0,
+      "default_full_validation_runs": 0
+    },
+    {
+      "first_process_ms": 329.18,
+      "repeat_process_ms": 360.48,
+      "repeat_run_ms": 89,
+      "repeat_parser_characters": 158024,
+      "repeat_materials_processed": 1,
+      "source_events_after_two_runs": 2,
+      "evidence_after_two_runs": 106,
+      "default_dashboard_runs": 0,
+      "default_full_validation_runs": 0
+    },
+    {
+      "first_process_ms": 339.47,
+      "repeat_process_ms": 350.13,
+      "repeat_run_ms": 86,
+      "repeat_parser_characters": 158024,
+      "repeat_materials_processed": 1,
+      "source_events_after_two_runs": 2,
+      "evidence_after_two_runs": 106,
+      "default_dashboard_runs": 0,
+      "default_full_validation_runs": 0
+    }
+  ]
+}

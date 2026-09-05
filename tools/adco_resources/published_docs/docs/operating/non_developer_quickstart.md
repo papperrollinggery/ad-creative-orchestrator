@@ -73,14 +73,21 @@ adco 的创意控制定位：
 
 ```text
 adco creative-brief <项目目录> [--work-id <id>] [--json]
+adco creative-assertion-record <项目目录> --semantics creative_requirement_confirmation --requirement-id <id> --note <依据> [--json]
+adco creative-requirement-confirm <项目目录> --requirement-id <id> --confirmation-ref <local_operator_assertion:id> [--evidence-ref <chunk>] [--json]
+adco creative-constraint-resolve <项目目录> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <local_operator_assertion:id> --decision <approved|rejected> --note <依据> [--json]
 adco creative-import <项目目录> --file <candidate.json> [--json]
 adco creative-review <项目目录> [--json]
 
 creative-brief 只冻结 evidence/fact/requirement/gap，并生成 brief contract、candidate schema 和 generation request；它不生成创意方向。
-GPT-5.6 Sol 或明确选择的专业 Specialist 基于该 contract 生成 4-6 个候选；独立 Critic 做品牌替换测试和机制去重后保留 2-3 个，再交给 creative-import。
-creative-import 拒绝无证据、stale snapshot 和重复机制；品牌专属性弱会被标记。creative-review 只是确定性结构/语言 lint，不能替代独立 Critic、客户或创意负责人判断。
+当前主模型或用户明确选择的专业 Specialist 基于该 contract 按用户要求生成候选；未指定数量时只生成最小充分集合（1-6 个）。只有明确要求或进入高后果决策边界时才加入独立 Critic，再交给 creative-import。
+需要把 parser 发现的硬要求用于耐久导入时，先记录 local assertion，再只绑定对应 requirement。它始终标记 `identity_assurance=NONE`，不是用户/客户身份、同意、批准或发送授权；可用 `creative-assertion-status` 审计、`creative-assertion-revoke` 撤销。无法安全机器判断的单个约束也必须精确绑定 candidate payload、brief、direction 和 constraint，不需要 Council、Thread 或完整 Gate。
+creative-import 拒绝无证据、stale/corrupt brief、重复机制、所有落盘声明字段中的禁用宣称、未断言/未裁决的硬要求和实际约束违规；完整 generation 写完并验证后只原子切换 `current_generation.json`，失败不会混合新旧 candidate/receipt/directions/matrix。`candidate_sha256` 绑定落盘文件的精确字节。evidence refs 只证明来源存在，不证明语义支持。品牌专属性弱会被标记。creative-review 只是确定性结构/语义/语言 lint，不能替代独立 Critic、客户或创意负责人判断。
 creative-proposal 仅为 creative-brief 的弃用兼容 alias。
-视频/分镜/video prompt 通过协商后的 `adco.specialist-exchange` 交给 `dircreative.film-preproduction`；ADCO 保留采用、版本、PPT 和客户准备权。
+视频/分镜/video prompt 可通过协议 ID `adco.specialist-exchange` 交给
+`dircreative.film-preproduction`；它不是 CLI 命令。实际命令是
+`adco specialist-handoff` 与 `adco specialist-adopt`。ADCO 保留采用、版本、
+PPT 和客户准备权。
 image / KV / 背景图交给 imagegen 或 Creative Production。
 固定 PPT / DOCX / XLSX 模板交给 Template Creator。
 ```
@@ -93,11 +100,13 @@ docs/operating/creative_proposal_quality_standard.md
 
 ## 3. 看哪里
 
-优先看 CLI 返回的 `CONTENT_ANSWER` 和：
+优先看 CLI 返回的 `INTAKE_SUMMARY`（只是资料整理，不是创意成品）和：
 
 ```text
 AD-creative/handoff/操作台.html
 ```
+
+如果同时看到 `ORGANIZATION_REVIEW=RECOMMENDED`，说明资料仍散放或输入中有精确重复。先运行 `adco organize-plan <项目目录>` 查看建议；默认不会移动、复制、删除或额外保存报告。
 
 再看：
 
@@ -116,6 +125,10 @@ adco client-outline-gate <项目目录>
 ```
 
 确认 receipt 绑定 exact `client_outline.csv` hash；文字一改就失效，必须重新确认。Gate PASS 前不生成 PPT。
+
+确认顺序不能倒置：先由人工/客户看到 exact outline，再由该确认者运行
+`confirm-client-outline`，最后运行 Gate。Agent、automation、Gate PASS 或文件名
+不能冒充客户确认。
 
 生成图入库：
 

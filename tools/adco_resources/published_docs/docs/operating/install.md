@@ -2,16 +2,21 @@
 
 Status: current GitHub Release, source checkout, and local package install supported
 
-Current public release: [`v0.3.2`](https://github.com/papperrollinggery/ad-creative-orchestrator/releases/tag/v0.3.2). The Release tag target is the authoritative source commit.
+Platform boundary: Python 3.10+ on POSIX (currently macOS or Linux). Secure
+project-artifact reads and writes require `dir_fd`, `O_DIRECTORY`, and
+`O_NOFOLLOW`; unsupported platforms fail closed rather than silently weakening
+the integrity contract.
 
-`v0.3.2` packages the public documentation set, so installed-wheel `adco docs` must list real README/operating-document paths and every listed file must exist.
+Current public release: [`v0.3.3`](https://github.com/papperrollinggery/ad-creative-orchestrator/releases/tag/v0.3.3). The Release tag target is the authoritative source commit.
+
+`v0.3.3` includes the content-first workflow, safe intake reuse, evidence-bound model analysis, and the complete documentation set. Installed-wheel `adco docs` must list real README/operating-document paths and every listed file must exist.
 
 ## Recommended
 
 Install the published wheel with `pipx`:
 
 ```bash
-pipx install --force https://github.com/papperrollinggery/ad-creative-orchestrator/releases/download/v0.3.2/ad_creative_orchestrator-0.3.2-py3-none-any.whl
+pipx install --force https://github.com/papperrollinggery/ad-creative-orchestrator/releases/download/v0.3.3/ad_creative_orchestrator-0.3.3-py3-none-any.whl
 adco --version
 adco doctor
 ```
@@ -111,7 +116,7 @@ Expected:
 
 ```text
 RUN_CHECKS=PASS
-adco 0.3.2
+adco 0.3.3
 ADCO_DOCTOR=PASS
 DOCS_MODE=source or installed with every listed document marked PASS
 INSTALL_SMOKE=PASS

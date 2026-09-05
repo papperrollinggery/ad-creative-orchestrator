@@ -1,7 +1,8 @@
 # Specialist Exchange Reference
 
 Read this file only for a neutral Specialist Exchange handoff, provider receipt,
-or ADCO adoption. Creative briefing belongs in `creative_contract.md`; PPT and
+or ADCO adoption. Direct creative work belongs in `creative_work.md`, durable
+candidate briefing in `creative_contract.md`; PPT and
 client delivery belong in `ppt_and_client_pack.md`.
 
 ## Ownership
@@ -16,6 +17,27 @@ internal validator.
 Provider recommendations never become ADCO adoption automatically. Domain QA
 never proves client-ready, PPT-ready, FinalDelivery-ready, send-ready, project
 complete, or control-plane updated.
+
+## Film handoff quality
+
+Do not delegate an unresolved narrative and expect DIRcreative or another
+provider to discover the advertising proposition. Before film handoff, ADCO
+prepares a compact, evidence-bound packet containing:
+
+- director thesis and audience state change;
+- the brand/product's causal role and the result of a brand-replacement test;
+- a beat-to-beat cause/effect chain and declared world/physical rules;
+- latest user overrides, prohibited inventions, and exact asset truth;
+- practical/VFX boundary, critical dependencies, stop conditions, and Plan B;
+- reference principles plus what must not be copied.
+
+The provider may improve film craft, but it must not silently change the
+proposition, world rules, latest override, asset authority, or seller/consumer
+point of view. Require a client-readable treatment before accepting a technical
+shot list. For every adopted shot, recheck causal continuity, physical
+feasibility, brand necessity, capture method, asset binding, and fallback. A
+provider's `completed` or domain QA remains a candidate receipt until ADCO
+performs this independent review.
 
 ## Negotiation and compatibility
 

@@ -22,12 +22,12 @@ CHECK_PATHS = (
         ROOT / "examples/moncler_protocol_dry_run/AD-creative/handoff",
         ROOT / "examples/simulated_qingling_outdoor_launch/AD-creative/handoff",
         ROOT / "templates/project",
-        ROOT / "skill_drafts/ad-creative-orchestrator/SKILL.md",
+        ROOT / "skill_drafts/ad-creative-orchestrator",
         ROOT / "tools/adco_resources/templates/project",
-        ROOT / "tools/adco_resources/skill_drafts/ad-creative-orchestrator/SKILL.md",
+        ROOT / "tools/adco_resources/skill_drafts/ad-creative-orchestrator",
     ]
     if ROOT
-    else [published_docs_root(), skill_draft_dir() / "SKILL.md"]
+    else [published_docs_root(), skill_draft_dir()]
 )
 FORBIDDEN_SNIPPETS = [
     "python3 /Users/jinjungao/work/ad-creative-orchestrator/tools/ad_creative_operator.py",

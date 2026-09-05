@@ -1,6 +1,6 @@
 # 操作手册
 
-状态：当前 v0.3.2 操作语义
+状态：当前 v0.3.3 操作语义
 
 ## 使用边界
 
@@ -51,7 +51,9 @@ AD-creative/orchestrator/gaps.csv
 AD-creative/AGENTS.md
 ```
 
-默认不会运行 Dashboard、Council、Thread、Git、画像分析、Specialist Exchange、客户 outline、PPT、Client Pack 或全量 delivery validation。CLI 先返回 `CONTENT_ANSWER`；需要操作台时运行 `adco open-dashboard` 或给 `run` 加 `--dashboard`。
+默认不会运行 Dashboard、Council、Thread、Git、画像分析、Specialist Exchange、客户 outline、PPT、Client Pack 或全量 delivery validation。CLI 先返回明确标为资料整理的 `INTAKE_SUMMARY`，不能把它当创意成品；需要操作台时运行 `adco open-dashboard` 或给 `run` 加 `--dashboard`。
+
+`run` 还会进行一次零写入的资料位置/精确重复检查。发现项目根目录散放资料时会显示 `ORGANIZATION_REVIEW=RECOMMENDED` 和一个整理问题，但不会复制或移动资料。可先运行 `adco organize-plan <项目目录>`；只有显式 `--save` 才覆盖唯一的 `storage_plan.json`，实际移动或删除仍需单独确认。
 
 检查状态：
 
@@ -83,11 +85,14 @@ Threads 默认不启用。只有有界隔离、真实并行或独立审阅确有
 
 ```text
 adco creative-brief <项目目录> [--work-id <id>] [--json]
+adco creative-assertion-record <项目目录> --semantics creative_requirement_confirmation --requirement-id <id> --note <依据> [--json]
+adco creative-requirement-confirm <项目目录> --requirement-id <id> --confirmation-ref <local_operator_assertion:id> [--evidence-ref <chunk>] [--json]
+adco creative-constraint-resolve <项目目录> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <local_operator_assertion:id> --decision <approved|rejected> --note <依据> [--json]
 adco creative-import <项目目录> --file <candidate.json> [--json]
 adco creative-review <项目目录> [--json]
 ```
 
-`creative-brief` 只生成 snapshot/contract/schema/request/open gaps，不生成方向。GPT-5.6 Sol 或专业 Specialist 生成 4-6 个候选，独立 Critic 去重后保留 2-3 个，再由 `creative-import` 验证并登记；`creative-review` 只是确定性 lint。双击 launcher 的默认 `run` 不进入这条创意链路，也不生成客户 outline 或 PPT。
+`creative-brief` 只生成 hash-bound manifest/snapshot/contract/schema/request/open gaps，不生成方向。当前主模型或用户明确选择的专业 Specialist 按用户要求生成候选；未指定数量时只生成最小充分集合（1-6 个）。独立 Critic 仅在明确要求或高后果决策边界启用。耐久硬要求先绑定真实 source/evidence 与 active local assertion；它明确为 `identity_assurance=NONE`，不是用户/客户身份、批准或发送授权。无法机器判断的 exact candidate 约束必须精确绑定 candidate payload、brief、direction、constraint。`creative-import` 校验完整 brief、结构、所有声明字段、硬约束与 exact-byte 来源链，写完整 immutable generation 后只原子切换 `current_generation.json`；`creative-review` 必须重新核对 pointer/generation/import receipt/brief/派生视图。双击 launcher 的默认 `run` 不进入这条创意链路，也不生成客户 outline 或 PPT。
 
 `thread-plan` 会写入：
 
@@ -110,8 +115,8 @@ execution_worker 必须先写清 exact write_scope。
 默认最多 3 个 active worker/reviewer。
 每个 execution_worker 返回 files_changed、validation、dirty-state impact、cleanup actions。
 主控 dispatch 后保存 host scope baseline；reconcile 时用实际文件 diff 对照 receipt 与 exact write_scope，生成 hash-bound host scope proof。worker 自报不能代替 host proof。
-主控读取 receipt 和 host proof 后再决定 adoption/rejection。
-合并后归档已消费 worker，并把真实 thread_id / cleanup_action 写回 thread_registry.csv。
+`thread-reconcile --receipt-path` 必须指向 dispatch 绑定的真实 worker receipt；`thread_cleanup_<work_id>.md` 是 thread-plan 创建、reconcile 刷新的主控投影，不能拿它或临时 note 冒充 receipt。
+主控读取 receipt 和 host proof 后再决定 adoption/rejection；随后刷新 cleanup 投影并归档已消费 worker。全项目 validation 失败时这些候选改动回滚并保持 BLOCKED，不能生成伪 adoption 回执。
 固定轮询次数只是检查预算；区分 active_with_progress / silent / finalizing_receipt，最多一次带绝对截止时间的 extension 和一次带独立 dispatch proof/receipt path 的 rescue。
 客户可见稿不得出现 prompt、thread、worker、lane plan、执行步骤等内部语言。
 ```
@@ -150,7 +155,7 @@ search-quality-gate / reference-pack-gate / visual-quality-gate / client-pack-ga
 creative-brief 是 evidence contract，不是创意方向或客户最终稿。
 Sol/专业 Specialist 负责创意推理；独立 Critic 负责创意判断和品牌替换测试；ADCO 负责 evidence binding、导入、版本、provenance 和 Gate。
 creative-import 拒绝 stale snapshot、无效 evidence refs、字段缺失和重复机制；品牌专属性弱会被标记。
-creative-review 是确定性结构/语言 lint，不能替代独立 Critic。
+creative-review 是确定性结构/语义/语言 lint，不能替代独立 Critic。
 creative-proposal 只是 creative-brief 的弃用 alias，不再生成固定方向。
 详细标准见 docs/operating/creative_proposal_quality_standard.md。
 ```
@@ -159,8 +164,8 @@ creative-proposal 只是 creative-brief 的弃用 alias，不再生成固定方�
 
 ```text
 项目事实、brief contract、候选 provenance、版本和 Gate：留在 ADCO control plane。
-创意推理：交给 GPT-5.6 Sol 或明确选择的专业 Specialist；ADCO 不用确定性模板冒充完整创意引擎。
-视频脚本、分镜、导演阐述、video prompt：通过协商后的 `adco.specialist-exchange` 交给 `dircreative.film-preproduction`；DIR 是 film craft provider，不能更新 ADCO 外层 readiness。
+创意推理：交给 当前主模型或用户明确选择的专业 Specialist；ADCO 不用确定性模板冒充完整创意引擎。
+视频脚本、分镜、导演阐述、video prompt：通过协议 ID `adco.specialist-exchange` 与 `dircreative.film-preproduction` 协作；协议 ID 不是命令，实际 CLI 是 `adco specialist-handoff` / `adco specialist-adopt`。DIR 是 film craft provider，不能更新 ADCO 外层 readiness。
 image / KV / 背景图 / moodboard / visual asset：交给 imagegen 或 Creative Production，回到 adco 登记和 visual-quality-gate。
 固定 PPT / DOCX / XLSX 模板和版式系统：交给 Template Creator 或专门文档模板流程，adco 只维护内容结构、字段、追溯和 Gate。
 ```
@@ -287,7 +292,7 @@ adco export-pptx <项目目录>
 adco check-pptx <项目目录> --file <PPTX文件>
 ```
 
-`export-pptx` 每次生成新的 `AD-creative/ppt/exports/client_review_vNNN.pptx`，同步 exact current version/artifact/editability hash，并拒绝覆盖已有版本。`check-pptx` 只生成 hash 绑定的诊断报告，不会把任意文件改成 current。
+`export-pptx` 先做只读全项目预检。只有 `VALIDATION=PASS` 才生成新的 `AD-creative/ppt/exports/client_review_vNNN.pptx`，同步 exact current version/artifact/editability hash，并拒绝覆盖已有版本。历史项目为 `CHECK` 时返回 `PPTX_EXPORT=TOOL_BLOCKED`、`TARGETED_ARTIFACT=NOT_RUN`，不为了新 WIP 清理、覆盖、移动或复制旧 FinalDelivery。定向 WIP 与全项目状态必须分栏报告。`check-pptx` 只生成 hash 绑定的诊断报告，不会把任意文件改成 current。
 
 客户稿风险 Gate：
 
@@ -414,6 +419,13 @@ AD-creative/orchestrator/gate_log.csv
 AD-creative/handoff/项目看板.md
 AD-creative/handoff/待你确认.md
 ```
+
+`current_truth.md` 是有界的 replace-current 索引，不是每日追加日志。ADCO 只
+更新模板中唯一的 current snapshot section；重复的 owned section 必须阻断，
+不能静默选一个。用户日期段和自定义段保持原样，历史写入 `events.jsonl` 及
+各自 authority。冲突先落到 facts/requirements/decisions/version/asset/thread
+等 owning authority，再在 `Conflicted` 写简短指针；新用户指令改变 governed
+state 时也必须写入相应 authority，chat memory 不能替代 durable status。
 
 输出：
 

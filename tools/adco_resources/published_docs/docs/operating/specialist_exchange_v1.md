@@ -2,7 +2,7 @@
 
 ## 目的与权责
 
-`adco.specialist-exchange` 是 ADCO 与专业 Skill/Provider 之间的中立版本化协议。ADCO 是 control plane；GPT-5.6 Sol 或专业 Specialist 提供 creative reasoning；DIRcreative 是 film craft provider。ADCO runtime 不依赖 DIR 仓库、安装路径、版本、内部脚本或 run 目录。
+`adco.specialist-exchange` 是 ADCO 与专业 Skill/Provider 之间的中立版本化协议。ADCO 是 control plane；当前主模型或用户明确选择的专业 Specialist 提供 creative reasoning；DIRcreative 是 film craft provider。ADCO runtime 不依赖 DIR 仓库、安装路径、版本、内部脚本或 run 目录。
 
 ADCO 独占客户/业务事实、客户问题、exchange index、artifact adoption、`current_truth.md`、`version_map.csv`、`artifact_index.csv`、Gate、PPT、FinalDelivery、Client Pack 和 send readiness。Provider 只返回有界 domain output/recommendation/QA，不能更新外层控制状态。
 

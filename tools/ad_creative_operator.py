@@ -8,14 +8,20 @@ import csv
 import fcntl
 import hashlib
 import html
+import io
 import importlib.metadata as metadata
+import importlib.util
 import json
 import os
 import re
+import selectors
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -26,7 +32,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import BinaryIO, Callable, Iterable
 import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
@@ -39,22 +45,43 @@ from adco_core.facts import (
 )
 from adco_core.creative_contract import (
     BRIEF_CONTRACT_REL,
+    BRIEF_MANIFEST_REL,
     BRIEF_SNAPSHOT_REL,
-    CANDIDATE_IMPORT_RECEIPT_REL,
     CANDIDATE_SCHEMA_REL,
-    CREATIVE_DIRECTIONS_REL,
-    CRITIC_RECEIPT_REL,
-    CURRENT_CANDIDATE_REL,
+    DETERMINISTIC_LINT_RECEIPT_REL,
     GENERATION_REQUEST_REL,
     OPEN_GAPS_REL,
-    OPTION_MATRIX_REL,
+    audit_local_operator_assertions,
+    confirm_creative_requirement,
     create_creative_brief,
+    creative_brief_requires_independent_critic,
+    current_creative_generation_paths,
     import_creative_candidate,
+    record_local_operator_assertion,
+    resolve_creative_constraint,
+    revoke_local_operator_assertion,
     review_creative_candidate,
 )
-from adco_core.commands.run import execute_lightweight_run
-from adco_core.ingestion import ingest_source_rows
+from adco_core.commands.run import RunPreflightError, execute_lightweight_run
+from adco_core.ingestion import (
+    LOCAL_SOURCE_PREFIX,
+    ingest_source_rows,
+    load_local_source_paths,
+    load_local_source_paths_from_project_fd,
+    material_files,
+    register_local_source_path,
+    sha256_file,
+    source_path_label,
+    source_row_files,
+    source_row_material_roots,
+)
 from adco_core.incremental_validation import run_incremental_validation
+from adco_core.safe_write import (
+    atomic_write_text,
+    read_optional_project_text,
+    read_project_text,
+)
+from adco_core.storage import audit_project_storage, cleanup_actions
 from adco_core.specialist_exchange import (
     V2_CONTRACT_VERSION,
     build_v2_handoff,
@@ -73,7 +100,6 @@ from runtime_paths import (
     project_surface,
     published_docs_root,
     repo_or_module_root,
-    set_project_surface,
     skill_draft_dir,
     source_root,
     template_root,
@@ -99,7 +125,7 @@ REPO_ROOT = repo_or_module_root()
 TEMPLATE_ROOT = template_root()
 SKILL_DRAFT_DIR = skill_draft_dir()
 PACKAGE_NAME = "ad-creative-orchestrator"
-FALLBACK_VERSION = "0.3.2"
+FALLBACK_VERSION = "0.3.3"
 CONTROL_PLANE_SCHEMA_VERSION = "2.0"
 CONTROL_PLANE_SCHEMA_REL = Path("AD-creative/orchestrator/control_plane_schema.json")
 CONTROL_PLANE_MIGRATION_MANIFEST_REL = Path(
@@ -113,7 +139,20 @@ DELIVERY_COMMAND_ACTIVE: ContextVar[bool] = ContextVar(
     "adco_delivery_command_active",
     default=False,
 )
+MIGRATION_CWD_LOCK = threading.RLock()
 FINAL_DELIVERY_HOST_ATTESTATION_PROTOCOL = "adco.host-readback-attestation"
+
+
+class ProjectValidationBlocked(RuntimeError):
+    """A governed mutation was refused because the existing project is CHECK."""
+
+    def __init__(self, operation: str, errors: list[str]) -> None:
+        self.operation = operation
+        self.errors = list(errors)
+        super().__init__(
+            f"{operation} blocked by existing project validation debt: "
+            + "; ".join(self.errors[:12])
+        )
 FINAL_DELIVERY_HOST_ATTESTATION_VERSION = "1.0"
 FINAL_DELIVERY_HOST_ATTESTATION_ROOT = Path(
     "AD-creative/orchestrator/host_attestations"
@@ -158,6 +197,15 @@ COUNCIL_REPORT_REL = Path("AD-creative/gates/THREE-COUNCIL-READINESS_report.md")
 GOAL_PLAN_TEMPLATE_REL = Path("AD-creative/orchestrator/goal_iteration_plan_template.md")
 GOAL_ITERATIONS_REL = Path("AD-creative/orchestrator/goal_iterations")
 SUPPORT_BUNDLE_REL = Path("AD-creative/handoff/support_bundle.md")
+PRIVATE_LOCAL_STATE_REL = Path(".adco-local")
+PRIVATE_MARKER_SCAN_CHUNK_BYTES = 1024 * 1024
+PRIVATE_MARKER_SCAN_MAX_FILE_BYTES = 256 * 1024 * 1024
+PRIVATE_MARKER_SCAN_MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
+PRIVATE_MARKER_SCAN_MAX_MEMBER_BYTES = 64 * 1024 * 1024
+PRIVATE_MARKER_SCAN_MAX_ARCHIVE_MEMBERS = 10_000
+PRIVATE_MARKER_SCAN_MAX_PDF_PAGES = 2_000
+PRIVATE_MARKER_SCAN_PDF_TIMEOUT_SECONDS = 30
+PRIVATE_MARKER_SCAN_MAX_PDF_MEMORY_BYTES = 768 * 1024 * 1024
 SAMPLE_MATERIAL_REL = Path("00_项目资料_ProjectMaterials/01_客户资料_ClientMaterials/sample_brief.md")
 DEFAULT_DEMO_PROJECT = Path(tempfile.gettempdir()) / "adco-demo"
 SAMPLE_GOAL = "基于内置 brief 提炼品牌策略，并提出三条机制不同的内部创意方向。"
@@ -965,11 +1013,16 @@ def doctor_report() -> tuple[str, list[str], list[str], list[str]]:
     evidence: list[str] = [
         f"version={package_version()}",
         f"python={sys.version.split()[0]}",
+        f"platform={os.name}",
         f"mode={'source' if source_root() else 'installed'}",
         f"runtime_root={REPO_ROOT}",
         f"template_root={TEMPLATE_ROOT}",
         f"skill_draft_dir={SKILL_DRAFT_DIR}",
     ]
+    if os.name != "posix":
+        issues.append(
+            "unsupported platform: secure project artifact I/O requires POSIX"
+        )
 
     required_template_files = [
         "AD-creative/orchestrator/project.yml",
@@ -1188,7 +1241,7 @@ def render_support_bundle(project: Path) -> Path:
             ["work_id", "stage", "status", "owner", "gate_required", "client_visibility"],
         ),
     ]
-    write_text(report, "\n".join(lines))
+    write_text(report, sanitize_private_source_markers(project, "\n".join(lines)))
     return report
 
 
@@ -1254,7 +1307,6 @@ def check_global_skill(target: Path = DEFAULT_SKILL_INSTALL_DIR) -> dict[str, ob
 
 
 def ensure_project(project: Path) -> tuple[int, int]:
-    project.mkdir(parents=True, exist_ok=True)
     if DELIVERY_COMMAND_ACTIVE.get() or project_surface(project) == DELIVERY_SURFACE:
         return ensure_delivery_project(project)
     return copy_content_template(TEMPLATE_ROOT, project)
@@ -1262,38 +1314,55 @@ def ensure_project(project: Path) -> tuple[int, int]:
 
 def ensure_delivery_project(project: Path) -> tuple[int, int]:
     """Materialize the full governance surface only for a delivery-risk command."""
-    project.mkdir(parents=True, exist_ok=True)
-    created, skipped = copy_template(TEMPLATE_ROOT, project)
-    set_project_surface(project, DELIVERY_SURFACE)
-    return created, skipped
+    return copy_template(TEMPLATE_ROOT, project)
 
 
 def read_csv_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     if not path.exists():
         return [], []
-    with path.open(newline="", encoding="utf-8") as handle:
+    project = _artifact_project_root(path)
+    text = read_project_text(project, path) if project is not None else path.read_text(encoding="utf-8")
+    with io.StringIO(text, newline="") as handle:
         reader = csv.DictReader(handle)
         return list(reader.fieldnames or []), list(reader)
 
 
+def _artifact_project_root(path: Path) -> Path | None:
+    absolute = Path(os.path.abspath(os.fspath(path)))
+    markers = [
+        index for index, part in enumerate(absolute.parts) if part == "AD-creative"
+    ]
+    if not markers:
+        return None
+    marker = markers[-1]
+    return Path(*absolute.parts[:marker])
+
+
 def write_csv_rows(path: Path, fieldnames: list[str], rows: Iterable[dict[str, str]]) -> None:
+    handle = io.StringIO(newline="")
+    writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({key: row.get(key, "") for key in fieldnames})
+    project = _artifact_project_root(path)
+    if project is not None:
+        atomic_write_text(project, path, handle.getvalue())
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
             "w",
-            newline="",
             encoding="utf-8",
             dir=path.parent,
             prefix=f".{path.name}.",
             suffix=".tmp",
             delete=False,
-        ) as handle:
-            temp_path = Path(handle.name)
-            writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
-            writer.writeheader()
-            for row in rows:
-                writer.writerow({key: row.get(key, "") for key in fieldnames})
+        ) as temp_handle:
+            temp_path = Path(temp_handle.name)
+            temp_handle.write(handle.getvalue())
+            temp_handle.flush()
+            os.fsync(temp_handle.fileno())
         os.replace(temp_path, path)
     finally:
         if temp_path is not None:
@@ -1328,10 +1397,11 @@ def ensure_csv_fields(path: Path, required_fields: list[str]) -> list[str]:
     return fieldnames
 
 
-def normalize_gate_log_schema(path: Path) -> tuple[list[str], list[dict[str, str]]]:
-    fieldnames, rows = read_csv_rows(path)
+def normalized_gate_log_data(
+    fieldnames: list[str],
+    rows: list[dict[str, str]],
+) -> tuple[list[str], list[dict[str, str]]]:
     if not fieldnames:
-        write_csv_rows(path, GATE_LOG_FIELDS, [])
         return GATE_LOG_FIELDS, []
     normalized_rows: list[dict[str, str]] = []
     previous_by_gate: dict[str, str] = {}
@@ -1354,9 +1424,15 @@ def normalize_gate_log_schema(path: Path) -> tuple[list[str], list[dict[str, str
         normalized_rows.append(normalized)
         if gate_id:
             previous_by_gate[gate_id] = run_id
-    if fieldnames != GATE_LOG_FIELDS or rows != normalized_rows:
-        write_csv_rows(path, GATE_LOG_FIELDS, normalized_rows)
     return GATE_LOG_FIELDS, normalized_rows
+
+
+def normalize_gate_log_schema(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    fieldnames, rows = read_csv_rows(path)
+    normalized_fields, normalized_rows = normalized_gate_log_data(fieldnames, rows)
+    if fieldnames != GATE_LOG_FIELDS or rows != normalized_rows:
+        write_csv_rows(path, normalized_fields, normalized_rows)
+    return normalized_fields, normalized_rows
 
 
 def update_or_append_csv_row(
@@ -1413,6 +1489,693 @@ def safe_rel_to(root: Path, path: Path) -> str:
         return str(path.resolve())
 
 
+def is_private_local_state_path(project: Path, path: Path) -> bool:
+    try:
+        relative = path.resolve().relative_to(project.resolve())
+    except ValueError:
+        return False
+    return bool(relative.parts) and relative.parts[0] == PRIVATE_LOCAL_STATE_REL.name
+
+
+def _safe_project_relative_parts(relative_path: str | Path) -> tuple[str, ...]:
+    candidate = Path(relative_path)
+    if (
+        candidate.is_absolute()
+        or not candidate.parts
+        or any(part in {"", ".", ".."} for part in candidate.parts)
+    ):
+        raise ValueError(f"unsafe project-relative path: {relative_path}")
+    return tuple(candidate.parts)
+
+
+def _close_project_fd_chain(directory_fds: Iterable[int]) -> None:
+    for fd in reversed(list(directory_fds)):
+        os.close(fd)
+
+
+def _open_project_root_fd(project: Path) -> int:
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if no_follow is None or directory_flag is None:
+        raise ValueError("safe project access requires O_NOFOLLOW and O_DIRECTORY")
+    try:
+        fd = os.open(project, os.O_RDONLY | directory_flag | no_follow)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise ValueError(f"cannot safely open project root: {project}") from exc
+    try:
+        opened = os.fstat(fd)
+        visible = os.stat(project, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(visible.st_mode)
+            or (opened.st_dev, opened.st_ino)
+            != (visible.st_dev, visible.st_ino)
+        ):
+            raise ValueError("project root changed while opening")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _project_root_fd_is_current(project: Path, root_fd: int) -> bool:
+    try:
+        visible = os.stat(project, follow_symlinks=False)
+        opened = os.fstat(root_fd)
+    except OSError:
+        return False
+    return bool(
+        stat.S_ISDIR(visible.st_mode)
+        and (visible.st_dev, visible.st_ino) == (opened.st_dev, opened.st_ino)
+    )
+
+
+def _open_project_parent_chain(
+    project: Path,
+    relative_path: str | Path,
+    *,
+    create: bool = False,
+    project_root_fd: int | None = None,
+) -> tuple[list[int], tuple[str, ...]]:
+    parts = _safe_project_relative_parts(relative_path)
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if no_follow is None or directory_flag is None:
+        raise ValueError("safe project access requires O_NOFOLLOW and O_DIRECTORY")
+    if project_root_fd is None:
+        root_fd = _open_project_root_fd(project)
+    else:
+        root_fd = os.dup(project_root_fd)
+        if not _project_root_fd_is_current(project, root_fd):
+            os.close(root_fd)
+            raise ValueError("project root changed during bound operation")
+    directory_fds = [root_fd]
+    try:
+        for part in parts[:-1]:
+            parent_fd = directory_fds[-1]
+            if create:
+                try:
+                    os.mkdir(part, mode=0o755, dir_fd=parent_fd)
+                except FileExistsError:
+                    pass
+            try:
+                visible = os.stat(
+                    part,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+                child_fd = os.open(
+                    part,
+                    os.O_RDONLY | directory_flag | no_follow,
+                    dir_fd=parent_fd,
+                )
+            except FileNotFoundError:
+                raise
+            except OSError as exc:
+                raise ValueError(
+                    f"unsafe project path component: {'/'.join(parts[:-1])}"
+                ) from exc
+            opened = os.fstat(child_fd)
+            if (
+                not stat.S_ISDIR(visible.st_mode)
+                or (visible.st_dev, visible.st_ino)
+                != (opened.st_dev, opened.st_ino)
+            ):
+                os.close(child_fd)
+                raise ValueError(
+                    f"project path component changed: {'/'.join(parts[:-1])}"
+                )
+            directory_fds.append(child_fd)
+        return directory_fds, parts
+    except BaseException:
+        _close_project_fd_chain(directory_fds)
+        raise
+
+
+def _project_parent_chain_is_current(
+    project: Path,
+    directory_fds: list[int],
+    parts: tuple[str, ...],
+) -> bool:
+    try:
+        root_visible = os.stat(project, follow_symlinks=False)
+        root_opened = os.fstat(directory_fds[0])
+        if (
+            not stat.S_ISDIR(root_visible.st_mode)
+            or (root_visible.st_dev, root_visible.st_ino)
+            != (root_opened.st_dev, root_opened.st_ino)
+        ):
+            return False
+        for index, part in enumerate(parts[:-1]):
+            visible = os.stat(
+                part,
+                dir_fd=directory_fds[index],
+                follow_symlinks=False,
+            )
+            opened = os.fstat(directory_fds[index + 1])
+            if (
+                not stat.S_ISDIR(visible.st_mode)
+                or (visible.st_dev, visible.st_ino)
+                != (opened.st_dev, opened.st_ino)
+            ):
+                return False
+    except OSError:
+        return False
+    return True
+
+
+def _open_project_relative_regular_file(
+    project: Path,
+    relative_path: str | Path,
+    *,
+    project_root_fd: int | None = None,
+) -> tuple[int, os.stat_result, list[int], tuple[str, ...]]:
+    directory_fds, parts = _open_project_parent_chain(
+        project,
+        relative_path,
+        project_root_fd=project_root_fd,
+    )
+    file_fd: int | None = None
+    try:
+        parent_fd = directory_fds[-1]
+        visible = os.stat(
+            parts[-1],
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if not stat.S_ISREG(visible.st_mode):
+            raise ValueError(f"project file is not regular: {'/'.join(parts)}")
+        file_fd = os.open(
+            parts[-1],
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_fd,
+        )
+        opened = os.fstat(file_fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (visible.st_dev, visible.st_ino)
+            != (opened.st_dev, opened.st_ino)
+        ):
+            raise ValueError(f"project file changed while opening: {'/'.join(parts)}")
+        result = file_fd
+        file_fd = None
+        return result, opened, directory_fds, parts
+    except BaseException:
+        if file_fd is not None:
+            os.close(file_fd)
+        _close_project_fd_chain(directory_fds)
+        raise
+
+
+def _project_file_binding_is_current(
+    project: Path,
+    file_fd: int,
+    opened: os.stat_result,
+    directory_fds: list[int],
+    parts: tuple[str, ...],
+) -> bool:
+    if not _project_parent_chain_is_current(project, directory_fds, parts):
+        return False
+    try:
+        final_opened = os.fstat(file_fd)
+        final_visible = os.stat(
+            parts[-1],
+            dir_fd=directory_fds[-1],
+            follow_symlinks=False,
+        )
+    except OSError:
+        return False
+    return bool(
+        stat.S_ISREG(final_visible.st_mode)
+        and (final_visible.st_dev, final_visible.st_ino)
+        == (opened.st_dev, opened.st_ino)
+        and (final_opened.st_dev, final_opened.st_ino)
+        == (opened.st_dev, opened.st_ino)
+        and (
+            final_opened.st_size,
+            final_opened.st_mtime_ns,
+            final_opened.st_ctime_ns,
+        )
+        == (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)
+    )
+
+
+def private_source_path_markers(
+    project: Path,
+    *,
+    project_root_fd: int | None = None,
+) -> list[bytes]:
+    try:
+        sources = (
+            load_local_source_paths(project)
+            if project_root_fd is None
+            else load_local_source_paths_from_project_fd(project_root_fd)
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "private local source map is invalid or unreadable"
+        ) from exc
+    referenced_ids: set[str] = set()
+    for rel_path in [
+        "AD-creative/orchestrator/source_events.csv",
+        "AD-creative/orchestrator/evidence_chunks.jsonl",
+    ]:
+        try:
+            text = _read_project_text(
+                project,
+                rel_path,
+                project_root_fd=project_root_fd,
+            )
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise ValueError(
+                "private local source references are invalid or unreadable"
+            ) from exc
+        for line in text.splitlines():
+            referenced_ids.update(
+                match.group(1)
+                for match in re.finditer(
+                    rf"{re.escape(LOCAL_SOURCE_PREFIX)}([A-Za-z0-9._-]+)",
+                    line,
+                )
+            )
+    if referenced_ids - set(sources):
+        raise ValueError("private local source map is missing registered aliases")
+    return sorted(
+        {
+            value.encode("utf-8")
+            for value in sources.values()
+            if isinstance(value, str) and value
+        },
+        key=len,
+        reverse=True,
+    )
+
+
+def _scan_marker_stream(
+    handle: BinaryIO,
+    markers: list[bytes],
+    *,
+    limit: int,
+) -> tuple[bool, int, bool]:
+    overlap = max(len(marker) for marker in markers) - 1
+    tail = b""
+    total = 0
+    while True:
+        remaining = limit - total
+        if remaining < 0:
+            return False, total, True
+        chunk = handle.read(min(PRIVATE_MARKER_SCAN_CHUNK_BYTES, remaining + 1))
+        if not chunk:
+            return False, total, False
+        total += len(chunk)
+        if total > limit:
+            return False, total, True
+        data = tail + chunk
+        if any(marker in data for marker in markers):
+            return True, total, False
+        tail = data[-overlap:] if overlap > 0 else b""
+
+
+def _scan_text_marker_stream(
+    handle: BinaryIO,
+    markers: list[bytes],
+    *,
+    limit: int,
+) -> tuple[bool, int, bool]:
+    normalized_markers = [
+        re.sub(rb"\s+", b"", marker) for marker in markers if marker
+    ]
+    overlap = max((len(marker) for marker in normalized_markers), default=1) - 1
+    tail = b""
+    total = 0
+    while True:
+        remaining = limit - total
+        if remaining < 0:
+            return False, total, True
+        chunk = handle.read(min(PRIVATE_MARKER_SCAN_CHUNK_BYTES, remaining + 1))
+        if not chunk:
+            return False, total, False
+        total += len(chunk)
+        if total > limit:
+            return False, total, True
+        normalized = re.sub(rb"\s+", b"", chunk)
+        data = tail + normalized
+        if any(marker in data for marker in normalized_markers):
+            return True, total, False
+        tail = data[-overlap:] if overlap > 0 else b""
+
+
+def _hash_open_fd(fd: int, *, limit: int) -> tuple[str, int, bool]:
+    os.lseek(fd, 0, os.SEEK_SET)
+    digest = hashlib.sha256()
+    total = 0
+    while True:
+        chunk = os.read(fd, PRIVATE_MARKER_SCAN_CHUNK_BYTES)
+        if not chunk:
+            return digest.hexdigest(), total, False
+        total += len(chunk)
+        if total > limit:
+            return "", total, True
+        digest.update(chunk)
+
+
+def _scan_and_hash_regular_fd(
+    fd: int,
+    markers: list[bytes],
+    *,
+    limit: int,
+) -> tuple[str, int, bool, bool]:
+    os.lseek(fd, 0, os.SEEK_SET)
+    digest = hashlib.sha256()
+    overlap = max((len(marker) for marker in markers), default=1) - 1
+    tail = b""
+    total = 0
+    found = False
+    while True:
+        chunk = os.read(fd, PRIVATE_MARKER_SCAN_CHUNK_BYTES)
+        if not chunk:
+            return digest.hexdigest(), total, found, False
+        total += len(chunk)
+        if total > limit:
+            return "", total, found, True
+        digest.update(chunk)
+        if markers:
+            data = tail + chunk
+            if any(marker in data for marker in markers):
+                found = True
+            tail = data[-overlap:] if overlap > 0 else b""
+
+
+def _scan_zip_fd(fd: int, markers: list[bytes]) -> tuple[bool, str]:
+    duplicate = os.dup(fd)
+    try:
+        os.lseek(duplicate, 0, os.SEEK_SET)
+        with os.fdopen(duplicate, "rb", closefd=True) as handle:
+            duplicate = -1
+            if not zipfile.is_zipfile(handle):
+                return False, ""
+            handle.seek(0)
+            with zipfile.ZipFile(handle) as archive:
+                infos = archive.infolist()
+                if len(infos) > PRIVATE_MARKER_SCAN_MAX_ARCHIVE_MEMBERS:
+                    return True, "privacy scan archive member limit exceeded"
+                archive_total = 0
+                for info in infos:
+                    if info.is_dir():
+                        continue
+                    if (
+                        info.file_size < 0
+                        or info.file_size > PRIVATE_MARKER_SCAN_MAX_MEMBER_BYTES
+                        or archive_total + info.file_size
+                        > PRIVATE_MARKER_SCAN_MAX_ARCHIVE_BYTES
+                    ):
+                        return True, "privacy scan archive limit exceeded"
+                    remaining_archive = (
+                        PRIVATE_MARKER_SCAN_MAX_ARCHIVE_BYTES - archive_total
+                    )
+                    member_limit = min(
+                        PRIVATE_MARKER_SCAN_MAX_MEMBER_BYTES,
+                        remaining_archive,
+                    )
+                    with archive.open(info) as member:
+                        found, scanned, exceeded = _scan_marker_stream(
+                            member,
+                            markers,
+                            limit=member_limit,
+                        )
+                    archive_total += scanned
+                    if exceeded:
+                        return True, "privacy scan archive limit exceeded"
+                    if found:
+                        return True, "private local source path marker detected"
+            return True, ""
+    finally:
+        if duplicate >= 0:
+            os.close(duplicate)
+
+
+def _scan_pdf_command_fd(
+    fd: int,
+    markers: list[bytes],
+    command: list[str],
+) -> tuple[str, bool]:
+    duplicate = os.dup(fd)
+    process: subprocess.Popen[bytes] | None = None
+    selector: selectors.BaseSelector | None = None
+    try:
+        os.lseek(duplicate, 0, os.SEEK_SET)
+        with os.fdopen(duplicate, "rb", closefd=True) as pdf_input:
+            duplicate = -1
+            try:
+                process = subprocess.Popen(
+                    command,
+                    stdin=pdf_input,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+            except OSError:
+                return "privacy scan PDF parser failed", False
+            if process.stdout is None:
+                return "privacy scan PDF parser failed", False
+            output_fd = process.stdout.fileno()
+            os.set_blocking(output_fd, False)
+            selector = selectors.DefaultSelector()
+            selector.register(output_fd, selectors.EVENT_READ)
+            normalized_markers = [
+                re.sub(rb"\s+", b"", marker) for marker in markers if marker
+            ]
+            overlap = max(
+                (len(marker) for marker in normalized_markers),
+                default=1,
+            ) - 1
+            tail = b""
+            total = 0
+            deadline = time.monotonic() + PRIVATE_MARKER_SCAN_PDF_TIMEOUT_SECONDS
+            reached_eof = False
+            while not reached_eof:
+                remaining_time = deadline - time.monotonic()
+                if remaining_time <= 0:
+                    return "privacy scan PDF parser timed out", False
+                events = selector.select(timeout=min(remaining_time, 0.1))
+                if not events:
+                    continue
+                for _key, _mask in events:
+                    try:
+                        chunk = os.read(
+                            output_fd,
+                            min(
+                                PRIVATE_MARKER_SCAN_CHUNK_BYTES,
+                                PRIVATE_MARKER_SCAN_MAX_ARCHIVE_BYTES - total + 1,
+                            ),
+                        )
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        reached_eof = True
+                        break
+                    total += len(chunk)
+                    if total > PRIVATE_MARKER_SCAN_MAX_ARCHIVE_BYTES:
+                        return "privacy scan PDF text limit exceeded", False
+                    normalized = re.sub(rb"\s+", b"", chunk)
+                    data = tail + normalized
+                    if any(marker in data for marker in normalized_markers):
+                        return "", True
+                    tail = data[-overlap:] if overlap > 0 else b""
+            try:
+                return_code = process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                return "privacy scan PDF parser timed out", False
+            if return_code != 0:
+                return "privacy scan PDF parser failed", False
+            return "", False
+    finally:
+        if selector is not None:
+            selector.close()
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        if process is not None and process.stdout is not None:
+            process.stdout.close()
+        if duplicate >= 0:
+            os.close(duplicate)
+
+
+def _scan_pdf_with_pypdf_fd(fd: int, markers: list[bytes]) -> tuple[str, bool]:
+    if importlib.util.find_spec("pypdf") is None:
+        return "privacy scan PDF parser unavailable", False
+    script = "\n".join(
+        [
+            "import io, sys",
+            "try:",
+            "    import resource",
+            "except ImportError:",
+            "    raise SystemExit(78)",
+            f"memory_limit = {PRIVATE_MARKER_SCAN_MAX_PDF_MEMORY_BYTES}",
+            "limit_kind = getattr(resource, 'RLIMIT_AS', getattr(resource, 'RLIMIT_DATA', None))",
+            "if limit_kind is None:",
+            "    raise SystemExit(78)",
+            "soft, hard = resource.getrlimit(limit_kind)",
+            "bounded = memory_limit if hard == resource.RLIM_INFINITY else min(memory_limit, hard)",
+            "resource.setrlimit(limit_kind, (bounded, hard))",
+            "from pypdf import PdfReader",
+            f"data = sys.stdin.buffer.read({PRIVATE_MARKER_SCAN_MAX_FILE_BYTES + 1})",
+            f"if len(data) > {PRIVATE_MARKER_SCAN_MAX_FILE_BYTES}:",
+            "    raise SystemExit(79)",
+            "reader = PdfReader(io.BytesIO(data), strict=False)",
+            f"if len(reader.pages) > {PRIVATE_MARKER_SCAN_MAX_PDF_PAGES}:",
+            "    raise SystemExit(80)",
+            "output = sys.stdout.buffer",
+            "def emit(value):",
+            "    output.write(str(value).encode('utf-8', errors='replace'))",
+            "    output.write(b'\\n')",
+            "metadata = reader.metadata",
+            "if metadata:",
+            "    for value in metadata.values():",
+            "        emit(value)",
+            "for page in reader.pages:",
+            "    page.extract_text(visitor_text=lambda text, *_: emit(text))",
+        ]
+    )
+    return _scan_pdf_command_fd(
+        fd,
+        markers,
+        [sys.executable, "-I", "-c", script],
+    )
+
+
+def _scan_pdf_fd(fd: int, markers: list[bytes]) -> tuple[str, bool]:
+    extractor = shutil.which("pdftotext")
+    if extractor:
+        issue, found = _scan_pdf_command_fd(
+            fd,
+            markers,
+            [extractor, "-layout", "-", "-"],
+        )
+    else:
+        issue, found = _scan_pdf_with_pypdf_fd(fd, markers)
+    if issue or found:
+        return issue, found
+
+    metadata_extractor = shutil.which("pdfinfo")
+    if metadata_extractor:
+        return _scan_pdf_command_fd(
+            fd,
+            markers,
+            [metadata_extractor, "-custom", "-"],
+        )
+    try:
+        from pypdf import PdfReader  # noqa: F401
+    except ImportError:
+        return "privacy scan PDF metadata parser unavailable", False
+    return _scan_pdf_with_pypdf_fd(fd, markers)
+
+
+def private_source_candidate_evidence(
+    project: Path,
+    relative_path: str,
+    markers: list[bytes],
+    *,
+    project_root_fd: int | None = None,
+) -> tuple[str, str, int]:
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    if no_follow is None:
+        return "privacy scan requires O_NOFOLLOW", "", 0
+    fd: int | None = None
+    directory_fds: list[int] = []
+    try:
+        fd, opened, directory_fds, parts = _open_project_relative_regular_file(
+            project,
+            relative_path,
+            project_root_fd=project_root_fd,
+        )
+        if opened.st_size > PRIVATE_MARKER_SCAN_MAX_FILE_BYTES:
+            return "privacy scan file limit exceeded", "", 0
+
+        is_zip, zip_issue = _scan_zip_fd(fd, markers) if markers else (False, "")
+        if zip_issue:
+            return zip_issue, "", 0
+        if is_zip:
+            digest, bytes_read, exceeded = _hash_open_fd(
+                fd,
+                limit=PRIVATE_MARKER_SCAN_MAX_FILE_BYTES,
+            )
+            found = False
+        else:
+            digest, bytes_read, found, exceeded = _scan_and_hash_regular_fd(
+                fd,
+                markers,
+                limit=PRIVATE_MARKER_SCAN_MAX_FILE_BYTES,
+            )
+        if exceeded:
+            return "privacy scan file limit exceeded", "", 0
+        if found:
+            return "private local source path marker detected", "", 0
+        if Path(relative_path).suffix.lower() == ".pdf" and markers:
+            pdf_issue, pdf_found = _scan_pdf_fd(fd, markers)
+            if pdf_issue:
+                return pdf_issue, "", 0
+            if pdf_found:
+                return "private local source path marker detected in PDF", "", 0
+        if bytes_read != opened.st_size or not _project_file_binding_is_current(
+            project,
+            fd,
+            opened,
+            directory_fds,
+            parts,
+        ):
+            return "privacy scan target changed during inspection", "", 0
+        return "", digest, opened.st_size
+    except (
+        EOFError,
+        NotImplementedError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        zipfile.BadZipFile,
+        zipfile.LargeZipFile,
+    ):
+        return "privacy scan failed", "", 0
+    finally:
+        if fd is not None:
+            os.close(fd)
+        _close_project_fd_chain(directory_fds)
+
+
+def private_source_marker_scan_issue(
+    project: Path,
+    relative_path: str,
+    markers: list[bytes],
+) -> str:
+    issue, _, _ = private_source_candidate_evidence(
+        project,
+        relative_path,
+        markers,
+    )
+    return issue
+
+
+def file_contains_private_source_marker(
+    project: Path,
+    relative_path: str,
+    markers: list[bytes],
+) -> bool:
+    return bool(private_source_marker_scan_issue(project, relative_path, markers))
+
+
+def sanitize_private_source_markers(project: Path, text: str) -> str:
+    sanitized = text
+    for marker in private_source_path_markers(project):
+        sanitized = sanitized.replace(marker.decode("utf-8"), "[private-local-source]")
+    return sanitized
+
+
 def codex_generated_images_root() -> Path:
     codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).expanduser()
     return codex_home / "generated_images"
@@ -1442,30 +2205,121 @@ def append_event(project: Path, payload: dict[str, object]) -> None:
         handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
 
 
-def register_materials(project: Path, material_paths: list[Path], goal: str) -> list[str]:
+def material_fingerprint(material: Path) -> str:
+    """Return a compact content identity for a file or material tree.
+
+    This deliberately hashes the source bytes. It avoids parser work on an
+    unchanged rerun; it is not a claim that the source was not read.
+    """
+    root = material.resolve()
+    records: list[dict[str, str]] = []
+    for path in material_files(root):
+        resolved = path.resolve()
+        relative = (
+            resolved.relative_to(root).as_posix()
+            if root.is_dir()
+            else resolved.name
+        )
+        records.append({"path": relative, "sha256": sha256_file(resolved)})
+    return hashlib.sha256(
+        json.dumps(records, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def _source_rows_for_material(
+    project: Path, rows: list[dict[str, str]], material: Path
+) -> list[dict[str, str]]:
+    material_resolved = material.resolve()
+    matches: list[dict[str, str]] = []
+    for row in rows:
+        try:
+            roots = source_row_material_roots(project, row)
+        except ValueError:
+            continue
+        if any(root.resolve() == material_resolved for root in roots):
+            matches.append(row)
+    return matches
+
+
+def register_materials(
+    project: Path,
+    material_paths: list[Path],
+    goal: str,
+    max_total_chars: int = 2_000_000,
+) -> list[str]:
     source_path = project / "AD-creative/orchestrator/source_events.csv"
-    _, rows = read_csv_rows(source_path)
+    fieldnames, rows = read_csv_rows(source_path)
     source_ids: list[str] = []
     allocate_source_id = id_allocator(rows, "source_event_id", "SRC")
     delivery_surface = project_surface(project) == DELIVERY_SURFACE
-
+    matching_rows_by_material: dict[Path, list[dict[str, str]]] = {}
     for material in material_paths:
         if not material.exists():
             raise FileNotFoundError(f"material not found: {material}")
+        matching_rows = _source_rows_for_material(project, rows, material)
+        source_history = {
+            row.get("source_event_id", "")
+            for row in matching_rows
+            if row.get("source_event_id", "")
+        }
+        if len(source_history) > 1:
+            raise ValueError(
+                "ambiguous material source history for "
+                f"{material.name}: {', '.join(sorted(source_history))}; "
+                "reconcile duplicate source events explicitly before rerunning intake"
+            )
+        matching_rows_by_material[material] = matching_rows
+
+    for material in material_paths:
+        fingerprint = material_fingerprint(material)
+        matching_rows = matching_rows_by_material[material]
+        if matching_rows:
+            current = matching_rows[-1]
+            if (
+                current.get("material_fingerprint", "") == fingerprint
+                and current.get("ingested_material_fingerprint", "") == fingerprint
+                and current.get("ingested_max_total_chars", "")
+                == str(max_total_chars)
+            ):
+                continue
+            source_id = current.get("source_event_id", "")
+            if not source_id:
+                raise ValueError("existing material source is missing source_event_id")
+            current["material_fingerprint"] = fingerprint
+            current["ingested_material_fingerprint"] = ""
+            current["ingested_max_total_chars"] = ""
+            current["raw_summary"] = f"待整理资料：{material.name}"
+            current["notes"] = goal
+            source_ids.append(source_id)
+            continue
         source_id = allocate_source_id()
+        try:
+            material.resolve().relative_to(project.resolve())
+            public_material_path = safe_rel(project, material)
+        except ValueError:
+            public_material_path = register_local_source_path(
+                project,
+                source_id,
+                material,
+            )
         row = {
             "source_event_id": source_id,
             "received_at": now_iso(),
             "source_owner": "operator",
             "source_type": "folder" if material.is_dir() else "file",
             "declared_semantics": classify_material(material),
-            "file_paths": safe_rel(project, material),
+            "file_paths": public_material_path,
             "raw_summary": f"待整理资料：{material.name}",
             "trust_level": "unreviewed",
             "affects_requirements": "unknown",
             "affects_artifacts": "",
             "supersedes_event_ids": "",
             "notes": goal,
+            "material_fingerprint": fingerprint,
+            "ingested_material_fingerprint": "",
+            "ingested_max_total_chars": "",
         }
         rows.append(row)
         source_ids.append(source_id)
@@ -1483,7 +2337,13 @@ def register_materials(project: Path, material_paths: list[Path], goal: str) -> 
             )
 
     if source_ids:
-        fieldnames, _ = read_csv_rows(source_path)
+        for field in (
+            "material_fingerprint",
+            "ingested_material_fingerprint",
+            "ingested_max_total_chars",
+        ):
+            if field not in fieldnames:
+                fieldnames.append(field)
         write_csv_rows(source_path, fieldnames, rows)
     return source_ids
 
@@ -1493,11 +2353,11 @@ def existing_source_ids_for_material(project: Path, material: Path) -> list[str]
     material_resolved = material.resolve()
     matches: list[str] = []
     for row in rows:
-        raw_path = row.get("file_paths", "")
-        path = Path(raw_path)
-        if not path.is_absolute():
-            path = project / raw_path
-        if path.resolve() == material_resolved:
+        try:
+            roots = source_row_material_roots(project, row)
+        except ValueError:
+            continue
+        if any(path.resolve() == material_resolved for path in roots):
             source_id = row.get("source_event_id", "")
             if source_id:
                 matches.append(source_id)
@@ -1550,6 +2410,8 @@ def ensure_intake_work(project: Path, source_ids: list[str], goal: str) -> str:
 
 
 def ensure_profile_work(project: Path, source_ids: list[str], goal: str) -> str:
+    if project_surface(project) != DELIVERY_SURFACE:
+        return ""
     work_path = project / "AD-creative/orchestrator/work_items.csv"
     fieldnames, rows = read_csv_rows(work_path)
     for row in rows:
@@ -1703,14 +2565,21 @@ def write_text(path: Path, content: str) -> None:
 
 
 def update_markdown_sections(path: Path, sections: dict[str, str]) -> None:
-    """Update owned sections while preserving version truth and user-added sections."""
+    """Replace unique owned snapshots while preserving user/date/history sections."""
     text = path.read_text(encoding="utf-8") if path.exists() else "# Current Truth\n"
     for heading, body in sections.items():
         section = f"## {heading}\n{body.strip()}\n"
         pattern = re.compile(
             rf"(?ms)^## {re.escape(heading)}[ \t]*\n.*?(?=^## [^\n]+\n|\Z)"
         )
-        if pattern.search(text):
+        matches = list(pattern.finditer(text))
+        if len(matches) > 1:
+            raise ValueError(
+                f"current_truth owned section is duplicated: {heading}; "
+                "preserve all dated/user sections and resolve the competing current "
+                "snapshot into Conflicted before retrying"
+            )
+        if matches:
             text = pattern.sub(section, text, count=1)
         else:
             text = text.rstrip() + "\n\n" + section
@@ -3396,11 +4265,7 @@ def collect_source_materials(project: Path, source_ids: list[str]) -> tuple[list
         source_id = source.get("source_event_id", "")
         if source_id:
             resolved_source_ids.append(source_id)
-        raw_path = source.get("file_paths", "")
-        path = Path(raw_path)
-        if raw_path and not path.is_absolute():
-            path = project / raw_path
-        for file_path in material_files(path):
+        for file_path, _ in source_row_files(project, source):
             materials.append((source, file_path, read_material_text(file_path, max_chars=24000)))
     return materials, resolved_source_ids
 
@@ -3760,7 +4625,7 @@ def analyze_profiles(
 
     for source, file_path, text in materials:
         source_id = source.get("source_event_id", "")
-        rel_file = safe_rel(project, file_path)
+        rel_file = source_path_label(project, source, file_path)
         for raw_line in text.splitlines():
             line = clean_material_line(raw_line)
             if not line or len(line) < 4:
@@ -3924,48 +4789,50 @@ def analyze_profiles(
     handoff_path = project / "AD-creative/handoff/画像分析简报.md"
     write_text(profile_truth_path, profile_current_truth_content(project, subjects, insights, conflicts))
     write_text(handoff_path, profile_handoff_content(subjects, insights, conflicts))
-    for artifact_id, artifact_type, rel_path in [
-        ("ART-AUTO-PROFILE-TRUTH", "profile_current_truth", safe_rel(project, profile_truth_path)),
-        ("ART-AUTO-PROFILE-BRIEF", "profile_handoff_brief", safe_rel(project, handoff_path)),
-    ]:
-        update_artifact(
+    delivery_surface = project_surface(project) == DELIVERY_SURFACE
+    if delivery_surface:
+        for artifact_id, artifact_type, rel_path in [
+            ("ART-AUTO-PROFILE-TRUTH", "profile_current_truth", safe_rel(project, profile_truth_path)),
+            ("ART-AUTO-PROFILE-BRIEF", "profile_handoff_brief", safe_rel(project, handoff_path)),
+        ]:
+            update_artifact(
+                project,
+                artifact_id,
+                artifact_type,
+                rel_path,
+                "intake",
+                source_event_ids=linked_source_ids,
+                linked_work_items=work_id,
+                gate_status="PARTIAL_PASS",
+            )
+        append_gate(
             project,
-            artifact_id,
-            artifact_type,
-            rel_path,
+            "GATE-AUTO-PROFILE-001",
             "intake",
-            source_event_ids=linked_source_ids,
-            linked_work_items=work_id,
-            gate_status="PARTIAL_PASS",
+            "PARTIAL_PASS",
+            "70",
+            "ART-AUTO-PROFILE-TRUTH;ART-AUTO-PROFILE-BRIEF",
+            "画像均为 candidate，需人工确认关键角色和最终拍板人。",
+            "确认关键发言人、决策权、分歧是否已统一。",
+            "请确认谁是最终拍板人、哪些画像结论可升级为 confirmed。",
+            "research_plan",
+            "ad_creative_operator",
         )
-    append_gate(
-        project,
-        "GATE-AUTO-PROFILE-001",
-        "intake",
-        "PARTIAL_PASS",
-        "70",
-        "ART-AUTO-PROFILE-TRUTH;ART-AUTO-PROFILE-BRIEF",
-        "画像均为 candidate，需人工确认关键角色和最终拍板人。",
-        "确认关键发言人、决策权、分歧是否已统一。",
-        "请确认谁是最终拍板人、哪些画像结论可升级为 confirmed。",
-        "research_plan",
-        "ad_creative_operator",
-    )
-    append_event(
-        project,
-        {
-            "event_id": f"EVT-PROFILE-{now}",
-            "event_type": "profile_analysis_completed",
-            "created_at": now,
-            "actor": "ad_creative_operator",
-            "source_event_ids": linked_source_ids,
-            "goal": goal,
-            "subjects": len(subjects),
-            "insights": len(insights),
-            "conflicts": len(conflicts),
-        },
-    )
-    if work_id:
+        append_event(
+            project,
+            {
+                "event_id": f"EVT-PROFILE-{now}",
+                "event_type": "profile_analysis_completed",
+                "created_at": now,
+                "actor": "ad_creative_operator",
+                "source_event_ids": linked_source_ids,
+                "goal": goal,
+                "subjects": len(subjects),
+                "insights": len(insights),
+                "conflicts": len(conflicts),
+            },
+        )
+    if delivery_surface and work_id:
         work_path = project / "AD-creative/orchestrator/work_items.csv"
         work_fields, work_rows = read_csv_rows(work_path)
         for row in work_rows:
@@ -3988,6 +4855,7 @@ def analyze_profiles(
         "deduped": deduped,
         "profile_current_truth": profile_truth_path,
         "handoff": handoff_path,
+        "governance_records_written": int(delivery_surface),
         "source_ids": linked_source_ids,
     }
 
@@ -4794,7 +5662,7 @@ client real objective: {context['client_objective']}
 2. 受众与行为阻力
 3. 产品功能到传播利益
 4. 策略路径
-5. 2-3 条创意方向对比
+5. {len(rows)} 条创意方向对比（数量来自当前 brief/候选，不补齐固定配额）
 6. 推荐方向与选择理由
 7. 风险、缺口、待确认问题
 
@@ -4825,7 +5693,7 @@ def render_slide_spec_content(rows: list[dict[str, str]]) -> str:
         ("1", "Problem", "Business problem + client real objective", "none", "internal_only"),
         ("2", "Audience Insight", "Target audience + behavior barrier + consumer insight", "none", "internal_only"),
         ("3", "Feature To Benefit", "Product feature translated to communication benefit", "none", "internal_only"),
-        ("4", "Direction Matrix", "2-3 differentiated directions with why choose", "none", "internal_only"),
+        ("4", "Direction Matrix", f"{len(rows)} differentiated directions with why choose", "none", "internal_only"),
     ]
     for index, row in enumerate(rows, start=5):
         slide_rows.append(
@@ -5059,6 +5927,7 @@ def render_creative_brief(project: Path, *, work_id: str = "") -> dict[str, obje
         )
     result = create_creative_brief(project)
     brief_artifacts = [
+        ("ART-AUTO-CREATIVE-BRIEF-MANIFEST", "creative_brief_manifest", BRIEF_MANIFEST_REL),
         ("ART-AUTO-CREATIVE-BRIEF-SNAPSHOT", "creative_brief_snapshot", BRIEF_SNAPSHOT_REL),
         ("ART-AUTO-CREATIVE-BRIEF-CONTRACT", "creative_brief_contract", BRIEF_CONTRACT_REL),
         ("ART-AUTO-CREATIVE-CANDIDATE-SCHEMA", "creative_candidate_schema", CANDIDATE_SCHEMA_REL),
@@ -5115,13 +5984,13 @@ def render_creative_proposal(project: Path, *, work_id: str = "") -> dict[str, o
 
 def creative_proposal_scan_files(project: Path) -> list[Path]:
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
-    candidate_mode = (project / CURRENT_CANDIDATE_REL).is_file()
+    generation_paths = current_creative_generation_paths(project)
+    candidate_mode = bool(generation_paths)
     paths = (
         [
-            project / CURRENT_CANDIDATE_REL,
-            project / CREATIVE_DIRECTIONS_REL,
-            project / OPTION_MATRIX_REL,
-            project / CRITIC_RECEIPT_REL,
+            generation_paths["candidate"],
+            generation_paths["directions"],
+            generation_paths["matrix"],
         ]
         if candidate_mode
         else [project / rel_path for _, _, rel_path in CREATIVE_PROPOSAL_ARTIFACTS]
@@ -5134,13 +6003,24 @@ def creative_proposal_scan_files(project: Path) -> list[Path]:
         "creative_proposal",
         "proposal_outline",
         "creative_candidate",
-        "creative_critic_receipt",
     }
+    current_candidate_paths = (
+        {
+            generation_paths["candidate"].resolve(),
+            generation_paths["directions"].resolve(),
+            generation_paths["matrix"].resolve(),
+        }
+        if candidate_mode
+        else set()
+    )
     for artifact in artifacts:
         if artifact.get("artifact_type", "").strip() in creative_types:
             rel_path = artifact.get("path", "").strip()
-            if rel_path:
-                paths.append(project / rel_path)
+            artifact_path = project / rel_path
+            if rel_path and (
+                not candidate_mode or artifact_path.resolve() in current_candidate_paths
+            ):
+                paths.append(artifact_path)
     deduped: list[Path] = []
     seen: set[Path] = set()
     for path in paths:
@@ -5151,21 +6031,30 @@ def creative_proposal_scan_files(project: Path) -> list[Path]:
     return deduped
 
 
-def read_proposal_texts(paths: list[Path]) -> tuple[str, list[str]]:
+def read_proposal_texts(project: Path, paths: list[Path]) -> tuple[str, list[str]]:
     chunks: list[str] = []
     missing: list[str] = []
     for path in paths:
-        if not path.exists():
-            missing.append(str(path))
-            continue
         if path.suffix.lower() not in TEXT_SUFFIXES:
             continue
-        chunks.append(path.read_text(encoding="utf-8", errors="ignore"))
+        try:
+            text = read_optional_project_text(project, path)
+        except (UnicodeDecodeError, ValueError):
+            missing.append(str(path))
+            continue
+        if text is None:
+            missing.append(str(path))
+            continue
+        chunks.append(text)
     return "\n\n".join(chunks), missing
 
 
 def load_direction_rows(project: Path) -> list[dict[str, str]]:
-    _, rows = read_csv_rows(project / "AD-creative/creative/option_matrix.csv")
+    generation_paths = current_creative_generation_paths(project)
+    matrix_path = generation_paths.get(
+        "matrix", project / "AD-creative/creative/option_matrix.csv"
+    )
+    _, rows = read_csv_rows(matrix_path)
     return [row for row in rows if row.get("direction_id", "").strip()]
 
 
@@ -5217,31 +6106,64 @@ def collect_humanizer_writing_risks(combined_text: str, client_texts: list[tuple
     return risks
 
 
-def client_facing_scan_paths(project: Path, files: list[Path]) -> list[Path]:
+def client_facing_scan_paths(
+    project: Path, files: list[Path]
+) -> tuple[list[Path], list[str]]:
     _, artifacts = read_csv_rows(project / "AD-creative/orchestrator/artifact_index.csv")
     client_paths: set[Path] = set()
+    errors: list[str] = []
     for artifact in artifacts:
         if artifact.get("visibility", "").lower() in CLIENT_VISIBLE_VALUES:
             rel_path = artifact.get("path", "").strip()
-            if rel_path:
-                client_paths.add((project / rel_path).resolve())
+            if not rel_path or Path(rel_path).suffix.lower() not in TEXT_SUFFIXES:
+                continue
+            candidate = project / rel_path
+            try:
+                text = read_optional_project_text(project, candidate)
+            except (OSError, UnicodeDecodeError, ValueError) as exc:
+                errors.append(f"invalid client-visible artifact path {rel_path}: {exc}")
+                continue
+            if text is None:
+                errors.append(f"missing client-visible artifact: {rel_path}")
+                continue
+            client_paths.add(candidate)
     for path in files:
-        if not path.exists() or path.suffix.lower() not in TEXT_SUFFIXES:
+        if path.suffix.lower() not in TEXT_SUFFIXES:
             continue
-        head = "\n".join(path.read_text(encoding="utf-8", errors="ignore").splitlines()[:12]).lower()
+        try:
+            text = read_optional_project_text(project, path)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            errors.append(f"invalid proposal scan path {path}: {exc}")
+            continue
+        if text is None:
+            continue
+        head = "\n".join(text.splitlines()[:12]).lower()
         if "visibility: client_visible" in head or "visibility: client_visible_ready" in head:
-            client_paths.add(path.resolve())
-    return sorted(client_paths)
+            client_paths.add(path)
+    return sorted(client_paths), errors
 
 
 def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
     files = creative_proposal_scan_files(project)
-    candidate_mode = (project / CURRENT_CANDIDATE_REL).is_file()
+    generation_paths = current_creative_generation_paths(project)
+    candidate_mode = bool(generation_paths)
     active_artifacts = (
         [
-            ("ART-AUTO-CREATIVE-CANDIDATE", "creative_candidate", CURRENT_CANDIDATE_REL),
-            ("ART-AUTO-CREATIVE-DIRECTIONS", "creative_directions", CREATIVE_DIRECTIONS_REL),
-            ("ART-AUTO-CREATIVE-OPTION-MATRIX", "creative_option_matrix", OPTION_MATRIX_REL),
+            (
+                "ART-AUTO-CREATIVE-CANDIDATE",
+                "creative_candidate",
+                generation_paths["candidate"].relative_to(project),
+            ),
+            (
+                "ART-AUTO-CREATIVE-DIRECTIONS",
+                "creative_directions",
+                generation_paths["directions"].relative_to(project),
+            ),
+            (
+                "ART-AUTO-CREATIVE-OPTION-MATRIX",
+                "creative_option_matrix",
+                generation_paths["matrix"].relative_to(project),
+            ),
         ]
         if candidate_mode
         else CREATIVE_PROPOSAL_ARTIFACTS
@@ -5257,7 +6179,7 @@ def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
                 visibility="internal_only",
                 gate_status="NOT_RUN",
             )
-    combined_text, missing_files = read_proposal_texts(files)
+    combined_text, missing_files = read_proposal_texts(project, files)
     lower_text = combined_text.lower()
     direction_rows = load_direction_rows(project)
     issues: list[str] = []
@@ -5312,10 +6234,10 @@ def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
         reason_codes.append("NO_PRODUCT_TO_BENEFIT")
         issues.append("缺少产品功能到传播利益的明确翻译。")
 
-    if len(direction_rows) < 2:
+    if not candidate_mode and len(direction_rows) < 2:
         reason_codes.append("TOO_FEW_DIRECTIONS")
         issues.append("创意方向少于 2 条。")
-    else:
+    elif len(direction_rows) > 1:
         signatures = {
             re.sub(
                 r"\s+",
@@ -5354,10 +6276,18 @@ def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
         reason_codes.append("UNSUPPORTED_REFERENCE_OR_CASE_CLAIM")
         issues.extend(f"未追溯案例/参考/数据声明: {line}" for line in unsupported_claims[:6])
 
-    client_paths = client_facing_scan_paths(project, files)
+    client_paths, client_path_errors = client_facing_scan_paths(project, files)
+    if client_path_errors:
+        reason_codes.append("INVALID_CLIENT_VISIBLE_ARTIFACT_PATH")
+        issues.extend(client_path_errors)
     client_texts: list[tuple[Path, str]] = []
     for path in client_paths:
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        try:
+            text = read_project_text(project, path)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            reason_codes.append("INVALID_CLIENT_VISIBLE_ARTIFACT_PATH")
+            issues.append(f"cannot safely read client-visible artifact {path}: {exc}")
+            continue
         client_texts.append((path, text))
         risky = sorted({match.group(0) for match in INTERNAL_LANGUAGE_PATTERN.finditer(text)})
         if risky:
@@ -5373,24 +6303,36 @@ def review_creative_quality(project: Path) -> tuple[str, list[str], Path]:
         reason_codes.append("OPEN_EVIDENCE_GAPS")
         warnings.append(f"仍有 {tbd_count} 个 TBD/open question，只能作为内部草案或 PARTIAL。")
 
+    critic_required = True
     if candidate_mode:
         try:
-            critic_result = review_creative_candidate(project)
+            critic_required = creative_brief_requires_independent_critic(project)
+            critic_result = review_creative_candidate(
+                project,
+                independent_critic_required=critic_required,
+                persist_receipt=True,
+            )
         except ValueError as exc:
             reason_codes.append("CRITIC_RECEIPT_INVALID")
-            issues.append(f"Critic Receipt could not be produced: {exc}")
+            issues.append(f"deterministic lint could not be produced: {exc}")
         else:
-            evidence.append(f"critic_receipt={safe_rel(project, critic_result.receipt_path)}")
+            assert critic_result.receipt_path is not None
+            evidence.append(
+                f"deterministic_lint_receipt={safe_rel(project, critic_result.receipt_path)}"
+            )
             if critic_result.blocking_issues:
                 reason_codes.append("CRITIC_STRUCTURE_BLOCKED")
                 issues.extend(critic_result.blocking_issues)
             warnings.extend(critic_result.warnings)
-        reason_codes.append("INDEPENDENT_CREATIVE_CRITIC_REQUIRED")
-        warnings.append(
-            "确定性结构/语言 Lint 不能批准创意质量；仍需绑定 exact candidate 的独立创意 Critic。"
-        )
+        if critic_required:
+            reason_codes.append("INDEPENDENT_CREATIVE_CRITIC_REQUIRED")
+            warnings.append(
+                "确定性结构/语言 Lint 不能批准创意质量；仍需绑定 exact candidate 的独立创意 Critic。"
+            )
+        else:
+            evidence.append("independent_creative_critic=not_required_by_verified_brief")
     status = "PASS" if not issues and not warnings else "PARTIAL_PASS" if not issues else "BLOCKED"
-    if status == "PASS":
+    if status == "PASS" and critic_required:
         status = "PARTIAL_PASS"
         reason_codes.append("INDEPENDENT_CREATIVE_CRITIC_REQUIRED")
         warnings.append(
@@ -6084,6 +7026,160 @@ checked_at: {now_iso()}
     return status, issues + warnings, report_path
 
 
+def substantive_film_packet_value(value: str | None) -> bool:
+    lowered = (value or "").strip().casefold()
+    if re.match(
+        r"^(?:tbd|todo|pending|placeholder(?:-only)?|open question|"
+        r"待补充|待确认|待定|暂无)(?:\s*[:：\-—]|\s*$)",
+        lowered,
+    ):
+        return False
+    return non_placeholder(value)
+
+
+def markdown_section_body(text: str, heading: str) -> str:
+    match = re.search(
+        rf"(?ms)^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)",
+        text,
+    )
+    if not match:
+        return ""
+    body = re.sub(r"<!--.*?-->", "", match.group(1), flags=re.S)
+    meaningful = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or re.fullmatch(r"\|?[\s:|-]+\|?", stripped):
+            continue
+        if stripped.startswith("|") and all(
+            token.strip() in {
+                "beat",
+                "audience_state",
+                "visible_action",
+                "cause",
+                "effect",
+                "brand_or_product_role",
+                "constraint_id",
+                "area",
+                "description",
+                "impact",
+                "owner",
+                "status",
+            }
+            for token in stripped.strip("|").split("|")
+        ):
+            continue
+        if not substantive_film_packet_value(stripped):
+            continue
+        meaningful.append(stripped)
+    return "\n".join(meaningful)
+
+
+def film_packet_content_findings(
+    project: Path,
+    treatment_path: Path,
+    shot_plan_path: Path,
+    constraints_path: Path,
+) -> tuple[list[str], list[str]]:
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    try:
+        text = read_project_text(project, treatment_path)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        issues.append(
+            f"缺少或无法安全读取 {treatment_path.name}；"
+            f"不能用技术 shot list 代替客户可读 treatment：{exc}"
+        )
+    else:
+        for heading, label in [
+            ("Director Thesis", "导演命题"),
+            ("Audience State Change", "受众状态变化"),
+            ("Brand Causal Role", "品牌因果角色"),
+            ("Causal Story Arc", "因果故事链"),
+            ("World Rules", "世界/物理规则"),
+            ("Camera / Blocking / Performance", "摄影、调度与表演逻辑"),
+            ("Art / Light / Sound / Edit", "美术、光、声音与剪辑逻辑"),
+            ("Practical / VFX Boundary", "实拍/VFX 边界"),
+            ("Fallback / Plan B", "关键依赖 Plan B"),
+        ]:
+            if not markdown_section_body(text, heading):
+                issues.append(f"treatment 缺少实质内容：{label}。")
+        if not markdown_section_body(text, "Reference Logic / Do Not Copy"):
+            warnings.append("treatment 缺少 reference 可借鉴/不可照搬边界。")
+
+    required_shot_columns = {
+        "shot_id",
+        "story_function",
+        "causal_input",
+        "visible_action",
+        "causal_output",
+        "physical_space",
+        "capture_method",
+        "brand_or_product_role",
+        "risk",
+        "fallback",
+    }
+    try:
+        shot_text = read_project_text(project, shot_plan_path)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        issues.append(
+            f"缺少或无法安全读取 {shot_plan_path.name}；"
+            f"关键画面没有可拍摄的因果拆解：{exc}"
+        )
+    else:
+        table_lines = [line.strip() for line in shot_text.splitlines() if line.strip().startswith("|")]
+        header_columns = {
+            value.strip() for value in table_lines[0].strip("|").split("|")
+        } if table_lines else set()
+        missing_columns = sorted(required_shot_columns - header_columns)
+        if missing_columns:
+            issues.append("shot plan 缺少因果/制作列：" + ", ".join(missing_columns) + "。")
+        data_rows = [
+            line
+            for line in table_lines[2:]
+            if any(value.strip() for value in line.strip("|").split("|"))
+        ]
+        if not data_rows:
+            issues.append("shot plan 没有镜头行；不能只保留表头。")
+        elif not missing_columns:
+            ordered_columns = [
+                value.strip() for value in table_lines[0].strip("|").split("|")
+            ]
+            for row_number, line in enumerate(data_rows, start=1):
+                values = [value.strip() for value in line.strip("|").split("|")]
+                row = dict(zip(ordered_columns, values))
+                empty_required = sorted(
+                    column
+                    for column in required_shot_columns
+                    if not substantive_film_packet_value(row.get(column))
+                )
+                if empty_required:
+                    issues.append(
+                        f"shot plan 第 {row_number} 行缺少实质字段："
+                        + ", ".join(empty_required)
+                        + "。"
+                    )
+
+    try:
+        constraints_text = read_project_text(project, constraints_path)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        issues.append(
+            f"缺少或无法安全读取 {constraints_path.name}；"
+            f"制作可行性和停止条件不可验证：{exc}"
+        )
+    else:
+        for heading, label in [
+            ("Brand / Product Truth", "品牌/产品事实"),
+            ("World / Physical Rules", "世界/物理规则"),
+            ("Practical / VFX Boundary", "实拍/VFX 边界"),
+            ("Stop Conditions", "停止条件"),
+            ("Fallback / Plan B", "Plan B"),
+        ]:
+            if not markdown_section_body(constraints_text, heading):
+                issues.append(f"production constraints 缺少实质内容：{label}。")
+    return issues, warnings
+
+
 def review_film_quality(project: Path) -> tuple[str, list[str], Path]:
     counts = read_counts(project)
     _, requirements = read_csv_rows(project / "AD-creative/orchestrator/requirements.csv")
@@ -6212,11 +7308,20 @@ def review_film_quality(project: Path) -> tuple[str, list[str], Path]:
     if creative_gate and creative_gate.get("status", "").strip() == "BLOCKED":
         issues.append("Creative Quality Gate 为 BLOCKED，Film Gate 不得推进下游。")
 
-    creative_path = project / "AD-creative/creative/creative_directions.md"
+    creative_path = active_creative_directions_path(project)
     proposal_path = project / "AD-creative/proposal_architecture/proposal_structure.md"
     treatment_path = project / "AD-creative/film/treatment_packet.md"
     shot_plan_path = project / "AD-creative/film/shot_list_storyboard_plan.md"
     constraints_path = project / "AD-creative/film/production_constraints.md"
+
+    packet_issues, packet_warnings = film_packet_content_findings(
+        project,
+        treatment_path,
+        shot_plan_path,
+        constraints_path,
+    )
+    issues.extend(packet_issues)
+    warnings.extend(packet_warnings)
 
     if not requirements:
         issues.append("缺少 requirements，影视/商业判断没有客户事实基线。")
@@ -6310,11 +7415,14 @@ checked_at: {now_iso()}
 
 ## Review Dimensions
 
-- cinematic_clarity: treatment / shot list / key-frame logic can explain the film idea.
+- cinematic_clarity: treatment states a director thesis and audience change before technical shots.
+- causal_continuity: every beat and shot has a visible input, action, and output.
+- physical_world: location, material, body, object, time, and screen behavior obey declared rules.
 - commercial_message: client value, product role, and campaign output are traceable to requirements.
+- brand_causality: replacing the brand/product would materially break the idea.
 - brand_fit: visual direction and references do not invent unsupported brand facts.
 - product_truth: product, packaging, logo, and claims are not faked.
-- production_feasibility: production constraints and known blockers are visible.
+- production_feasibility: capture method, practical/VFX boundary, stop conditions, and Plan B are usable.
 - client_risk: client-visible generated assets and artifacts remain gated.
 """,
     )
@@ -6476,6 +7584,52 @@ def perform_intake(
         target_sources,
         max_total_chars=max_total_chars,
     )
+    failed_source_ids = {
+        str(item.get("source_event_id", ""))
+        for item in [
+            *intake_result.ingestion.parser_errors,
+            *intake_result.ingestion.over_budget,
+        ]
+        if item.get("source_event_id", "")
+    }
+    successful_source_ids = {
+        row.get("source_event_id", "")
+        for row in target_sources
+        if row.get("source_event_id", "")
+        and row.get("material_fingerprint", "")
+        and row.get("source_event_id", "") not in failed_source_ids
+    }
+    if successful_source_ids:
+        source_fields, refreshed_source_rows = read_csv_rows(source_path)
+        updated = False
+        for row in refreshed_source_rows:
+            if row.get("source_event_id", "") not in successful_source_ids:
+                continue
+            fingerprint = row.get("material_fingerprint", "")
+            try:
+                roots = source_row_material_roots(project, row)
+                current_fingerprint = (
+                    material_fingerprint(roots[0]) if len(roots) == 1 else ""
+                )
+            except (OSError, ValueError):
+                current_fingerprint = ""
+            if current_fingerprint != fingerprint:
+                continue
+            if (
+                row.get("ingested_material_fingerprint", "") != fingerprint
+                or row.get("ingested_max_total_chars", "") != str(max_total_chars)
+            ):
+                row["ingested_material_fingerprint"] = fingerprint
+                row["ingested_max_total_chars"] = str(max_total_chars)
+                updated = True
+        if updated:
+            for field in (
+                "ingested_material_fingerprint",
+                "ingested_max_total_chars",
+            ):
+                if field not in source_fields:
+                    source_fields.append(field)
+            write_csv_rows(source_path, source_fields, refreshed_source_rows)
     requirement_path = project / "AD-creative/orchestrator/requirements.csv"
     _, requirement_rows = read_csv_rows(requirement_path)
     gap_path = project / "AD-creative/orchestrator/gaps.csv"
@@ -6488,10 +7642,29 @@ def perform_intake(
         and row.get("impact", "").strip().lower() in {"blocking", "high_impact"}
     ]
     current_truth_path = project / "AD-creative/orchestrator/current_truth.md"
-    confirmed = "\n".join(f"- {row['statement']}" for row in requirement_rows[:12]) or "- 暂无已抽取需求"
+    confirmed = (
+        "\n".join(
+            f"- source-backed requirement candidate (not claim/client approval): {row['statement']}"
+            for row in requirement_rows[:12]
+        )
+        or "- 暂无已抽取需求"
+    )
+    current_gap_rows = [
+        row
+        for row in gap_rows
+        if row.get("status", "").strip().lower() not in {"closed", "resolved", "done"}
+    ]
     open_questions = "\n".join(
-        f"- {row.get('question_for_client') or row.get('description')}" for row in gap_rows[:8]
+        f"- {row.get('question_for_client') or row.get('description')}"
+        for row in current_gap_rows[:8]
     ) or "- 暂无"
+    existing_truth = (
+        current_truth_path.read_text(encoding="utf-8")
+        if current_truth_path.is_file()
+        else ""
+    )
+    existing_stage = first_section_line(existing_truth, "Current Stage").strip()
+    preserve_later_stage = bool(existing_stage and existing_stage != "intake")
     if delivery_surface:
         inferred = (
             "- 当前处于 intake；已从本地资料抽取第一轮需求和缺口。\n"
@@ -6505,19 +7678,22 @@ def perform_intake(
             if blocking_gap_rows
             else "基于当前证据完成本轮内部广告内容产出。"
         )
-    update_markdown_sections(
-        current_truth_path,
-        {
-            "Project": project.name,
-            "Confirmed": confirmed,
-            "Inferred": inferred,
-            "Conflicted": "- 暂无自动识别冲突。",
-            "Deprecated": "- 暂无。",
-            "Open Questions": open_questions,
-            "Current Stage": "intake",
-            "Next Action": next_action,
-        },
-    )
+    truth_updates = {
+        "Project": project.name,
+        "Confirmed": confirmed,
+        "Conflicted": "- 以 gaps.csv / decisions.csv 中的 durable conflict 记录为准；此处只保留当前摘要。",
+        "Deprecated": "- 以 supersession/lifecycle authority 为准；此处不删除历史日期段。",
+        "Open Questions": open_questions,
+    }
+    if not preserve_later_stage:
+        truth_updates.update(
+            {
+                "Inferred": inferred,
+                "Current Stage": "intake",
+                "Next Action": next_action,
+            }
+        )
+    update_markdown_sections(current_truth_path, truth_updates)
     if delivery_surface:
         new_requirements = intake_result.new_requirements
         new_gaps = intake_result.new_gaps
@@ -6684,18 +7860,22 @@ def render_handoff(project: Path, goal: str, source_ids: list[str]) -> dict[str,
         for row in ordered_requirement_rows
     }
     proceed: list[str] = []
-    if requirement_lines:
-        proceed.append("可以基于已锁定要求继续内部分析和方案构思，不需要先建立交付账本。")
+    if goal.strip():
+        proceed.append(f"结合已读资料完成本轮目标：{goal.strip()}")
+    elif requirement_lines:
+        proceed.append("可以基于当前资料和需求候选完成请求的内部内容，不需要先建立交付账本。")
     if requirement_types & {"creative", "visual", "research"}:
-        proceed.append("下一步应把证据转成内容判断或创意 brief，并优先检查真实素材语义。")
+        proceed.append("将真实素材与产品证据转成可用的内容判断、脚本或视觉方案。")
     if "delivery" in requirement_types:
         proceed.append("交付格式已被识别，但只有真正进入客户可见版本时才升级到 Delivery Surface。")
     if not proceed:
         proceed.append("材料已完成证据化读取；需要补充一个明确产出目标，才能继续内容工作。")
     if blocking_gap_lines:
         next_action = "先确认最小阻塞项；不受其影响的内部内容工作可以继续。"
+    elif goal.strip():
+        next_action = f"基于已读资料完成本轮目标：{goal.strip()}"
     elif requirement_lines:
-        next_action = "基于当前证据生成或更新 creative brief，再进入专业内容推理。"
+        next_action = "按当前资料中的明确要求直接完成内容；只有需要候选交换时才建立 creative brief。"
     else:
         next_action = "补充本轮希望得到的具体广告产出。"
 
@@ -8835,7 +10015,12 @@ def candidate_client_files(project: Path, artifacts: list[dict[str, str]]) -> li
         if visibility not in CLIENT_VISIBLE_VALUES:
             continue
         rel_path = artifact.get("path", "").strip()
-        path = project / rel_path
+        try:
+            path = contained_project_path(project, rel_path, "client-visible artifact path")
+        except ValueError:
+            continue
+        if is_private_local_state_path(project, path):
+            continue
         if path.is_file() and path.suffix.lower() in {".md", ".txt", ".csv", ".pptx", ".pdf"}:
             files.append(path)
     return sorted(files)
@@ -8897,12 +10082,20 @@ def current_delivery_paths(
     }
 
 
-def build_client_pack_input_manifest(
+def _build_client_pack_input_manifest_bound(
     project: Path,
     artifacts: list[dict[str, str]],
+    project_root_fd: int,
 ) -> tuple[dict[str, object], str, list[str]]:
     truth_path = project / "AD-creative/orchestrator/current_truth.md"
-    truth = truth_path.read_text(encoding="utf-8") if truth_path.is_file() else ""
+    try:
+        truth = _read_project_text(
+            project,
+            "AD-creative/orchestrator/current_truth.md",
+            project_root_fd=project_root_fd,
+        )
+    except FileNotFoundError:
+        truth = ""
     version_id = current_truth_value(truth, "current_version_id")
     pointer_keys = [
         "current_pptx_artifact_id",
@@ -8944,8 +10137,10 @@ def build_client_pack_input_manifest(
             continue
         paths.add(path)
     paths.update(candidate_client_language_files(project, artifacts))
-    _, current_assets = read_csv_rows(
-        project / "AD-creative/visual_assets/asset_current_manifest.csv"
+    _, current_assets = _read_project_csv_rows(
+        project,
+        "AD-creative/visual_assets/asset_current_manifest.csv",
+        project_root_fd=project_root_fd,
     )
     for row in current_assets:
         if not (
@@ -8964,20 +10159,41 @@ def build_client_pack_input_manifest(
         except ValueError as exc:
             errors.append(str(exc))
     entries: list[dict[str, object]] = []
+    try:
+        private_markers: list[bytes] | None = private_source_path_markers(
+            project,
+            project_root_fd=project_root_fd,
+        )
+    except ValueError as exc:
+        private_markers = None
+        errors.append(str(exc))
     for path in sorted(paths):
         try:
             rel_path = canonical_project_relative(project, path)
         except ValueError:
             errors.append(f"client-pack input escapes project: {path}")
             continue
-        if not path.is_file():
-            errors.append(f"client-pack input missing: {rel_path}")
+        if Path(rel_path).parts[0] == PRIVATE_LOCAL_STATE_REL.name:
+            errors.append(f"client-pack input uses private local state: {rel_path}")
+            continue
+        if private_markers is None:
+            continue
+        privacy_issue, digest, size_bytes = private_source_candidate_evidence(
+            project,
+            rel_path,
+            private_markers,
+            project_root_fd=project_root_fd,
+        )
+        if privacy_issue:
+            errors.append(
+                f"client-pack input privacy blocked: {rel_path}: {privacy_issue}"
+            )
             continue
         entries.append(
             {
                 "path": rel_path,
-                "sha256": file_sha256(path),
-                "size_bytes": path.stat().st_size,
+                "sha256": digest,
+                "size_bytes": size_bytes,
             }
         )
     payload: dict[str, object] = {
@@ -8991,6 +10207,51 @@ def build_client_pack_input_manifest(
         json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
     return payload, digest, errors
+
+
+def build_client_pack_input_manifest(
+    project: Path,
+    artifacts: list[dict[str, str]],
+) -> tuple[dict[str, object], str, list[str]]:
+    pointer_keys = [
+        "current_pptx_artifact_id",
+        "current_pdf_artifact_id",
+        "current_preview_artifact_id",
+        "current_text_extract_artifact_id",
+        "current_ppt_editability_artifact_id",
+    ]
+
+    def failed_result(message: str) -> tuple[dict[str, object], str, list[str]]:
+        payload: dict[str, object] = {
+            "protocol_id": "adco.client-pack-input-manifest",
+            "version": "1.0",
+            "current_version_id": "",
+            "artifact_pointers": {key: "" for key in pointer_keys},
+            "files": [],
+        }
+        digest = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        return payload, digest, [message]
+
+    project_root_fd: int | None = None
+    try:
+        project_root_fd = _open_project_root_fd(project)
+        payload, digest, errors = _build_client_pack_input_manifest_bound(
+            project,
+            artifacts,
+            project_root_fd,
+        )
+        if not _project_root_fd_is_current(project, project_root_fd):
+            return failed_result(
+                "client-pack project root changed during manifest construction"
+            )
+        return payload, digest, errors
+    except (FileNotFoundError, OSError, UnicodeError, ValueError) as exc:
+        return failed_result(f"client-pack project binding failed: {exc}")
+    finally:
+        if project_root_fd is not None:
+            os.close(project_root_fd)
 
 
 def write_client_pack_binding(
@@ -9846,10 +11107,621 @@ def updated_migration_manifest(
     return manifest
 
 
+def _read_project_file_bytes(
+    project: Path,
+    relative_path: str | Path,
+    *,
+    project_root_fd: int | None = None,
+) -> bytes:
+    file_fd: int | None = None
+    directory_fds: list[int] = []
+    try:
+        file_fd, opened, directory_fds, parts = _open_project_relative_regular_file(
+            project,
+            relative_path,
+            project_root_fd=project_root_fd,
+        )
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(file_fd, PRIVATE_MARKER_SCAN_CHUNK_BYTES)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        if not _project_file_binding_is_current(
+            project,
+            file_fd,
+            opened,
+            directory_fds,
+            parts,
+        ):
+            raise ValueError(f"project file changed while reading: {relative_path}")
+        return b"".join(chunks)
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        _close_project_fd_chain(directory_fds)
+
+
+def _read_project_text(
+    project: Path,
+    relative_path: str | Path,
+    *,
+    project_root_fd: int | None = None,
+) -> str:
+    return _read_project_file_bytes(
+        project,
+        relative_path,
+        project_root_fd=project_root_fd,
+    ).decode("utf-8")
+
+
+def _project_regular_file_exists(project: Path, relative_path: str | Path) -> bool:
+    directory_fds: list[int] = []
+    try:
+        directory_fds, parts = _open_project_parent_chain(project, relative_path)
+        try:
+            visible = os.stat(
+                parts[-1],
+                dir_fd=directory_fds[-1],
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return False
+        if not stat.S_ISREG(visible.st_mode):
+            raise ValueError(f"project file is not regular: {relative_path}")
+        return True
+    except FileNotFoundError:
+        return False
+    finally:
+        _close_project_fd_chain(directory_fds)
+
+
+def _project_file_sha256(project: Path, relative_path: str | Path) -> str:
+    file_fd: int | None = None
+    directory_fds: list[int] = []
+    try:
+        file_fd, opened, directory_fds, parts = _open_project_relative_regular_file(
+            project,
+            relative_path,
+        )
+        digest, _, _ = _hash_open_fd(
+            file_fd,
+            limit=max(opened.st_size, 0),
+        )
+        if not _project_file_binding_is_current(
+            project,
+            file_fd,
+            opened,
+            directory_fds,
+            parts,
+        ):
+            raise ValueError(f"project file changed while hashing: {relative_path}")
+        return digest
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        _close_project_fd_chain(directory_fds)
+
+
+def _write_project_file_bytes(
+    project: Path,
+    relative_path: str | Path,
+    data: bytes,
+) -> None:
+    directory_fds: list[int] = []
+    temp_name = ""
+    try:
+        directory_fds, parts = _open_project_parent_chain(
+            project,
+            relative_path,
+            create=True,
+        )
+        parent_fd = directory_fds[-1]
+        try:
+            current = os.stat(
+                parts[-1],
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            current = None
+        if current is not None and not stat.S_ISREG(current.st_mode):
+            raise ValueError(f"unsafe migration target: {relative_path}")
+
+        for _ in range(32):
+            candidate = ".adco-migration-" + os.urandom(12).hex()
+            try:
+                temp_fd = os.open(
+                    candidate,
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    mode=0o600,
+                    dir_fd=parent_fd,
+                )
+                temp_name = candidate
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise ValueError("cannot allocate private migration temp file")
+        try:
+            view = memoryview(data)
+            while view:
+                written = os.write(temp_fd, view)
+                if written <= 0:
+                    raise OSError("migration temp-file write made no progress")
+                view = view[written:]
+            os.fchmod(temp_fd, 0o644)
+            os.fsync(temp_fd)
+        finally:
+            os.close(temp_fd)
+
+        if not _project_parent_chain_is_current(project, directory_fds, parts):
+            raise ValueError(f"migration managed path changed: {relative_path}")
+        try:
+            final_current = os.stat(
+                parts[-1],
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            final_current = None
+        if final_current is not None and not stat.S_ISREG(final_current.st_mode):
+            raise ValueError(f"unsafe migration target: {relative_path}")
+        os.replace(
+            temp_name,
+            parts[-1],
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        temp_name = ""
+        os.fsync(parent_fd)
+    finally:
+        if temp_name and directory_fds:
+            try:
+                os.unlink(temp_name, dir_fd=directory_fds[-1])
+            except FileNotFoundError:
+                pass
+        _close_project_fd_chain(directory_fds)
+
+
+def _write_project_text(
+    project: Path,
+    relative_path: str | Path,
+    content: str,
+) -> None:
+    _write_project_file_bytes(
+        project,
+        relative_path,
+        (content.rstrip() + "\n").encode("utf-8"),
+    )
+
+
+def _read_project_csv_rows(
+    project: Path,
+    relative_path: str | Path,
+    *,
+    project_root_fd: int | None = None,
+) -> tuple[list[str], list[dict[str, str]]]:
+    try:
+        text = _read_project_text(
+            project,
+            relative_path,
+            project_root_fd=project_root_fd,
+        )
+    except FileNotFoundError:
+        return [], []
+    reader = csv.DictReader(io.StringIO(text, newline=""))
+    return list(reader.fieldnames or []), list(reader)
+
+
+def _write_project_csv_rows(
+    project: Path,
+    relative_path: str | Path,
+    fieldnames: list[str],
+    rows: Iterable[dict[str, str]],
+) -> None:
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=fieldnames, lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({key: row.get(key, "") for key in fieldnames})
+    _write_project_file_bytes(project, relative_path, output.getvalue().encode("utf-8"))
+
+
+def _ensure_project_csv(
+    project: Path,
+    relative_path: str | Path,
+    required_fields: list[str],
+) -> None:
+    fieldnames, rows = _read_project_csv_rows(project, relative_path)
+    if not fieldnames:
+        _write_project_csv_rows(project, relative_path, required_fields, [])
+        return
+    missing = [field for field in required_fields if field not in fieldnames]
+    if missing or csv_rows_need_normalization(fieldnames, rows):
+        _write_project_csv_rows(
+            project,
+            relative_path,
+            [*fieldnames, *missing],
+            rows,
+        )
+
+
+def _validate_project_relative_parent(
+    project: Path,
+    relative_path: str | Path,
+) -> None:
+    directory_fds, parts = _open_project_parent_chain(project, relative_path)
+    try:
+        if not _project_parent_chain_is_current(project, directory_fds, parts):
+            raise ValueError(f"migration managed path changed: {relative_path}")
+    finally:
+        _close_project_fd_chain(directory_fds)
+
+
+def _snapshot_open_project_directory(
+    directory_fd: int,
+    *,
+    prefix: str,
+    snapshot: dict[str, str],
+) -> None:
+    with os.scandir(directory_fd) as iterator:
+        entries = sorted(iterator, key=lambda entry: entry.name)
+    for entry in entries:
+        name = entry.name
+        rel = f"{prefix}/{name}" if prefix else name
+        if rel == ".git" or rel.startswith(".git/"):
+            continue
+        visible = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if stat.S_ISLNK(visible.st_mode):
+            snapshot[rel] = "symlink:" + os.readlink(name, dir_fd=directory_fd)
+            continue
+        if stat.S_ISDIR(visible.st_mode):
+            child_fd = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
+            try:
+                opened = os.fstat(child_fd)
+                if (visible.st_dev, visible.st_ino) != (opened.st_dev, opened.st_ino):
+                    raise ValueError(f"migration directory changed during snapshot: {rel}")
+                _snapshot_open_project_directory(
+                    child_fd,
+                    prefix=rel,
+                    snapshot=snapshot,
+                )
+            finally:
+                os.close(child_fd)
+            continue
+        if stat.S_ISREG(visible.st_mode):
+            file_fd = os.open(
+                name,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
+            try:
+                opened = os.fstat(file_fd)
+                if (visible.st_dev, visible.st_ino) != (opened.st_dev, opened.st_ino):
+                    raise ValueError(f"migration file changed during snapshot: {rel}")
+                digest = hashlib.sha256()
+                while True:
+                    chunk = os.read(file_fd, PRIVATE_MARKER_SCAN_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                final_opened = os.fstat(file_fd)
+                final_visible = os.stat(
+                    name,
+                    dir_fd=directory_fd,
+                    follow_symlinks=False,
+                )
+                if (
+                    (final_visible.st_dev, final_visible.st_ino)
+                    != (opened.st_dev, opened.st_ino)
+                    or (
+                        final_opened.st_size,
+                        final_opened.st_mtime_ns,
+                        final_opened.st_ctime_ns,
+                    )
+                    != (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)
+                ):
+                    raise ValueError(f"migration file changed during snapshot: {rel}")
+                snapshot[rel] = digest.hexdigest()
+            finally:
+                os.close(file_fd)
+
+
+def _migration_input_snapshot(project: Path) -> dict[str, str]:
+    try:
+        root_fd = _open_project_root_fd(project)
+    except (FileNotFoundError, ValueError):
+        if not project.exists() and not project.is_symlink():
+            return {}
+        raise
+    try:
+        snapshot: dict[str, str] = {}
+        _snapshot_open_project_directory(root_fd, prefix="", snapshot=snapshot)
+        return snapshot
+    finally:
+        os.close(root_fd)
+
+
+def _migration_plan_sha256(
+    *,
+    input_snapshot: dict[str, str],
+    changes: list[str],
+    blockers: list[dict[str, object]],
+    desired_truth: str,
+    desired_project_yml: str,
+    desired_schema: dict[str, object],
+) -> str:
+    return canonical_payload_sha256(
+        {
+            "protocol_id": "adco.control-plane-migration-plan",
+            "version": "1.0",
+            "input_snapshot": input_snapshot,
+            "changes": changes,
+            "blockers": blockers,
+            "desired_truth_sha256": hashlib.sha256(
+                desired_truth.encode("utf-8")
+            ).hexdigest(),
+            "desired_project_yml_sha256": hashlib.sha256(
+                desired_project_yml.encode("utf-8")
+            ).hexdigest(),
+            "desired_schema": desired_schema,
+        }
+    )
+
+
+def _migration_project_identity(
+    project: Path,
+) -> tuple[Path, str, tuple[int, int] | None]:
+    lexical = project.expanduser().absolute()
+    try:
+        canonical = lexical.resolve(
+            strict=lexical.exists() or lexical.is_symlink()
+        )
+    except OSError as exc:
+        raise ValueError("migration project path cannot be resolved safely") from exc
+    expected_inode: tuple[int, int] | None = None
+    if canonical.exists():
+        try:
+            current = os.stat(canonical, follow_symlinks=False)
+        except OSError as exc:
+            raise ValueError("migration project changed while resolving") from exc
+        if not stat.S_ISDIR(current.st_mode):
+            raise ValueError("migration project must be a directory")
+        expected_inode = (current.st_dev, current.st_ino)
+    # Keep one lock identity across the nonexistent -> created transition while
+    # still collapsing lexical and symlink aliases onto the resolved path.
+    identity = {"canonical_path": str(canonical)}
+    lock_key = canonical_payload_sha256(identity)
+    return canonical, lock_key, expected_inode
+
+
+def _migration_lock_directory_path() -> Path:
+    return Path(tempfile.gettempdir()).resolve() / (
+        f"adco-migration-locks-{os.getuid()}"
+    )
+
+
+def _open_migration_lock(lock_key: str) -> int:
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if no_follow is None or directory_flag is None:
+        raise ValueError("safe migration locks require O_NOFOLLOW and O_DIRECTORY")
+    base = Path(tempfile.gettempdir()).resolve()
+    lock_dir_name = _migration_lock_directory_path().name
+    base_fd: int | None = None
+    lock_dir_fd: int | None = None
+    lock_fd: int | None = None
+    try:
+        base_fd = os.open(base, os.O_RDONLY | directory_flag | no_follow)
+        try:
+            os.mkdir(lock_dir_name, mode=0o700, dir_fd=base_fd)
+        except FileExistsError:
+            pass
+        lock_dir_fd = os.open(
+            lock_dir_name,
+            os.O_RDONLY | directory_flag | no_follow,
+            dir_fd=base_fd,
+        )
+        visible_dir = os.stat(
+            lock_dir_name,
+            dir_fd=base_fd,
+            follow_symlinks=False,
+        )
+        opened_dir = os.fstat(lock_dir_fd)
+        if (
+            not stat.S_ISDIR(visible_dir.st_mode)
+            or (visible_dir.st_dev, visible_dir.st_ino)
+            != (opened_dir.st_dev, opened_dir.st_ino)
+            or opened_dir.st_uid != os.getuid()
+        ):
+            raise ValueError("migration lock directory is unsafe")
+        os.fchmod(lock_dir_fd, 0o700)
+
+        lock_name = f"{lock_key}.lock"
+        lock_fd = os.open(
+            lock_name,
+            os.O_RDWR | os.O_CREAT | no_follow,
+            mode=0o600,
+            dir_fd=lock_dir_fd,
+        )
+        visible_lock = os.stat(
+            lock_name,
+            dir_fd=lock_dir_fd,
+            follow_symlinks=False,
+        )
+        opened_lock = os.fstat(lock_fd)
+        if (
+            not stat.S_ISREG(visible_lock.st_mode)
+            or (visible_lock.st_dev, visible_lock.st_ino)
+            != (opened_lock.st_dev, opened_lock.st_ino)
+            or opened_lock.st_uid != os.getuid()
+            or opened_lock.st_nlink != 1
+        ):
+            raise ValueError("migration lock file is unsafe")
+        os.fchmod(lock_fd, 0o600)
+        result = lock_fd
+        lock_fd = None
+        return result
+    except OSError as exc:
+        raise ValueError("cannot safely open migration lock") from exc
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+        if lock_dir_fd is not None:
+            os.close(lock_dir_fd)
+        if base_fd is not None:
+            os.close(base_fd)
+
+
+def _verify_migration_project_identity(
+    project: Path,
+    expected_inode: tuple[int, int] | None,
+) -> None:
+    if expected_inode is None:
+        if project.is_symlink():
+            raise ValueError("migration project changed to a symlink before execution")
+        return
+    try:
+        current = os.stat(project, follow_symlinks=False)
+    except OSError as exc:
+        raise ValueError("migration project changed before execution") from exc
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        or (current.st_dev, current.st_ino) != expected_inode
+    ):
+        raise ValueError("migration project changed before execution")
+
+
+def _open_migration_project_dir(
+    project: Path,
+    expected_inode: tuple[int, int],
+) -> int:
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if no_follow is None or directory_flag is None:
+        raise ValueError("safe migration requires O_NOFOLLOW and O_DIRECTORY")
+    try:
+        fd = os.open(project, os.O_RDONLY | directory_flag | no_follow)
+    except OSError as exc:
+        raise ValueError("cannot safely open migration project") from exc
+    try:
+        opened = os.fstat(fd)
+        visible = os.stat(project, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(visible.st_mode)
+            or (opened.st_dev, opened.st_ino) != expected_inode
+            or (visible.st_dev, visible.st_ino) != expected_inode
+        ):
+            raise ValueError("migration project changed while opening")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _migration_project_binding_is_current(
+    project: Path,
+    project_fd: int,
+    expected_inode: tuple[int, int],
+) -> bool:
+    try:
+        opened = os.fstat(project_fd)
+        visible = os.stat(project, follow_symlinks=False)
+    except OSError:
+        return False
+    return bool(
+        stat.S_ISDIR(visible.st_mode)
+        and (opened.st_dev, opened.st_ino) == expected_inode
+        and (visible.st_dev, visible.st_ino) == expected_inode
+    )
+
+
+def _normalize_migration_result_paths(
+    result: dict[str, object],
+    project: Path,
+) -> dict[str, object]:
+    result["project"] = str(project)
+    if result.get("migration_manifest"):
+        result["migration_manifest"] = str(
+            project / CONTROL_PLANE_MIGRATION_MANIFEST_REL
+        )
+    return result
+
+
 def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, object]:
-    if not dry_run:
-        ensure_delivery_project(project)
-    project = project.resolve()
+    canonical_project, lock_key, expected_inode = _migration_project_identity(project)
+    lock_fd = _open_migration_lock(lock_key)
+    with os.fdopen(lock_fd, "a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            _verify_migration_project_identity(canonical_project, expected_inode)
+            if expected_inode is None:
+                if not dry_run:
+                    raise ValueError("migration project must already exist")
+                return _migrate_control_plane_locked(
+                    canonical_project,
+                    dry_run=True,
+                )
+
+            project_fd = _open_migration_project_dir(
+                canonical_project,
+                expected_inode,
+            )
+            original_cwd_fd: int | None = None
+            try:
+                with MIGRATION_CWD_LOCK:
+                    original_cwd_fd = os.open(
+                        ".",
+                        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+                    )
+                    try:
+                        os.fchdir(project_fd)
+                        result = _migrate_control_plane_locked(
+                            Path("."),
+                            dry_run=dry_run,
+                            pre_write_guard=lambda: _migration_project_binding_is_current(
+                                canonical_project,
+                                project_fd,
+                                expected_inode,
+                            ),
+                        )
+                    finally:
+                        os.fchdir(original_cwd_fd)
+                        os.close(original_cwd_fd)
+                        original_cwd_fd = None
+                if not _migration_project_binding_is_current(
+                    canonical_project,
+                    project_fd,
+                    expected_inode,
+                ):
+                    raise ValueError("migration project changed during execution")
+                return _normalize_migration_result_paths(result, canonical_project)
+            finally:
+                if original_cwd_fd is not None:
+                    os.close(original_cwd_fd)
+                os.close(project_fd)
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def _migrate_control_plane_locked(
+    project: Path,
+    *,
+    dry_run: bool,
+    pre_write_guard: Callable[[], bool] | None = None,
+) -> dict[str, object]:
+    input_snapshot = _migration_input_snapshot(project)
+    input_snapshot_sha256 = canonical_payload_sha256(input_snapshot)
     targets = [
         ("AD-creative/client_review/client_outline.csv", CLIENT_OUTLINE_FIELDS),
         ("AD-creative/visual_assets/asset_current_manifest.csv", ASSET_CURRENT_FIELDS),
@@ -9876,28 +11748,35 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
     warnings: list[str] = []
     blockers: list[dict[str, object]] = []
     pre_csv: dict[str, tuple[list[str], list[dict[str, str]]]] = {
-        rel_path: read_csv_rows(project / rel_path) for rel_path, _ in targets
+        rel_path: _read_project_csv_rows(project, rel_path)
+        for rel_path, _ in targets
     }
     source_hashes = {
-        rel_path: file_sha256(project / rel_path)
+        rel_path: _project_file_sha256(project, rel_path)
         for rel_path, _ in targets
-        if (project / rel_path).is_file()
+        if _project_regular_file_exists(project, rel_path)
     }
     baseline_source_hashes = {
-        rel_path: file_sha256(project / rel_path)
+        rel_path: _project_file_sha256(project, rel_path)
         for rel_path in LEGACY_BASELINE_SOURCE_RELS
-        if (project / rel_path).is_file()
+        if _project_regular_file_exists(project, rel_path)
     }
     source_hashes.update(baseline_source_hashes)
-    schema_path = project / CONTROL_PLANE_SCHEMA_REL
+    schema_rel = CONTROL_PLANE_SCHEMA_REL.as_posix()
+    schema_path = project / schema_rel
     schema_payload: dict[str, object] = {}
-    if schema_path.is_file():
+    if _project_regular_file_exists(project, schema_rel):
         try:
-            schema_payload = json.loads(schema_path.read_text(encoding="utf-8"))
+            schema_payload = json.loads(_read_project_text(project, schema_rel))
         except json.JSONDecodeError:
             schema_payload = {}
-    project_yml = project / "AD-creative/orchestrator/project.yml"
-    project_yml_text = project_yml.read_text(encoding="utf-8") if project_yml.is_file() else ""
+    project_yml_rel = "AD-creative/orchestrator/project.yml"
+    project_yml = project / project_yml_rel
+    project_yml_text = (
+        _read_project_text(project, project_yml_rel)
+        if _project_regular_file_exists(project, project_yml_rel)
+        else ""
+    )
     pre_migration_schema_v2 = bool(
         schema_payload.get("schema_version") == CONTROL_PLANE_SCHEMA_VERSION
         and re.search(
@@ -9945,18 +11824,20 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
             for message in legacy_messages
         ]
     for rel_path, fields in targets:
-        path = project / rel_path
-        if not path.exists() or not path.read_text(encoding="utf-8").strip():
+        if not _project_regular_file_exists(
+            project,
+            rel_path,
+        ) or not _read_project_text(project, rel_path).strip():
             changes.append(f"create_csv:{rel_path}")
         else:
-            existing, rows = read_csv_rows(path)
+            existing, rows = _read_project_csv_rows(project, rel_path)
             missing = [field for field in fields if field not in existing]
             if missing:
                 changes.append(f"add_csv_fields:{rel_path}:{','.join(missing)}")
             elif csv_rows_need_normalization(existing, rows):
                 changes.append(f"normalize_csv_rows:{rel_path}")
     for rel_path in static_files:
-        if not (project / rel_path).exists():
+        if not _project_regular_file_exists(project, rel_path):
             changes.append(f"create_file:{rel_path}")
 
     artifact_rel = "AD-creative/orchestrator/artifact_index.csv"
@@ -9996,12 +11877,20 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
             f"quarantine_threadops_rows:{registry_rel}:{len(thread_rows_to_quarantine)}"
         )
 
-    truth_path = project / "AD-creative/orchestrator/current_truth.md"
-    truth_text = truth_path.read_text(encoding="utf-8") if truth_path.is_file() else ""
+    truth_rel = "AD-creative/orchestrator/current_truth.md"
+    truth_path = project / truth_rel
+    truth_text = (
+        _read_project_text(project, truth_rel)
+        if _project_regular_file_exists(project, truth_rel)
+        else ""
+    )
     truth_sections = markdown_named_sections(truth_text, "Current Version Truth")
     _, version_rows = pre_csv.get(
         "AD-creative/orchestrator/version_map.csv",
-        read_csv_rows(project / "AD-creative/orchestrator/version_map.csv"),
+        _read_project_csv_rows(
+            project,
+            "AD-creative/orchestrator/version_map.csv",
+        ),
     )
     raw_package_sections = markdown_named_sections(truth_text, "Current Package")
     if current_version_truth_binding_valid(
@@ -10046,7 +11935,7 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
                 + ",".join(missing_truth_keys)
             )
 
-    if schema_path.is_file() and not schema_payload:
+    if _project_regular_file_exists(project, schema_rel) and not schema_payload:
         blockers.append(
             {
                 "severity": "P0",
@@ -10070,12 +11959,14 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
     if desired_project_yml != project_yml_text:
         changes.append(f"set_project_schema_version:{CONTROL_PLANE_SCHEMA_VERSION}")
 
-    manifest_path = project / CONTROL_PLANE_MIGRATION_MANIFEST_REL
+    manifest_rel = CONTROL_PLANE_MIGRATION_MANIFEST_REL.as_posix()
+    manifest_path = project / manifest_rel
     existing_manifest: dict[str, object] | None = None
     manifest_malformed = False
-    if manifest_path.is_file():
+    manifest_exists = _project_regular_file_exists(project, manifest_rel)
+    if manifest_exists:
         try:
-            loaded_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            loaded_manifest = json.loads(_read_project_text(project, manifest_rel))
             if not isinstance(loaded_manifest, dict):
                 raise ValueError("migration manifest must be a JSON object")
             existing_manifest = loaded_manifest
@@ -10091,7 +11982,7 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
             )
     blockers = normalized_migration_blockers(blockers)
     needs_manifest = bool(
-        manifest_path.exists()
+        manifest_exists
         or not schema_current
         or artifact_evidence
         or legacy_thread_schema
@@ -10100,24 +11991,166 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
         or legacy_string_error_baseline
         or blockers
     )
-    if needs_manifest and not manifest_path.exists():
+    if needs_manifest and not manifest_exists:
         changes.append(f"create_migration_manifest:{CONTROL_PLANE_MIGRATION_MANIFEST_REL}")
 
-    if not dry_run:
-        for rel_path, fields in targets:
-            ensure_csv_file(project / rel_path, fields)
-        normalize_gate_log_schema(project / "AD-creative/orchestrator/gate_log.csv")
-        for rel_path, content in static_files.items():
-            path = project / rel_path
-            if not path.exists():
-                write_text(path, content)
+    plan_sha256 = _migration_plan_sha256(
+        input_snapshot=input_snapshot,
+        changes=changes,
+        blockers=blockers,
+        desired_truth=desired_truth,
+        desired_project_yml=desired_project_yml,
+        desired_schema=desired_schema,
+    )
 
-        artifact_fields, artifact_rows = read_csv_rows(project / artifact_rel)
+    if not dry_run and blockers:
+        return {
+            "project": str(project),
+            "dry_run": False,
+            "applied": False,
+            "blocked_before_write": True,
+            "changes": changes,
+            "warnings": warnings,
+            "blockers": blockers,
+            "schema_version": CONTROL_PLANE_SCHEMA_VERSION,
+            "migration_manifest": str(manifest_path) if manifest_exists else "",
+            "input_snapshot_sha256": input_snapshot_sha256,
+            "plan_sha256": plan_sha256,
+        }
+
+    if not dry_run:
+        if pre_write_guard is not None and not pre_write_guard():
+            root_blocker = {
+                "severity": "P0",
+                "scope": "current",
+                "code": "migration_project_changed",
+                "message": "migration project root changed before first write",
+            }
+            return {
+                "project": str(project),
+                "dry_run": False,
+                "applied": False,
+                "blocked_before_write": True,
+                "changes": changes,
+                "warnings": warnings,
+                "blockers": [root_blocker],
+                "schema_version": CONTROL_PLANE_SCHEMA_VERSION,
+                "migration_manifest": "",
+                "input_snapshot_sha256": input_snapshot_sha256,
+                "plan_sha256": plan_sha256,
+            }
+        current_snapshot = _migration_input_snapshot(project)
+        if current_snapshot != input_snapshot:
+            changed_paths = sorted(
+                {
+                    *input_snapshot.keys(),
+                    *current_snapshot.keys(),
+                }
+                - {
+                    key
+                    for key in {*input_snapshot.keys(), *current_snapshot.keys()}
+                    if input_snapshot.get(key) == current_snapshot.get(key)
+                }
+            )
+            concurrent_blocker = {
+                "severity": "P0",
+                "scope": "current",
+                "code": "migration_inputs_changed",
+                "message": (
+                    "migration inputs changed before first write: "
+                    + ";".join(changed_paths[:20])
+                ),
+            }
+            return {
+                "project": str(project),
+                "dry_run": False,
+                "applied": False,
+                "blocked_before_write": True,
+                "changes": changes,
+                "warnings": warnings,
+                "blockers": [concurrent_blocker],
+                "schema_version": CONTROL_PLANE_SCHEMA_VERSION,
+                "migration_manifest": str(manifest_path) if manifest_exists else "",
+                "input_snapshot_sha256": input_snapshot_sha256,
+                "plan_sha256": plan_sha256,
+            }
+        template_created_files, _ = ensure_delivery_project(project)
+        surface_match = re.search(
+            r'(?m)^  surface:\s*["\']?([^"\'\n]+)',
+            project_yml_text,
+        )
+        template_materialization_changed = bool(
+            template_created_files
+            or surface_match is None
+            or surface_match.group(1).strip() != DELIVERY_SURFACE
+        )
+        managed_parent_paths = [
+            *(rel_path for rel_path, _ in targets),
+            *static_files,
+            truth_rel,
+            project_yml_rel,
+            schema_rel,
+        ]
+        try:
+            for rel_path in managed_parent_paths:
+                _validate_project_relative_parent(project, rel_path)
+        except (OSError, ValueError) as exc:
+            managed_path_blocker = {
+                "severity": "P0",
+                "scope": "current",
+                "code": "migration_managed_path_changed",
+                "message": f"migration managed path changed before apply: {exc}",
+            }
+            return {
+                "project": str(project),
+                "dry_run": False,
+                "applied": False,
+                "blocked_before_write": not template_materialization_changed,
+                "partial_apply": template_materialization_changed,
+                "changes": changes,
+                "warnings": warnings,
+                "blockers": [managed_path_blocker],
+                "schema_version": CONTROL_PLANE_SCHEMA_VERSION,
+                "migration_manifest": "",
+                "input_snapshot_sha256": input_snapshot_sha256,
+                "plan_sha256": plan_sha256,
+            }
+        for rel_path, fields in targets:
+            _ensure_project_csv(project, rel_path, fields)
+        gate_rel = "AD-creative/orchestrator/gate_log.csv"
+        gate_fields, gate_rows = _read_project_csv_rows(project, gate_rel)
+        normalized_gate_fields, normalized_gate_rows = normalized_gate_log_data(
+            gate_fields,
+            gate_rows,
+        )
+        if gate_fields != normalized_gate_fields or gate_rows != normalized_gate_rows:
+            _write_project_csv_rows(
+                project,
+                gate_rel,
+                normalized_gate_fields,
+                normalized_gate_rows,
+            )
+        for rel_path, content in static_files.items():
+            if not _project_regular_file_exists(project, rel_path):
+                _write_project_text(project, rel_path, content)
+
+        artifact_fields, artifact_rows = _read_project_csv_rows(
+            project,
+            artifact_rel,
+        )
         migrated_artifacts, _ = migrate_artifact_lifecycle_rows(artifact_rows)
         if migrated_artifacts != artifact_rows:
-            write_csv_rows(project / artifact_rel, artifact_fields, migrated_artifacts)
+            _write_project_csv_rows(
+                project,
+                artifact_rel,
+                artifact_fields,
+                migrated_artifacts,
+            )
 
-        registry_fields, registry_rows = read_csv_rows(project / registry_rel)
+        registry_fields, registry_rows = _read_project_csv_rows(
+            project,
+            registry_rel,
+        )
         if registry_rows:
             normalized_registry: list[dict[str, str]] = []
             for index, row in enumerate(registry_rows):
@@ -10138,17 +12171,37 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
                     )
                 normalized_registry.append(normalized)
             if normalized_registry != registry_rows:
-                write_csv_rows(project / registry_rel, registry_fields, normalized_registry)
+                _write_project_csv_rows(
+                    project,
+                    registry_rel,
+                    registry_fields,
+                    normalized_registry,
+                )
 
-        if truth_path.is_file() and desired_truth != truth_text and not blockers:
-            write_text(truth_path, desired_truth)
-        elif not truth_path.is_file() and not blockers:
-            write_text(truth_path, desired_truth or replace_current_version_truth("# Current Truth\n", {}))
+        truth_exists = _project_regular_file_exists(project, truth_rel)
+        if truth_exists and desired_truth != truth_text and not blockers:
+            _write_project_text(project, truth_rel, desired_truth)
+        elif not truth_exists and not blockers:
+            _write_project_text(
+                project,
+                truth_rel,
+                desired_truth
+                or replace_current_version_truth("# Current Truth\n", {}),
+            )
 
         if desired_project_yml != project_yml_text:
-            write_text(project_yml, desired_project_yml)
+            _write_project_text(project, project_yml_rel, desired_project_yml)
         if schema_payload != desired_schema:
-            write_json_object(schema_path, desired_schema)
+            _write_project_text(
+                project,
+                schema_rel,
+                json.dumps(
+                    desired_schema,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                ),
+            )
 
         if needs_manifest and not manifest_malformed:
             evidence = {
@@ -10180,8 +12233,8 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
             )
             observed_hashes = {
                 rel_path: (
-                    file_sha256(project / rel_path)
-                    if (project / rel_path).is_file()
+                    _project_file_sha256(project, rel_path)
+                    if _project_regular_file_exists(project, rel_path)
                     else "<missing>"
                 )
                 for rel_path in observed_rel_paths
@@ -10195,17 +12248,31 @@ def migrate_control_plane(project: Path, *, dry_run: bool = False) -> dict[str, 
                 observed_hashes=observed_hashes,
             )
             if updated_manifest != existing_manifest:
-                write_json_object(manifest_path, updated_manifest)
+                _write_project_text(
+                    project,
+                    manifest_rel,
+                    json.dumps(
+                        updated_manifest,
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    ),
+                )
+                manifest_exists = True
                 if existing_manifest is not None:
                     changes.append("update_migration_manifest_active_state")
     return {
         "project": str(project),
         "dry_run": dry_run,
+        "applied": not dry_run,
+        "blocked_before_write": False,
         "changes": changes,
         "warnings": warnings,
         "blockers": blockers,
         "schema_version": CONTROL_PLANE_SCHEMA_VERSION,
-        "migration_manifest": str(manifest_path) if manifest_path.exists() or needs_manifest else "",
+        "migration_manifest": str(manifest_path) if manifest_exists or needs_manifest else "",
+        "input_snapshot_sha256": input_snapshot_sha256,
+        "plan_sha256": plan_sha256,
     }
 
 
@@ -10524,7 +12591,12 @@ def specialist_scope_manifest(
     files: dict[str, str] = {}
     for path in sorted(project.rglob("*")):
         rel = path.relative_to(project).as_posix()
-        if rel == ".git" or rel.startswith(".git/"):
+        if (
+            rel == ".git"
+            or rel.startswith(".git/")
+            or rel == PRIVATE_LOCAL_STATE_REL.as_posix()
+            or rel.startswith(PRIVATE_LOCAL_STATE_REL.as_posix() + "/")
+        ):
             continue
         if any(relative_path_is_within(rel, root) for root in roots):
             continue
@@ -14111,127 +16183,49 @@ def final_delivery_lock(project: Path) -> tuple[list[dict[str, str]], Path]:
     return final_delivery_lock_snapshot(project, protected_value="yes")
 
 
-def cleanup_category(path: Path) -> str:
-    lower = str(path).lower()
-    if "05_最终交付_finaldelivery".lower() in lower:
-        return "protected_final_delivery"
-    if "contact" in lower and "sheet" in lower:
-        return "contact_sheet"
-    if "cache" in lower or ".pptx-cache" in lower:
-        return "cache"
-    if "preview" in lower:
-        return "preview"
-    if "download" in lower or "tmp" in lower or "temp" in lower:
-        return "temporary_download"
-    if "exports" in lower or path.suffix.lower() in {".pptx", ".pdf"}:
-        return "old_export"
-    if "selected" in lower:
-        return "important_crop_or_selected"
-    if "generated" in lower or "imagegen" in lower or "grok" in lower or "chatgpt" in lower:
-        return "generated_original"
-    if "raw" in lower or "original" in lower:
-        return "original"
-    return "derived_or_unclassified"
-
-
-def dedupe_audit(project: Path) -> tuple[list[dict[str, str]], Path, Path]:
-    migrate_control_plane(project)
-    rows: list[dict[str, str]] = []
-    seen: dict[str, str] = {}
-    roots = [
-        project / "AD-creative/visual_assets",
-        project / "AD-creative/ppt",
-        project / "03_阶段成果_WorkInProgress",
-        project / "04_客户审阅_ClientReview",
-        project / "05_最终交付_FinalDelivery",
-    ]
-    for root in roots:
-        if not root.exists():
-            continue
-        for path in sorted(root.rglob("*")):
-            if not path.is_file():
-                continue
-            sha = file_sha256(path)
-            rel_path = safe_rel(project, path)
-            rows.append(
-                {
-                    "path": rel_path,
-                    "sha256": sha,
-                    "category": cleanup_category(path),
-                    "duplicate_of": seen.get(sha, ""),
-                    "recommended_action": "protect" if cleanup_category(path) == "protected_final_delivery" else "review",
-                }
-            )
-            seen.setdefault(sha, rel_path)
-    csv_path = project / "AD-creative/gates/dedupe_audit.csv"
-    write_csv_rows(csv_path, ["path", "sha256", "category", "duplicate_of", "recommended_action"], rows)
-    report_path = project / "AD-creative/gates/GATE-AUTO-DEDUPE-AUDIT-001_report.md"
-    duplicates = [row for row in rows if row["duplicate_of"]]
-    write_text(
-        report_path,
-        f"""# Dedupe Audit
-
-status: PASS
-checked_at: {now_iso()}
-visibility: internal_only
-
-## Evidence
-
-- files_scanned: {len(rows)}
-- duplicates_by_hash: {len(duplicates)}
-- csv: {safe_rel(project, csv_path)}
-
-## Rule
-
-This command does not delete files. It classifies originals, important crops, derived images, old exports, cache, previews, contact sheets, and protected final delivery files for human cleanup planning.
-""",
-    )
-    update_artifact(project, "ART-AUTO-DEDUPE-AUDIT", "dedupe_audit_report", safe_rel(project, report_path), "workspace_hygiene", visibility="internal_only", gate_status="PASS")
-    append_gate(project, "GATE-AUTO-DEDUPE-AUDIT-001", "workspace_hygiene", "PASS", "90", "ART-AUTO-DEDUPE-AUDIT", "", "Use cleanup-plan for non-destructive cleanup decisions.", "", "ready_for_cleanup_plan", "ad_creative_operator")
-    return rows, csv_path, report_path
-
-
-def cleanup_plan(project: Path) -> tuple[Path, list[str]]:
-    locked, lock_path = final_delivery_lock(project)
-    audit_rows, audit_csv, _ = dedupe_audit(project)
-    actions: list[str] = []
-    for row in audit_rows:
-        category = row["category"]
-        if category == "protected_final_delivery":
-            action = "LOCKED_DO_NOT_MOVE_OR_DELETE"
-        elif row["duplicate_of"]:
-            action = "REVIEW_DUPLICATE_KEEP_BEST_SOURCE"
-        elif category in {"cache", "preview", "contact_sheet"}:
-            action = "REVIEW_CAN_ARCHIVE_AFTER_CONFIRMATION"
-        else:
-            action = "KEEP_OR_REVIEW"
-        actions.append(f"{row['path']} => {action}")
-    plan_path = project / "AD-creative/gates/CLEANUP-PLAN.md"
-    write_text(
+def save_storage_plan(project: Path, audit: dict[str, object], *, mode: str) -> Path:
+    """Persist one replace-in-place plan only after an explicit --save."""
+    plan_path = project / "AD-creative/orchestrator/storage_plan.json"
+    payload = dict(audit)
+    payload["mode"] = mode
+    payload["actions"] = cleanup_actions(audit)
+    atomic_write_text(
+        project,
         plan_path,
-        f"""# Cleanup Plan
-
-status: REVIEW_ONLY
-checked_at: {now_iso()}
-visibility: internal_only
-
-## Inputs
-
-- dedupe_audit: {safe_rel(project, audit_csv)}
-- final_delivery_lock: {safe_rel(project, lock_path)}
-- protected_final_delivery_files: {len(locked)}
-
-## Proposed Actions
-
-{chr(10).join(f"- {action}" for action in actions[:200]) or "- 无文件需要分类。"}
-
-## Rule
-
-This plan never deletes, moves, or overwrites files. `05_最终交付_FinalDelivery` files are protected by default and only hash-registered.
-""",
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
     )
-    update_artifact(project, "ART-AUTO-CLEANUP-PLAN", "cleanup_plan", safe_rel(project, plan_path), "workspace_hygiene", visibility="internal_only", gate_status="PASS")
-    return plan_path, actions
+    return plan_path
+
+
+def dedupe_audit(
+    project: Path,
+    *,
+    deep: bool = True,
+    save: bool = False,
+) -> tuple[dict[str, object], Path | None]:
+    audit = audit_project_storage(project, deep=deep)
+    plan_path = (
+        save_storage_plan(project, audit, mode="dedupe_audit")
+        if save and audit.get("audit_complete") is True
+        else None
+    )
+    return audit, plan_path
+
+
+def cleanup_plan(
+    project: Path,
+    *,
+    deep: bool = True,
+    save: bool = False,
+) -> tuple[dict[str, object], Path | None, list[str]]:
+    audit = audit_project_storage(project, deep=deep)
+    actions = cleanup_actions(audit)
+    plan_path = (
+        save_storage_plan(project, audit, mode="cleanup_plan")
+        if save and audit.get("audit_complete") is True
+        else None
+    )
+    return audit, plan_path, actions
 
 
 def latest_gate_status(project: Path, gate_id: str) -> str:
@@ -14240,173 +16234,6 @@ def latest_gate_status(project: Path, gate_id: str) -> str:
         if row.get("gate_id") == gate_id:
             return row.get("status", "").strip().upper()
     return ""
-
-
-def classify_cleanup_path(project: Path, path: Path) -> str:
-    rel = safe_rel(project, path)
-    lowered = rel.lower()
-    suffix = path.suffix.lower()
-    if "/05_" in f"/{rel}" or rel.startswith("05_最终交付_FinalDelivery/"):
-        return "protected_final_delivery"
-    if any(part in path.parts for part in ("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache")) or suffix in {".pyc", ".pyo"}:
-        return "cache"
-    if "contact" in lowered and suffix in GENERATED_IMAGE_SUFFIXES:
-        return "contact_sheet"
-    if "preview" in lowered and suffix in GENERATED_IMAGE_SUFFIXES:
-        return "preview"
-    if "version_archive" in lowered or re.search(r"(old|backup|archive|v\d{1,3})", lowered) and suffix in {".pptx", ".pdf"}:
-        return "old_export"
-    if "/visual_assets/raw/" in lowered:
-        return "original_image"
-    if "/visual_assets/selected/" in lowered or "crop" in lowered or "裁切" in rel:
-        return "important_crop_or_selected"
-    if suffix in GENERATED_IMAGE_SUFFIXES:
-        return "derived_image"
-    return "other"
-
-
-def cleanup_file_inventory(project: Path) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    for path in sorted(project.rglob("*")):
-        if ".git" in path.parts or not path.is_file():
-            continue
-        try:
-            size = path.stat().st_size
-        except OSError:
-            continue
-        category = classify_cleanup_path(project, path)
-        sha = ""
-        if size <= 80 * 1024 * 1024 and category != "cache":
-            try:
-                sha = file_sha256(path)
-            except OSError:
-                sha = ""
-        rows.append(
-            {
-                "path": safe_rel(project, path),
-                "category": category,
-                "sha256": sha,
-                "size_bytes": str(size),
-                "protected": "true" if category == "protected_final_delivery" else "false",
-            }
-        )
-    return rows
-
-
-def write_dedupe_audit(project: Path) -> tuple[str, list[str], Path]:
-    register_final_delivery_locks(project)
-    inventory = cleanup_file_inventory(project)
-    by_hash: dict[str, list[dict[str, str]]] = {}
-    for row in inventory:
-        sha = row.get("sha256", "")
-        if sha:
-            by_hash.setdefault(sha, []).append(row)
-    duplicate_groups = [rows for rows in by_hash.values() if len(rows) > 1]
-    issues = [
-        "duplicate group includes protected final delivery file; review manually only"
-        for rows in duplicate_groups
-        if any(row.get("protected") == "true" for row in rows)
-    ]
-    category_counts: dict[str, int] = {}
-    for row in inventory:
-        category_counts[row["category"]] = category_counts.get(row["category"], 0) + 1
-    duplicate_text = []
-    for index, rows in enumerate(duplicate_groups[:40], start=1):
-        duplicate_text.append(f"### DUP-{index:03d}")
-        duplicate_text.extend(
-            f"- {row['category']} | protected={row['protected']} | {row['path']}"
-            for row in rows
-        )
-        duplicate_text.append("")
-    report_path = project / "AD-creative/orchestrator/dedupe_audit.md"
-    write_text(
-        report_path,
-        f"""# Dedupe Audit
-
-status: {"CHECK" if issues else "PASS"}
-visibility: internal_only
-checked_at: {now_iso()}
-delete_action: none
-
-## Category Counts
-
-{chr(10).join(f"- {key}: {value}" for key, value in sorted(category_counts.items())) or "- none"}
-
-## Duplicate Hash Groups
-
-{chr(10).join(duplicate_text).rstrip() or "- none"}
-
-## Issues
-
-{chr(10).join(f"- {issue}" for issue in issues) or "- 无"}
-
-## Rule
-
-本报告只分类和估算重复，不删除文件。清理必须通过 cleanup-plan，且 `05_最终交付_FinalDelivery` 下用户手动放入的 PPT/PDF 默认 protected。
-""",
-    )
-    update_artifact(
-        project,
-        "ART-AUTO-DEDUPE-AUDIT",
-        "dedupe_audit_report",
-        safe_rel(project, report_path),
-        "workspace_hygiene",
-        visibility="internal_only",
-        gate_status="CHECK" if issues else "PASS",
-    )
-    return ("CHECK" if issues else "PASS"), issues, report_path
-
-
-def write_cleanup_plan(project: Path) -> tuple[str, list[str], Path]:
-    lock_path = register_final_delivery_locks(project)
-    inventory = cleanup_file_inventory(project)
-    recommendations: list[str] = []
-    for category, action in [
-        ("protected_final_delivery", "register only; do not move, overwrite, or delete"),
-        ("original_image", "keep as source of truth unless manually superseded"),
-        ("important_crop_or_selected", "keep if referenced by slide/client outline; otherwise mark for manual review"),
-        ("derived_image", "keep if selected or referenced; otherwise candidate for archive"),
-        ("old_export", "keep in version_archive or move only after hash registration"),
-        ("cache", "safe candidate for automated cleanup after confirmation"),
-        ("preview", "regenerate only after current PPT/PDF hash is registered"),
-        ("contact_sheet", "archive separately; never use as client-visible image"),
-    ]:
-        count = sum(1 for row in inventory if row["category"] == category)
-        recommendations.append(f"- {category}: {count} files -> {action}")
-    report_path = project / "AD-creative/orchestrator/cleanup_plan.md"
-    write_text(
-        report_path,
-        f"""# Cleanup Plan
-
-status: planned
-visibility: internal_only
-created_at: {now_iso()}
-delete_action: none
-final_delivery_lock: {safe_rel(project, lock_path)}
-
-## Recommendations
-
-{chr(10).join(recommendations)}
-
-## Protected Files
-
-{chr(10).join(f"- {row['path']}" for row in inventory if row['protected'] == 'true') or "- none"}
-
-## Rule
-
-不要按 hash duplicate 直接删除。先按原图、重要裁切、派生图、旧导出、缓存、预览、contact sheet 分层；最终交付目录只登记 hash，不移动、不覆盖。
-""",
-    )
-    update_artifact(
-        project,
-        "ART-AUTO-CLEANUP-PLAN",
-        "cleanup_plan",
-        safe_rel(project, report_path),
-        "workspace_hygiene",
-        visibility="internal_only",
-        gate_status="PASS",
-    )
-    return "PASS", [], report_path
 
 
 def normalize_thread_status(value: str | None) -> str:
@@ -14623,29 +16450,44 @@ def has_adversarial_row_for_stage(text: str, stage: str) -> bool:
 
 
 def default_adversarial_targets(project: Path, stage: str) -> list[Path]:
-    targets = {
-        "creative": [
-            "AD-creative/creative/creative_directions.md",
-            "AD-creative/proposal_architecture/proposal_structure.md",
-        ],
-        "reference_research": ["AD-creative/references/reference_cards.csv"],
+    normalized_stage = normalize_stage(stage)
+    if normalized_stage == "creative":
+        generation_paths = current_creative_generation_paths(project)
+        creative_targets = (
+            [generation_paths["directions"]]
+            if generation_paths
+            else [
+                project / "AD-creative/creative/creative_directions.md",
+                project / "AD-creative/proposal_architecture/proposal_structure.md",
+            ]
+        )
+        return [path for path in creative_targets if path.is_file()]
+    targets: dict[str, list[Path]] = {
+        "reference_research": [project / "AD-creative/references/reference_cards.csv"],
         "visual_review": [
-            "AD-creative/visual_assets/asset_current_manifest.csv",
-            "AD-creative/visual_assets/asset_manifest.csv",
+            project / "AD-creative/visual_assets/asset_current_manifest.csv",
+            project / "AD-creative/visual_assets/asset_manifest.csv",
         ],
         "film_quality": [
-            "AD-creative/film/treatment_packet.md",
-            "AD-creative/film/shot_list_storyboard_plan.md",
+            project / "AD-creative/film/treatment_packet.md",
+            project / "AD-creative/film/shot_list_storyboard_plan.md",
         ],
         "final_delivery": [
-            "AD-creative/delivery/client_pack_binding.json",
+            project / "AD-creative/delivery/client_pack_binding.json",
         ],
     }
     return [
-        project / rel_path
-        for rel_path in targets.get(normalize_stage(stage), [])
-        if (project / rel_path).is_file()
+        path
+        for path in targets.get(normalized_stage, [])
+        if path.is_file()
     ]
+
+
+def active_creative_directions_path(project: Path) -> Path:
+    generation_paths = current_creative_generation_paths(project)
+    return generation_paths.get(
+        "directions", project / "AD-creative/creative/creative_directions.md"
+    )
 
 
 def write_adversarial_target_snapshot(
@@ -15280,6 +17122,7 @@ def threadops_role_brief_content(
     task_signature: dict[str, str],
     mode: str,
     write_scope: str,
+    read_first_paths: list[str],
 ) -> str:
     contract = threadops_harness_contract(
         mode=mode,
@@ -15291,7 +17134,7 @@ def threadops_role_brief_content(
     project_facts = "\n".join(
         f"- {key}: {value or 'TBD'}" for key, value in task_signature.items()
     )
-    read_first = "\n".join(f"- `{item}`" for item in spec.read_first)
+    read_first = "\n".join(f"- `{item}`" for item in read_first_paths)
     allowed = "\n".join(f"- {item}" for item in spec.allowed_actions)
     forbidden = "\n".join(f"- {item}" for item in spec.forbidden_actions)
     output = "\n".join(f"- {item}" for item in spec.required_output)
@@ -15378,7 +17221,7 @@ def threadops_worker_prompt_content(
     task_signature: dict[str, str],
     role_brief_path: Path,
     receipt_path: Path,
-    extra_read_first: list[str],
+    read_first_paths: list[str],
     mode: str,
     workspace_path: str,
     write_scope: str,
@@ -15390,8 +17233,7 @@ def threadops_worker_prompt_content(
         stop_condition=spec.stop_condition,
     )
     helper_contract = threadops_helper_contract()
-    read_first = list(dict.fromkeys([*spec.read_first, *extra_read_first]))
-    read_first_text = "\n".join(f"- {item}" for item in read_first)
+    read_first_text = "\n".join(f"- {item}" for item in read_first_paths)
     allowed = "\n".join(f"- {item}" for item in spec.allowed_actions)
     forbidden = "\n".join(f"- {item}" for item in spec.forbidden_actions)
     output = "\n".join(f"- {item}" for item in spec.required_output)
@@ -15738,6 +17580,18 @@ def render_thread_execution_plan(
 
     for index, role in enumerate(roles, 1):
         spec = THREADOPS_ROLE_SPECS[role]
+        role_read_first = list(spec.read_first)
+        if role == "copy_creative":
+            current_directions = safe_rel(project, active_creative_directions_path(project))
+            role_read_first = [
+                current_directions
+                if item == "AD-creative/creative/creative_directions.md"
+                else item
+                for item in role_read_first
+            ]
+        role_read_first = list(
+            dict.fromkeys([*role_read_first, *extra_read_first])
+        )
         lane_id = f"LANE-{index:02d}-{spec.role_id}"
         lane_run_id = f"{work_id}:{lane_id}"
         planned_thread_id = f"planned:{lane_run_id}"
@@ -15771,6 +17625,7 @@ def render_thread_execution_plan(
                 task_signature=task_signature,
                 mode=mode,
                 write_scope=write_scope,
+                read_first_paths=role_read_first,
             ),
         )
         write_text(
@@ -15787,7 +17642,7 @@ def render_thread_execution_plan(
                 task_signature=task_signature,
                 role_brief_path=role_brief_path,
                 receipt_path=receipt_path,
-                extra_read_first=extra_read_first,
+                read_first_paths=role_read_first,
                 mode=mode,
                 workspace_path=workspace_path,
                 write_scope=write_scope,
@@ -15825,7 +17680,7 @@ def render_thread_execution_plan(
                 "mode": mode,
                 "environment": spec.default_environment,
                 "workspace_path": workspace_path,
-                "read_first": ";".join([*spec.read_first, *extra_read_first]),
+                "read_first": ";".join(role_read_first),
                 "write_scope": write_scope,
                 "receipt_path": safe_rel(project, receipt_path),
                 "receipt_status": "missing",
@@ -16916,6 +18771,9 @@ sha256: {sha256 or file_sha256(pptx_path)}
 
 
 def export_editable_pptx(project: Path, output: Path | None = None) -> Path:
+    preflight_errors, _ = validate(project)
+    if preflight_errors:
+        raise ProjectValidationBlocked("PPTX export", preflight_errors)
     lock_path = project / "AD-creative/orchestrator/.version.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as lock_handle:
@@ -17432,11 +19290,16 @@ def command_import_creative_production(args: argparse.Namespace) -> int:
 
 def _command_creative_brief(args: argparse.Namespace, *, deprecated: bool) -> int:
     project = Path(args.project).resolve()
-    payload = (
-        render_creative_proposal(project, work_id=args.work_id)
-        if deprecated
-        else render_creative_brief(project, work_id=args.work_id)
-    )
+    try:
+        payload = (
+            render_creative_proposal(project, work_id=args.work_id)
+            if deprecated
+            else render_creative_brief(project, work_id=args.work_id)
+        )
+    except (OSError, ValueError) as exc:
+        print("CREATIVE_BRIEF=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
     incremental = run_incremental_validation(
         project,
         changed_artifact_ids=payload["artifact_ids"],
@@ -17487,6 +19350,190 @@ def command_creative_proposal(args: argparse.Namespace) -> int:
     return _command_creative_brief(args, deprecated=True)
 
 
+def command_creative_assertion_record(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    try:
+        result = record_local_operator_assertion(
+            project,
+            semantics=args.semantics,
+            requirement_ids=args.requirement_id,
+            artifact_bindings=args.artifact_binding,
+            note=args.note,
+        )
+    except ValueError as exc:
+        print("CREATIVE_ASSERTION_RECORD=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    payload = {
+        "creative_assertion_record": "PASS",
+        "assertion_ref": result.assertion_ref,
+        "evidence_path": str(result.evidence_path),
+        "identity_assurance": "NONE",
+        "authority_scope": "local_project_workflow_only",
+        "disclaimer": result.record["disclaimer"],
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print("CREATIVE_ASSERTION_RECORD=PASS")
+        print(f"ASSERTION_REF={result.assertion_ref}")
+        print(f"EVIDENCE_PATH={result.evidence_path}")
+        print("IDENTITY_ASSURANCE=NONE")
+        print("AUTHORITY_SCOPE=local_project_workflow_only")
+        print(f"DISCLAIMER={result.record['disclaimer']}")
+    return 0
+
+
+def command_creative_assertion_status(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().absolute()
+    if project.is_symlink() or not project.is_dir():
+        print("CREATIVE_ASSERTION_STATUS=BLOCKED")
+        print(f"ERROR=project must be an existing non-symlink directory: {project}")
+        return 1
+    try:
+        records = audit_local_operator_assertions(project)
+    except (OSError, ValueError) as exc:
+        print("CREATIVE_ASSERTION_STATUS=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    if args.assertion_ref:
+        records = [
+            item for item in records if item["assertion_ref"] == args.assertion_ref
+        ]
+        if not records:
+            print("CREATIVE_ASSERTION_STATUS=BLOCKED")
+            print(f"ERROR=local assertion not found: {args.assertion_ref}")
+            return 1
+    invalid = [item for item in records if item["status"] == "INVALID"]
+    payload = {
+        "creative_assertion_status": "PASS" if not invalid else "CHECK",
+        "identity_assurance": "NONE",
+        "authority_scope": "local_project_workflow_only",
+        "assertions": records,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"CREATIVE_ASSERTION_STATUS={payload['creative_assertion_status']}")
+        print("IDENTITY_ASSURANCE=NONE")
+        print(f"ASSERTION_COUNT={len(records)}")
+        for item in records:
+            print(
+                "ASSERTION="
+                f"{item['assertion_ref']}|{item['status']}|{item['declared_semantics']}"
+            )
+    return 0 if not invalid else 1
+
+
+def command_creative_assertion_revoke(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    try:
+        record = revoke_local_operator_assertion(
+            project, args.assertion_ref, reason=args.reason
+        )
+    except ValueError as exc:
+        print("CREATIVE_ASSERTION_REVOKE=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    payload = {
+        "creative_assertion_revoke": "PASS",
+        "assertion_ref": record["assertion_ref"],
+        "status": "REVOKED",
+        "revoked_at": record["revoked_at"],
+        "reason": record["reason"],
+        "identity_assurance": "NONE",
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print("CREATIVE_ASSERTION_REVOKE=PASS")
+        print(f"ASSERTION_REF={record['assertion_ref']}")
+        print("STATUS=REVOKED")
+        print(f"REVOKED_AT={record['revoked_at']}")
+    return 0
+
+
+def command_creative_requirement_confirm(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    try:
+        result = confirm_creative_requirement(
+            project,
+            args.requirement_id,
+            confirmation_ref=args.confirmation_ref,
+            evidence_ref=args.evidence_ref,
+        )
+    except ValueError as exc:
+        print("CREATIVE_REQUIREMENT_CONFIRM=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    payload = {
+        "creative_requirement_confirm": "PASS",
+        "requirement_id": result.requirement_id,
+        "confirmation_receipt": str(result.path),
+        "confirmed_by": result.receipt["confirmed_by"],
+        "confirmation_ref": result.receipt["confirmation_ref"],
+        "source_event_id": result.receipt["source_event_id"],
+        "evidence_ref": result.receipt["evidence_ref"],
+        "next_action": f"adco creative-brief {project}",
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print("CREATIVE_REQUIREMENT_CONFIRM=PASS")
+        print(f"REQUIREMENT_ID={result.requirement_id}")
+        print(f"CONFIRMATION_RECEIPT={result.path}")
+        print(f"CONFIRMED_BY={result.receipt['confirmed_by']}")
+        print(f"CONFIRMATION_REF={result.receipt['confirmation_ref']}")
+        print(f"EVIDENCE_REF={result.receipt['evidence_ref']}")
+        print(f"NEXT_ACTION=adco creative-brief {project}")
+    return 0
+
+
+def command_creative_constraint_resolve(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve()
+    ensure_project(project)
+    candidate_file = Path(args.file).expanduser().resolve()
+    try:
+        result = resolve_creative_constraint(
+            project,
+            candidate_file,
+            direction_id=args.direction_id,
+            constraint_id=args.constraint_id,
+            confirmation_ref=args.confirmation_ref,
+            decision=args.decision,
+            note=args.note,
+        )
+    except ValueError as exc:
+        print("CREATIVE_CONSTRAINT_RESOLVE=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
+    payload = {
+        "creative_constraint_resolve": "PASS",
+        "constraint_id": result.constraint_id,
+        "direction_id": result.direction_id,
+        "decision": result.resolution["decision"],
+        "reviewed_by": result.resolution["reviewed_by"],
+        "confirmation_ref": result.resolution["confirmation_ref"],
+        "resolution_path": str(result.path),
+        "next_action": f"adco creative-import {project} --file {candidate_file}",
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print("CREATIVE_CONSTRAINT_RESOLVE=PASS")
+        print(f"CONSTRAINT_ID={result.constraint_id}")
+        print(f"DIRECTION_ID={result.direction_id}")
+        print(f"DECISION={result.resolution['decision']}")
+        print(f"REVIEWED_BY={result.resolution['reviewed_by']}")
+        print(f"CONFIRMATION_REF={result.resolution['confirmation_ref']}")
+        print(f"RESOLUTION_PATH={result.path}")
+        print(f"NEXT_ACTION=adco creative-import {project} --file {candidate_file}")
+    return 0
+
+
 def command_creative_import(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     ensure_project(project)
@@ -17501,7 +19548,12 @@ def command_creative_import(args: argparse.Namespace) -> int:
         return 1
     if project_surface(project) == DELIVERY_SURFACE:
         for artifact_id, artifact_type, path in [
-            ("ART-AUTO-CREATIVE-CANDIDATE", "creative_candidate", result.current_path),
+            ("ART-AUTO-CREATIVE-CANDIDATE", "creative_candidate", result.candidate_path),
+            (
+                "ART-AUTO-CREATIVE-GENERATION-POINTER",
+                "creative_generation_pointer",
+                result.current_path,
+            ),
             (
                 "ART-AUTO-CREATIVE-CANDIDATE-RECEIPT",
                 "creative_candidate_import_receipt",
@@ -17537,7 +19589,9 @@ def command_creative_import(args: argparse.Namespace) -> int:
             "ART-AUTO-CREATIVE-DIRECTIONS",
         ],
         changed_file_paths=[
+            result.candidate_path,
             result.current_path,
+            result.receipt_path,
             result.directions_path,
             result.matrix_path,
         ],
@@ -17545,7 +19599,7 @@ def command_creative_import(args: argparse.Namespace) -> int:
     payload = {
         "creative_import": "PASS" if not incremental.errors else "CHECK",
         "candidate": str(result.candidate_path),
-        "current_candidate": str(result.current_path),
+        "current_generation": str(result.current_path),
         "candidate_sha256": result.candidate_sha256,
         "directions": result.direction_count,
         "warnings": result.warnings,
@@ -17574,17 +19628,24 @@ def command_creative_import(args: argparse.Namespace) -> int:
 def command_creative_review(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
     ensure_project(project)
+    delivery_surface = project_surface(project) == DELIVERY_SURFACE
     try:
-        result = review_creative_candidate(project)
+        critic_required = creative_brief_requires_independent_critic(project)
+        result = review_creative_candidate(
+            project,
+            independent_critic_required=critic_required,
+            persist_receipt=delivery_surface,
+        )
     except ValueError as exc:
         print("CREATIVE_REVIEW=BLOCKED")
         print(f"ERROR={exc}")
         return 1
-    if project_surface(project) == DELIVERY_SURFACE:
+    if delivery_surface:
+        assert result.receipt_path is not None
         update_artifact(
             project,
-            "ART-AUTO-CREATIVE-CRITIC-RECEIPT",
-            "creative_critic_receipt",
+            "ART-AUTO-CREATIVE-LINT-RECEIPT",
+            "creative_deterministic_lint_receipt",
             safe_rel(project, result.receipt_path),
             "creative",
             visibility="internal_only",
@@ -17603,37 +19664,49 @@ def command_creative_review(args: argparse.Namespace) -> int:
         )
     payload = {
         "creative_review": result.status,
-        "critic_receipt": str(result.receipt_path),
+        "deterministic_lint_receipt": (
+            str(result.receipt_path) if result.receipt_path else ""
+        ),
         "verdict": result.receipt["verdict"],
         "blocking_issues": result.blocking_issues,
         "warnings": result.warnings,
-        "independent_critic_required": True,
+        "independent_critic_required": bool(
+            result.receipt["independent_critic_required"]
+        ),
     }
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:
         print(f"CREATIVE_REVIEW={result.status}")
-        print(f"CRITIC_RECEIPT={result.receipt_path}")
+        print(
+            "DETERMINISTIC_LINT_RECEIPT="
+            + (str(result.receipt_path) if result.receipt_path else "NOT_RECORDED")
+        )
         print(f"VERDICT={result.receipt['verdict']}")
         print(f"BLOCKING_ISSUES={len(result.blocking_issues)}")
         print(f"WARNINGS={len(result.warnings)}")
-        print("INDEPENDENT_CRITIC_REQUIRED=1")
+        print(
+            "INDEPENDENT_CRITIC_REQUIRED="
+            + str(int(bool(result.receipt["independent_critic_required"])))
+        )
     return 1 if result.status == "BLOCKED" else 0
 
 
 def command_init(args: argparse.Namespace) -> int:
-    project = Path(args.project).expanduser().resolve()
+    project = Path(args.project).expanduser().absolute()
     template = Path(args.template).expanduser().resolve() if args.template else TEMPLATE_ROOT
     if not template.exists():
         print("INIT=CHECK")
         print(f"ERROR=template not found: {template}")
         return 1
-    project.mkdir(parents=True, exist_ok=True)
-    use_delivery = args.full or project_surface(project) == DELIVERY_SURFACE
-    copy = copy_template if use_delivery else copy_content_template
-    created, skipped = copy(template, project)
-    if use_delivery:
-        set_project_surface(project, DELIVERY_SURFACE)
+    try:
+        use_delivery = args.full or project_surface(project) == DELIVERY_SURFACE
+        copy = copy_template if use_delivery else copy_content_template
+        created, skipped = copy(template, project)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print("INIT=CHECK")
+        print(f"ERROR={exc}")
+        return 1
     agents_status = agents_policy_status(project)
     errors, stats = validate(project)
     print(f"PROJECT={project}")
@@ -17655,22 +19728,42 @@ def command_init(args: argparse.Namespace) -> int:
 
 
 def command_run(args: argparse.Namespace) -> int:
-    project = Path(args.project).resolve()
-    materials = [Path(item).expanduser().resolve() for item in args.material]
+    project = Path(args.project).expanduser().absolute()
+    materials = [Path(item).expanduser().absolute() for item in args.material]
     delivery_surface = project_surface(project) == DELIVERY_SURFACE
-    result = execute_lightweight_run(
-        project,
-        materials=materials,
-        goal=args.goal,
-        max_total_chars=args.max_total_chars,
-        ensure_project=ensure_project,
-        register_materials=register_materials,
-        ensure_intake_work=ensure_intake_work if delivery_surface else None,
-        perform_intake=perform_intake,
-        render_handoff=render_handoff,
-        render_dashboard=render_dashboard,
-        render_optional_dashboard=args.dashboard,
-    )
+    project_existed = project.exists()
+    try:
+        result = execute_lightweight_run(
+            project,
+            materials=materials,
+            goal=args.goal,
+            max_total_chars=args.max_total_chars,
+            ensure_project=ensure_project,
+            register_materials=register_materials,
+            ensure_intake_work=ensure_intake_work if delivery_surface else None,
+            perform_intake=perform_intake,
+            render_handoff=render_handoff,
+            render_dashboard=render_dashboard,
+            render_optional_dashboard=args.dashboard,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        code = exc.code if isinstance(exc, RunPreflightError) else "runtime_error"
+        error = {"code": code, "message": str(exc)}
+        payload = {
+            "run": "CHECK",
+            "project": str(project),
+            "project_created": not project_existed and project.exists(),
+            "error": error,
+            "errors": [str(exc)],
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print("RUN=CHECK")
+            print(f"ERROR_CODE={code}")
+            print(f"ERROR={exc}")
+            print(f"PROJECT_CREATED={int(payload['project_created'])}")
+        return 1
     result["agents_policy"] = agents_policy_status(project)
     incremental = result["incremental_validation"]
     intake_stats = result["intake"]
@@ -17681,11 +19774,58 @@ def command_run(args: argparse.Namespace) -> int:
         errors.append("one or more material parsers failed; inspect intake-evidence report")
     result["run"] = "PASS" if not errors else "CHECK"
     result["errors"] = errors
+    organization_review = audit_project_storage(
+        project,
+        material_paths=materials,
+        deep=False,
+    )
+    result["organization_review"] = {
+        key: organization_review[key]
+        for key in [
+            "status",
+            "audit_complete",
+            "errors",
+            "scope",
+            "read_only",
+            "files_scanned",
+            "root_loose_file_count",
+            "root_unorganized_entry_count",
+            "organization_suggestion_count",
+            "duplicate_group_count",
+            "duplicate_file_count",
+            "reclaimable_bytes",
+            "organization_recommended",
+            "organization_suggestions",
+            "duplicate_groups",
+            "policy",
+        ]
+    }
+    if organization_review["audit_complete"] is not True:
+        errors.extend(
+            f"organization audit incomplete: {item}"
+            for item in organization_review["errors"]
+        )
+        result["run"] = "CHECK"
+        result["errors"] = errors
+    result["organization_prompt_required"] = bool(
+        organization_review["organization_recommended"]
+    )
+    if result["organization_prompt_required"]:
+        result["organization_question"] = (
+            "检测到散放资料或精确重复。是否按建议生成整理计划？"
+            "默认只登记原路径，不复制、不移动、不删除。"
+        )
+        result["organization_next_command"] = (
+            f"adco organize-plan {project} --save"
+        )
+    else:
+        result["organization_question"] = ""
+        result["organization_next_command"] = ""
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if not errors else 1
-    print("CONTENT_ANSWER:")
-    print(result["content_answer"]["markdown"])
+    print("INTAKE_SUMMARY:")
+    print(result["intake_summary"]["markdown"])
     print(f"PROJECT={project}")
     print(f"PROJECT_SURFACE={project_surface(project)}")
     print(f"CREATED_FILES={result['created_files']}")
@@ -17704,6 +19844,26 @@ def command_run(args: argparse.Namespace) -> int:
     print(f"SPECIALIST_HANDOFF_COUNT={result['specialist_handoff_count']}")
     print(f"CLIENT_PACK_RUN_COUNT={result['client_pack_run_count']}")
     print(f"FULL_VALIDATION_RUN_COUNT={result['full_validation_run_count']}")
+    print(
+        "ORGANIZATION_REVIEW="
+        + (
+            "INCOMPLETE"
+            if not result["organization_review"]["audit_complete"]
+            else "RECOMMENDED"
+            if result["organization_prompt_required"]
+            else "CLEAN"
+        )
+    )
+    if not result["organization_review"]["audit_complete"]:
+        for error in result["organization_review"]["errors"]:
+            print(f"ORGANIZATION_ERROR={error}")
+    if result["organization_prompt_required"]:
+        review = result["organization_review"]
+        print(f"ROOT_UNORGANIZED_ENTRIES={review['root_unorganized_entry_count']}")
+        print(f"EXACT_DUPLICATE_GROUPS={review['duplicate_group_count']}")
+        print(f"RECLAIMABLE_BYTES={review['reclaimable_bytes']}")
+        print(f"ORGANIZATION_QUESTION={result['organization_question']}")
+        print(f"ORGANIZATION_NEXT_COMMAND={result['organization_next_command']}")
     print(f"NEXT_COMMAND={result['next_command']}")
     print(f"PPT_AUTO_GENERATED={result['ppt_auto_generated']}")
     print("VALIDATORS_RUN=" + ";".join(incremental["validators_run"]))
@@ -17732,7 +19892,8 @@ def _run_sample_content(project: Path, *, force_material: bool) -> dict[str, obj
     if project_surface(project) == DELIVERY_SURFACE:
         ensure_intake_work(project, source_ids, SAMPLE_GOAL)
     intake_stats = perform_intake(project, source_ids, SAMPLE_GOAL)
-    content_answer = render_handoff(project, SAMPLE_GOAL, source_ids)
+    intake_summary = render_handoff(project, SAMPLE_GOAL, source_ids)
+    intake_summary["artifact_role"] = "intake_summary_not_creative_output"
     errors, stats = validate(project)
     return {
         "project": str(project),
@@ -17745,7 +19906,15 @@ def _run_sample_content(project: Path, *, force_material: bool) -> dict[str, obj
         "registered_sources": registered_sources,
         "source_ids": source_ids,
         "intake": intake_stats,
-        "content_answer": content_answer,
+        "intake_summary": intake_summary,
+        "content_answer": intake_summary,
+        "deprecated_fields": {
+            "content_answer": {
+                "replacement": "intake_summary",
+                "removal_target": "0.4.0",
+                "reason": "the value is intake analysis, not a creative answer",
+            }
+        },
         "stats": stats,
         "errors": errors,
     }
@@ -17756,8 +19925,8 @@ def command_sample(args: argparse.Namespace) -> int:
     result = _run_sample_content(project, force_material=args.force_material)
     errors = result["errors"]
     print(f"SAMPLE={'PASS' if not errors else 'CHECK'}")
-    print("CONTENT_ANSWER:")
-    print(result["content_answer"]["markdown"])
+    print("INTAKE_SUMMARY:")
+    print(result["intake_summary"]["markdown"])
     print(f"PROJECT={result['project']}")
     print(f"PROJECT_SURFACE={result['surface']}")
     print(f"CREATED_FILES={result['created_files']}")
@@ -17792,8 +19961,8 @@ def command_demo(args: argparse.Namespace) -> int:
         open_status = "PASS" if webbrowser.open(dashboard.as_uri()) else "CHECK"
     errors = result["errors"]
     print(f"DEMO={'PASS' if not errors and open_status != 'CHECK' else 'CHECK'}")
-    print("CONTENT_ANSWER:")
-    print(result["content_answer"]["markdown"])
+    print("INTAKE_SUMMARY:")
+    print(result["intake_summary"]["markdown"])
     print(f"PROJECT={result['project']}")
     print(f"PROJECT_SURFACE={result['surface']}")
     print(f"CREATED_FILES={result['created_files']}")
@@ -17846,8 +20015,8 @@ def command_quickstart(args: argparse.Namespace) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if quickstart_status == "PASS" else 1
     print(f"QUICKSTART={quickstart_status}")
-    print("CONTENT_ANSWER:")
-    print(result["content_answer"]["markdown"])
+    print("INTAKE_SUMMARY:")
+    print(result["intake_summary"]["markdown"])
     print(f"PROJECT={result['project']}")
     print(f"PROJECT_SURFACE={result['surface']}")
     print(f"CREATED_FILES={result['created_files']}")
@@ -17919,7 +20088,8 @@ def command_intake(args: argparse.Namespace) -> int:
         args.goal,
         max_total_chars=args.max_total_chars,
     )
-    content_answer = render_handoff(project, args.goal, source_ids)
+    intake_summary = render_handoff(project, args.goal, source_ids)
+    intake_summary["artifact_role"] = "intake_summary_not_creative_output"
     incremental = run_incremental_validation(
         project,
         changed_artifact_ids=[
@@ -17940,8 +20110,8 @@ def command_intake(args: argparse.Namespace) -> int:
         errors.append("intake total character budget exceeded")
     if stats["parser_errors"]:
         errors.append("one or more material parsers failed")
-    print("CONTENT_ANSWER:")
-    print(content_answer["markdown"])
+    print("INTAKE_SUMMARY:")
+    print(intake_summary["markdown"])
     print(f"PROJECT={project}")
     print(f"PROJECT_SURFACE={project_surface(project)}")
     print(f"INTAKE_MATERIALS={stats['materials']}")
@@ -18088,7 +20258,7 @@ def command_profile_analyze(args: argparse.Namespace) -> int:
         print("PROFILE_ANALYSIS=CHECK")
         print(f"ERROR={exc}")
         return 1
-    dashboard = render_dashboard(project)
+    dashboard = render_dashboard(project) if args.dashboard else None
     errors, validate_stats = validate(project)
     if args.json:
         output = {
@@ -18098,7 +20268,7 @@ def command_profile_analyze(args: argparse.Namespace) -> int:
             "profile_current_truth": str(stats["profile_current_truth"]),
             "handoff": str(stats["handoff"]),
             "stats": {key: value for key, value in stats.items() if isinstance(value, (int, str))},
-            "dashboard": str(dashboard),
+            "dashboard": str(dashboard) if dashboard else "",
             "validation": "PASS" if not errors else "CHECK",
             "validate_stats": validate_stats,
             "errors": errors,
@@ -18106,7 +20276,7 @@ def command_profile_analyze(args: argparse.Namespace) -> int:
         print(json.dumps(output, ensure_ascii=False, indent=2))
         return 0 if not errors else 1
     print(f"PROJECT={project}")
-    print(f"WORK_ID={work_id}")
+    print(f"WORK_ID={work_id or 'NOT_CREATED'}")
     print(f"PROFILE_MATERIALS={stats['materials']}")
     print(f"PROFILE_SUBJECTS={stats['subjects']}")
     print(f"PROFILE_VOICES={stats['voices']}")
@@ -18115,7 +20285,7 @@ def command_profile_analyze(args: argparse.Namespace) -> int:
     print(f"PROFILE_DEDUPED={stats['deduped']}")
     print(f"PROFILE_CURRENT_TRUTH={stats['profile_current_truth']}")
     print(f"HANDOFF={stats['handoff']}")
-    print(f"DASHBOARD={dashboard}")
+    print(f"DASHBOARD={dashboard or 'NOT_RUN'}")
     for key, value in validate_stats.items():
         print(f"{key.upper()}={value}")
     print(f"VALIDATION={'PASS' if not errors else 'CHECK'}")
@@ -18372,7 +20542,23 @@ def command_support_bundle(args: argparse.Namespace) -> int:
         print("SUPPORT_BUNDLE=CHECK")
         print(f"ERROR=project not found: {project}")
         return 1
-    report = render_support_bundle(project)
+    try:
+        report = render_support_bundle(project)
+    except ValueError as exc:
+        error = str(exc)
+        if args.json:
+            print(json.dumps({
+                "support_bundle": "BLOCKED",
+                "project": str(project),
+                "report": None,
+                "validation": "NOT_RUN",
+                "stats": {},
+                "errors": [error],
+            }, ensure_ascii=False, indent=2, sort_keys=True))
+            return 1
+        print("SUPPORT_BUNDLE=BLOCKED")
+        print(f"ERROR={error}")
+        return 1
     errors, stats = validate(project)
     payload = {
         "support_bundle": "PASS" if not errors else "CHECK",
@@ -18676,12 +20862,34 @@ def command_film_quality_gate(args: argparse.Namespace) -> int:
 
 def command_export_pptx(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve()
-    ensure_project(project)
     output = Path(args.output).expanduser().resolve() if args.output else None
-    pptx_path = export_editable_pptx(project, output)
+    try:
+        existing_errors, _ = validate(project)
+        if existing_errors:
+            raise ProjectValidationBlocked("PPTX export", existing_errors)
+        ensure_project(project)
+        pptx_path = export_editable_pptx(project, output)
+    except ProjectValidationBlocked as exc:
+        print("PPTX_EXPORT=TOOL_BLOCKED")
+        print("TARGETED_ARTIFACT=NOT_RUN")
+        print("PROJECT_VALIDATION=CHECK")
+        print("PROJECT_MUTATION=NONE_AFTER_PREFLIGHT")
+        print(
+            "WIP_FALLBACK=derive outside governed export only after explicit scope; "
+            "do not clean, overwrite, move, or copy FinalDelivery"
+        )
+        print("ERRORS:")
+        for error in exc.errors:
+            print(f"- {error}")
+        return 1
+    except (RuntimeError, FileExistsError) as exc:
+        print("PPTX_EXPORT=BLOCKED")
+        print(f"ERROR={exc}")
+        return 1
     stats = inspect_pptx(pptx_path)
     dashboard = render_dashboard(project)
     errors, validate_stats = validate(project)
+    print("PPTX_EXPORT=PASS")
     print(f"PPTX={pptx_path}")
     print(f"PPTX_SLIDES={stats['slides']}")
     print(f"PPTX_EDITABLE_TEXT_RUNS={stats['editable_text_runs']}")
@@ -18760,6 +20968,8 @@ def command_migrate_control_plane(args: argparse.Namespace) -> int:
         print(f"MIGRATE_CONTROL_PLANE={migration_status}")
         print(f"PROJECT={result['project']}")
         print(f"SCHEMA_VERSION={result['schema_version']}")
+        print(f"APPLIED={int(bool(result['applied']))}")
+        print(f"BLOCKED_BEFORE_WRITE={int(bool(result['blocked_before_write']))}")
         print(f"MIGRATION_MANIFEST={result['migration_manifest'] or 'not_required'}")
         print(f"CHANGES={len(result['changes'])}")
         for change in result["changes"]:
@@ -19154,24 +21364,87 @@ def command_visual_layout_gate(args: argparse.Namespace) -> int:
 
 
 def command_dedupe_audit(args: argparse.Namespace) -> int:
-    project = Path(args.project).expanduser().resolve()
-    rows, csv_path, report = dedupe_audit(project)
-    print("DEDUPE_AUDIT=PASS")
-    print(f"CSV={csv_path}")
-    print(f"REPORT={report}")
-    print(f"FILES={len(rows)}")
-    print(f"DUPLICATES={sum(1 for row in rows if row.get('duplicate_of'))}")
-    return 0
+    project = Path(args.project).expanduser().absolute()
+    audit, plan_path = dedupe_audit(project, deep=not args.quick, save=args.save)
+    audit_complete = audit.get("audit_complete") is True
+    if args.json:
+        print(json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if audit_complete else 1
+    print(f"DEDUPE_AUDIT={'REVIEW_ONLY' if audit_complete else 'INCOMPLETE'}")
+    print(f"AUDIT_READ_ONLY=1")
+    print(f"AUDIT_STATUS={audit['status']}")
+    print(f"AUDIT_ERRORS={len(audit['errors'])}")
+    print(f"PLAN_SAVED={int(plan_path is not None)}")
+    print(f"SCOPE={audit['scope']}")
+    print(f"FILES={audit['files_scanned']}")
+    print(f"DUPLICATE_GROUPS={audit['duplicate_group_count']}")
+    print(f"DUPLICATE_FILES={audit['duplicate_file_count']}")
+    print(f"RECLAIMABLE_BYTES={audit['reclaimable_bytes']}")
+    print(f"PLAN={plan_path or 'NOT_SAVED'}")
+    for error in audit["errors"]:
+        print(f"ERROR={error}")
+    return 0 if audit_complete else 1
 
 
 def command_cleanup_plan(args: argparse.Namespace) -> int:
-    project = Path(args.project).expanduser().resolve()
-    plan_path, actions = cleanup_plan(project)
-    print("CLEANUP_PLAN=PASS")
-    print(f"PLAN={plan_path}")
+    project = Path(args.project).expanduser().absolute()
+    audit, plan_path, actions = cleanup_plan(
+        project, deep=not args.quick, save=args.save
+    )
+    audit_complete = audit.get("audit_complete") is True
+    if args.json:
+        payload = {
+            "schema": "adco.cleanup-plan@1.0",
+            "status": audit["status"],
+            "audit_complete": audit_complete,
+            "errors": audit["errors"],
+            "read_only": True,
+            "actions": actions,
+            "saved_plan": str(plan_path) if plan_path else "",
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if audit_complete else 1
+    print(f"CLEANUP_PLAN={'REVIEW_ONLY' if audit_complete else 'INCOMPLETE'}")
+    print("AUDIT_READ_ONLY=1")
+    print(f"AUDIT_STATUS={audit['status']}")
+    print(f"AUDIT_ERRORS={len(audit['errors'])}")
+    print(f"PLAN_SAVED={int(plan_path is not None)}")
+    print(f"PLAN={plan_path or 'NOT_SAVED'}")
     print(f"ACTIONS={len(actions)}")
     print("NO_DELETE=1")
-    return 0
+    for error in audit["errors"]:
+        print(f"ERROR={error}")
+    return 0 if audit_complete else 1
+
+
+def command_organize_plan(args: argparse.Namespace) -> int:
+    project = Path(args.project).expanduser().absolute()
+    audit = audit_project_storage(project, deep=args.deep)
+    audit_complete = audit.get("audit_complete") is True
+    plan_path = (
+        save_storage_plan(project, audit, mode="organize_plan")
+        if args.save and audit_complete
+        else None
+    )
+    if args.json:
+        payload = dict(audit)
+        payload["saved_plan"] = str(plan_path) if plan_path else ""
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if audit_complete else 1
+    print(f"ORGANIZE_PLAN={'REVIEW_ONLY' if audit_complete else 'INCOMPLETE'}")
+    print("AUDIT_READ_ONLY=1")
+    print(f"AUDIT_STATUS={audit['status']}")
+    print(f"AUDIT_ERRORS={len(audit['errors'])}")
+    print(f"PLAN_SAVED={int(plan_path is not None)}")
+    print(f"ROOT_UNORGANIZED_ENTRIES={audit['root_unorganized_entry_count']}")
+    print(f"SUGGESTIONS={audit['organization_suggestion_count']}")
+    print(f"DUPLICATE_GROUPS={audit['duplicate_group_count']}")
+    print(f"RECLAIMABLE_BYTES={audit['reclaimable_bytes']}")
+    print(f"PLAN={plan_path or 'NOT_SAVED'}")
+    print("APPLY_REQUIRES_EXPLICIT_CONFIRMATION=1")
+    for error in audit["errors"]:
+        print(f"ERROR={error}")
+    return 0 if audit_complete else 1
 
 
 def command_final_delivery_lock(args: argparse.Namespace) -> int:
@@ -19420,9 +21693,91 @@ def build_parser() -> argparse.ArgumentParser:
     creative_brief_parser.add_argument("--json", action="store_true")
     creative_brief_parser.set_defaults(func=command_creative_brief)
 
+    creative_assertion_record_parser = subparsers.add_parser(
+        "creative-assertion-record",
+        help="Record a revocable local-operator workflow assertion without claiming user/client identity.",
+    )
+    creative_assertion_record_parser.add_argument("project", help="Project directory.")
+    creative_assertion_record_parser.add_argument(
+        "--semantics",
+        choices=[
+            "creative_requirement_confirmation",
+            "creative_constraint_approval",
+            "creative_constraint_rejection",
+        ],
+        required=True,
+    )
+    creative_assertion_record_parser.add_argument(
+        "--requirement-id", action="append", default=[]
+    )
+    creative_assertion_record_parser.add_argument(
+        "--artifact-binding", action="append", default=[]
+    )
+    creative_assertion_record_parser.add_argument("--note", required=True)
+    creative_assertion_record_parser.add_argument("--json", action="store_true")
+    creative_assertion_record_parser.set_defaults(func=command_creative_assertion_record)
+
+    creative_assertion_status_parser = subparsers.add_parser(
+        "creative-assertion-status",
+        help="Audit active, revoked, and invalid local workflow assertions.",
+    )
+    creative_assertion_status_parser.add_argument("project", help="Project directory.")
+    creative_assertion_status_parser.add_argument("--assertion-ref", default="")
+    creative_assertion_status_parser.add_argument("--json", action="store_true")
+    creative_assertion_status_parser.set_defaults(func=command_creative_assertion_status)
+
+    creative_assertion_revoke_parser = subparsers.add_parser(
+        "creative-assertion-revoke",
+        help="Revoke one local workflow assertion while preserving its audit record.",
+    )
+    creative_assertion_revoke_parser.add_argument("project", help="Project directory.")
+    creative_assertion_revoke_parser.add_argument("--assertion-ref", required=True)
+    creative_assertion_revoke_parser.add_argument("--reason", required=True)
+    creative_assertion_revoke_parser.add_argument("--json", action="store_true")
+    creative_assertion_revoke_parser.set_defaults(func=command_creative_assertion_revoke)
+
+    creative_requirement_confirm_parser = subparsers.add_parser(
+        "creative-requirement-confirm",
+        help="Bind one requirement to source evidence and an auditable local workflow assertion.",
+    )
+    creative_requirement_confirm_parser.add_argument("project", help="Project directory.")
+    creative_requirement_confirm_parser.add_argument("--requirement-id", required=True)
+    creative_requirement_confirm_parser.add_argument(
+        "--confirmation-ref",
+        required=True,
+        help="local_operator_assertion:<source_event_id>; not user/client identity or approval.",
+    )
+    creative_requirement_confirm_parser.add_argument("--evidence-ref", default="")
+    creative_requirement_confirm_parser.add_argument("--json", action="store_true")
+    creative_requirement_confirm_parser.set_defaults(
+        func=command_creative_requirement_confirm
+    )
+
+    creative_constraint_resolve_parser = subparsers.add_parser(
+        "creative-constraint-resolve",
+        help="Record a local workflow decision for one REVIEW_REQUIRED candidate constraint.",
+    )
+    creative_constraint_resolve_parser.add_argument("project", help="Project directory.")
+    creative_constraint_resolve_parser.add_argument("--file", required=True)
+    creative_constraint_resolve_parser.add_argument("--direction-id", required=True)
+    creative_constraint_resolve_parser.add_argument("--constraint-id", required=True)
+    creative_constraint_resolve_parser.add_argument(
+        "--confirmation-ref",
+        required=True,
+        help="local_operator_assertion:<source_event_id>; not user/client identity or approval.",
+    )
+    creative_constraint_resolve_parser.add_argument(
+        "--decision", choices=["approved", "rejected"], required=True
+    )
+    creative_constraint_resolve_parser.add_argument("--note", required=True)
+    creative_constraint_resolve_parser.add_argument("--json", action="store_true")
+    creative_constraint_resolve_parser.set_defaults(
+        func=command_creative_constraint_resolve
+    )
+
     creative_candidate_parser = subparsers.add_parser(
         "creative-import",
-        help="Import 2-3 evidence-bound post-Critic creative candidates.",
+        help="Import 1-6 evidence-bound creative candidates matching the brief request.",
     )
     creative_candidate_parser.add_argument("project", help="Project directory.")
     creative_candidate_parser.add_argument("--file", required=True)
@@ -19431,7 +21786,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     creative_review_parser = subparsers.add_parser(
         "creative-review",
-        help="Write a Critic Receipt for structure, mechanism, ownership, visual clarity, and shootability lint.",
+        help="Run deterministic structure, mechanism, ownership, visual-clarity, and shootability lint; Delivery writes an exact-bound lint receipt.",
     )
     creative_review_parser.add_argument("project", help="Project directory.")
     creative_review_parser.add_argument("--json", action="store_true")
@@ -19553,7 +21908,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     analysis_export_parser = subparsers.add_parser(
         "export-intake-analysis-request",
-        help="Export the evidence snapshot and schema for GPT-5.6 Sol fact analysis.",
+        help="Export the evidence snapshot and schema for analysis by the active model.",
     )
     analysis_export_parser.add_argument("project", help="Project directory.")
     analysis_export_parser.add_argument("--json", action="store_true")
@@ -19578,6 +21933,11 @@ def build_parser() -> argparse.ArgumentParser:
     profile_parser.add_argument("--brand", default="", help="Brand name to use for brand profile.")
     profile_parser.add_argument("--company", default="", help="Company or client organization name.")
     profile_parser.add_argument("--client", default="", help="Client group name if the company/brand is unclear.")
+    profile_parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Render the optional dashboard after profile analysis.",
+    )
     profile_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     profile_parser.set_defaults(func=command_profile_analyze)
 
@@ -19791,17 +22151,33 @@ def build_parser() -> argparse.ArgumentParser:
 
     dedupe_parser = subparsers.add_parser(
         "dedupe-audit",
-        help="Classify duplicate/cache/preview/final files without deleting anything.",
+        help="Read-only exact duplicate audit; writes only with explicit --save.",
     )
     dedupe_parser.add_argument("project", help="Project directory.")
+    dedupe_parser.add_argument("--quick", action="store_true", help="Inspect root-level files only.")
+    dedupe_parser.add_argument("--save", action="store_true", help="Replace the one stable storage_plan.json snapshot.")
+    dedupe_parser.add_argument("--json", action="store_true")
     dedupe_parser.set_defaults(func=command_dedupe_audit)
 
     cleanup_parser = subparsers.add_parser(
         "cleanup-plan",
-        help="Write a non-destructive cleanup plan with FinalDelivery lock evidence.",
+        help="Review non-destructive cleanup actions; writes only with explicit --save.",
     )
     cleanup_parser.add_argument("project", help="Project directory.")
+    cleanup_parser.add_argument("--quick", action="store_true", help="Inspect root-level files only.")
+    cleanup_parser.add_argument("--save", action="store_true", help="Replace the one stable storage_plan.json snapshot.")
+    cleanup_parser.add_argument("--json", action="store_true")
     cleanup_parser.set_defaults(func=command_cleanup_plan)
+
+    organize_parser = subparsers.add_parser(
+        "organize-plan",
+        help="Suggest destinations for loose project materials without moving or copying them.",
+    )
+    organize_parser.add_argument("project", help="Project directory.")
+    organize_parser.add_argument("--deep", action="store_true", help="Also audit the full project for exact duplicates.")
+    organize_parser.add_argument("--save", action="store_true", help="Replace the one stable storage_plan.json snapshot.")
+    organize_parser.add_argument("--json", action="store_true")
+    organize_parser.set_defaults(func=command_organize_plan)
 
     final_lock_parser = subparsers.add_parser(
         "final-delivery-lock",
@@ -19975,10 +22351,16 @@ def main() -> int:
         "run",
         "intake",
         "intake-evidence",
+        "profile-analyze",
         "export-intake-analysis-request",
         "import-intake-analysis",
         "creative-brief",
         "creative-proposal",
+        "creative-assertion-record",
+        "creative-assertion-status",
+        "creative-assertion-revoke",
+        "creative-requirement-confirm",
+        "creative-constraint-resolve",
         "creative-import",
         "creative-review",
         "sample",
@@ -19993,6 +22375,9 @@ def main() -> int:
         "render-dashboard",
         "open-dashboard",
         "audit-dashboard",
+        "organize-plan",
+        "dedupe-audit",
+        "cleanup-plan",
     }
     project_arg = getattr(args, "project", None)
     delivery_command = bool(

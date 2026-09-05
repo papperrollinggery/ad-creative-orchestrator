@@ -99,23 +99,26 @@ creative_generation_request.json
 creative_open_evidence_gaps.json
 ```
 
-`creative-brief` 不生成方向。GPT-5.6 Sol 或明确选择的专业 Specialist 生成 4-6 个候选，独立 Critic 保留 2-3 个，再由 `creative-import` 产出：
+`creative-brief` 不生成方向。当前主模型或用户明确选择的专业 Specialist 按用户要求生成候选；未指定数量时只生成最小充分集合（1-6 个）。独立 Critic 仅在明确要求或高后果决策边界启用。耐久硬要求必须有 registered source event、同源 evidence chunk 和 active local workflow assertion（`identity_assurance=NONE`）；无法机器判定的约束必须绑定 exact candidate/direction/constraint，再由 `creative-import` 产出：
 
 ```text
-current_candidate.json
-candidate_import_receipt.json
-creative_directions.md
-option_matrix.csv
-creative_critic_receipt.json
+current_generation.json
+generations/<generation_id>/generation_manifest.json
+generations/<generation_id>/candidate.json
+generations/<generation_id>/candidate_import_receipt.json
+generations/<generation_id>/creative_directions.md
+generations/<generation_id>/option_matrix.csv
+creative_deterministic_lint_receipt.json
 ```
 
 通过标准：
 
 ```text
-每个 post-Critic 方向绑定 exact brief snapshot 和现有 evidence chunks。
-2-3 个方向的 normalized creative mechanism 不重复。
-每个方向有 human tension、brand/audience truth、single-minded proposition、关键画面、story/behavior、product role、channel execution、brand ownership 和 production risk。
-无证据/stale candidate 被拒绝，品牌专属性弱被标记。
+每个方向绑定 exact brief snapshot 和现有 evidence chunks。
+当前请求数量内各方向的 normalized creative mechanism 不重复。
+每个方向有 human tension、brand/audience truth、single-minded proposition、关键画面、story/behavior、product role、channel execution、brand ownership、production risk，以及结构化的时长、演员数、地点、产品露出和实际宣称。
+无证据/stale candidate、未确认或无法机器判定的硬要求、实际约束违规在任何候选/current/receipt 落盘前被拒绝；版本 receipt 绑定精确文件字节。
+evidence refs 只证明 provenance，不能被报告为语义支持通过；品牌专属性弱被标记。
 确定性 creative-review 不冒充独立 Critic 或客户批准。
 废弃文案不会回流到客户稿。
 ```
@@ -309,7 +312,7 @@ AD-creative/skill_drafts/<skill-slug>/install_request.md
 操作台可搜索、可筛选、可切换 Work / Materials / Assets / Gates / Decisions
 三方议会审核能给出 PASS / PARTIAL_PASS / BLOCKED
 用户确认搜索后能产出 reference pack
-能由 Sol/专业 Specialist 基于 creative-brief 生成候选，经独立 Critic 留下两到三个方向，再由 creative-import 验证采用
+能由 Sol/专业 Specialist 基于 creative-brief 按请求数量生成候选；未指定时保留最小充分集合（1-6 个），需要独立 Critic 时完成判断，再由 creative-import 验证采用
 能规划视觉资产和 image job
 能跑视觉审核
 能先确认客户可读文本，再生成不可变 PPT 与 fresh 客户可审包

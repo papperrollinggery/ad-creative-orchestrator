@@ -6,20 +6,30 @@ import csv
 import hashlib
 import json
 import mimetypes
+import os
 import re
+import secrets
 import shutil
+import stat
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
 
 from .models import EvidenceChunk
+from .safe_write import atomic_write_text, read_optional_project_text
 
 
 DEFAULT_CHUNK_CHARS = 3000
 DEFAULT_OVERLAP_CHARS = 250
 DEFAULT_TOTAL_CHAR_BUDGET = 2_000_000
 EVIDENCE_REL = Path("AD-creative/orchestrator/evidence_chunks.jsonl")
+LOCAL_STATE_REL = Path(".adco-local")
+LOCAL_SOURCE_MAP_REL = LOCAL_STATE_REL / "source_paths.json"
+LOCAL_SOURCE_PREFIX = "local-source://"
+LOCAL_SOURCE_MAP_VERSION = 1
+LOCAL_GITIGNORE_TEXT = "*\n!.gitignore\n"
+MAX_LOCAL_STATE_FILE_BYTES = 8 * 1024 * 1024
 
 PLAIN_TEXT_SUFFIXES = {".md", ".txt"}
 STRUCTURED_TEXT_SUFFIXES = {".csv", ".json", ".yaml", ".yml"}
@@ -35,6 +45,27 @@ SUPPORTED_SUFFIXES = (
     | IMAGE_SUFFIXES
     | VIDEO_SUFFIXES
 )
+
+SAFE_EXIF_TAGS = {
+    "ColorSpace",
+    "ExifImageHeight",
+    "ExifImageWidth",
+    "Orientation",
+    "ResolutionUnit",
+    "XResolution",
+    "YResolution",
+}
+
+SAFE_FFPROBE_STREAM_FIELDS = {
+    "index",
+    "codec_type",
+    "codec_name",
+    "width",
+    "height",
+    "r_frame_rate",
+    "channels",
+    "sample_rate",
+}
 
 
 @dataclass
@@ -78,6 +109,14 @@ def sha256_text(text: str) -> str:
     return sha256_bytes(text.encode("utf-8"))
 
 
+def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def media_type_for(path: Path) -> str:
     guessed, _ = mimetypes.guess_type(path.name)
     return guessed or {
@@ -93,21 +132,374 @@ def display_source_path(project: Path, path: Path) -> str:
     try:
         return path.resolve().relative_to(project.resolve()).as_posix()
     except ValueError:
-        return str(path.resolve())
+        return f"external-source://{path.name}"
+
+
+def _open_project_dir(project: Path) -> int:
+    if project.is_symlink():
+        raise ValueError(f"project root must not be a symlink: {project}")
+    try:
+        fd = os.open(
+            project,
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError as exc:
+        raise ValueError(f"cannot safely open project root: {project}: {exc}") from exc
+    try:
+        opened = os.fstat(fd)
+        visible = os.stat(project, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(visible.st_mode)
+            or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
+        ):
+            raise ValueError("project root changed while opening local source state")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _verify_local_state_binding(project_fd: int, local_fd: int) -> None:
+    try:
+        visible = os.stat(
+            LOCAL_STATE_REL.name,
+            dir_fd=project_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError as exc:
+        raise ValueError("local source state changed during operation") from exc
+    opened = os.fstat(local_fd)
+    if (
+        not stat.S_ISDIR(visible.st_mode)
+        or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
+    ):
+        raise ValueError("local source state changed during operation")
+
+
+def _open_local_state(
+    project: Path,
+    *,
+    create: bool,
+) -> tuple[int, int | None]:
+    project_fd = _open_project_dir(project)
+    local_fd: int | None = None
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        try:
+            local_fd = os.open(LOCAL_STATE_REL.name, flags, dir_fd=project_fd)
+        except FileNotFoundError:
+            if not create:
+                return project_fd, None
+            try:
+                os.mkdir(LOCAL_STATE_REL.name, mode=0o700, dir_fd=project_fd)
+            except FileExistsError:
+                pass
+            local_fd = os.open(LOCAL_STATE_REL.name, flags, dir_fd=project_fd)
+        assert local_fd is not None
+        os.fchmod(local_fd, 0o700)
+        _verify_local_state_binding(project_fd, local_fd)
+        return project_fd, local_fd
+    except OSError as exc:
+        if local_fd is not None:
+            os.close(local_fd)
+        os.close(project_fd)
+        raise ValueError(f"cannot safely open local source state: {exc}") from exc
+    except BaseException:
+        if local_fd is not None:
+            os.close(local_fd)
+        os.close(project_fd)
+        raise
+
+
+def _read_private_text_at(local_fd: int, name: str) -> str | None:
+    try:
+        visible = os.stat(name, dir_fd=local_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(visible.st_mode) or visible.st_nlink != 1:
+        raise ValueError(f"local state file must be a private regular file: {name}")
+    fd = os.open(
+        name,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        dir_fd=local_fd,
+    )
+    try:
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
+        ):
+            raise ValueError(f"local state file changed while opening: {name}")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_LOCAL_STATE_FILE_BYTES:
+                raise ValueError(f"local state file is too large: {name}")
+            chunks.append(chunk)
+        final_opened = os.fstat(fd)
+        try:
+            final_visible = os.stat(
+                name,
+                dir_fd=local_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError as exc:
+            raise ValueError(f"local state file changed while reading: {name}") from exc
+        if (
+            (final_visible.st_dev, final_visible.st_ino)
+            != (opened.st_dev, opened.st_ino)
+            or (final_opened.st_size, final_opened.st_mtime_ns, final_opened.st_ctime_ns)
+            != (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)
+        ):
+            raise ValueError(f"local state file changed while reading: {name}")
+        return b"".join(chunks).decode("utf-8")
+    finally:
+        os.close(fd)
+
+
+def _load_local_source_map_at(
+    local_fd: int,
+    *,
+    allow_missing: bool = False,
+) -> dict[str, str]:
+    raw = _read_private_text_at(local_fd, LOCAL_SOURCE_MAP_REL.name)
+    if raw is None:
+        if allow_missing:
+            return {}
+        raise ValueError("local source map is missing from existing local state")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid local source map: {exc}") from exc
+    if not isinstance(payload, dict) or payload.get("version") != LOCAL_SOURCE_MAP_VERSION:
+        raise ValueError("invalid local source map version")
+    sources = payload.get("sources")
+    if not isinstance(sources, dict) or not all(
+        isinstance(key, str)
+        and bool(key)
+        and isinstance(value, str)
+        and bool(value)
+        and Path(value).is_absolute()
+        for key, value in sources.items()
+    ):
+        raise ValueError("invalid local source map entries")
+    return dict(sources)
+
+
+def _load_local_source_map(project: Path) -> dict[str, str]:
+    project_fd, local_fd = _open_local_state(project, create=False)
+    try:
+        if local_fd is None:
+            return {}
+        sources = _load_local_source_map_at(local_fd)
+        _verify_local_state_binding(project_fd, local_fd)
+        return sources
+    finally:
+        if local_fd is not None:
+            os.close(local_fd)
+        os.close(project_fd)
+
+
+def load_local_source_paths(project: Path) -> dict[str, str]:
+    """Read the private source map through stable directory descriptors."""
+    try:
+        return _load_local_source_map(project)
+    except (OSError, UnicodeError) as exc:
+        raise ValueError("local source map is unreadable") from exc
+
+
+def load_local_source_paths_from_project_fd(project_fd: int) -> dict[str, str]:
+    """Read the private source map below an already-bound project root."""
+    local_fd: int | None = None
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        try:
+            local_fd = os.open(LOCAL_STATE_REL.name, flags, dir_fd=project_fd)
+        except FileNotFoundError:
+            return {}
+        sources = _load_local_source_map_at(local_fd)
+        _verify_local_state_binding(project_fd, local_fd)
+        return sources
+    except (OSError, UnicodeError) as exc:
+        raise ValueError("local source map is unreadable") from exc
+    finally:
+        if local_fd is not None:
+            os.close(local_fd)
+
+
+def _atomic_write_private_text_at(local_fd: int, name: str, text: str) -> None:
+    try:
+        current = os.stat(name, dir_fd=local_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        current = None
+    if current is not None and (
+        not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+    ):
+        raise ValueError(f"local state target must be a private regular file: {name}")
+
+    temp_name = f".adco-private-{secrets.token_hex(12)}"
+    temp_fd = os.open(
+        temp_name,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0),
+        mode=0o600,
+        dir_fd=local_fd,
+    )
+    try:
+        try:
+            data = text.encode("utf-8")
+            view = memoryview(data)
+            while view:
+                written = os.write(temp_fd, view)
+                if written <= 0:
+                    raise OSError("private local-state write made no progress")
+                view = view[written:]
+            os.fchmod(temp_fd, 0o600)
+            os.fsync(temp_fd)
+        finally:
+            os.close(temp_fd)
+        try:
+            current = os.stat(name, dir_fd=local_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            current = None
+        if current is not None and (
+            not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+        ):
+            raise ValueError(
+                f"local state target raced to an unsafe file: {name}"
+            )
+        os.replace(
+            temp_name,
+            name,
+            src_dir_fd=local_fd,
+            dst_dir_fd=local_fd,
+        )
+        os.fsync(local_fd)
+    finally:
+        try:
+            os.unlink(temp_name, dir_fd=local_fd)
+        except FileNotFoundError:
+            pass
+
+
+def register_local_source_path(project: Path, source_event_id: str, path: Path) -> str:
+    """Store an external absolute path only in ignored, owner-readable local state."""
+    if not source_event_id:
+        raise ValueError("source_event_id is required for external material")
+    project_fd, local_fd = _open_local_state(project, create=True)
+    assert local_fd is not None
+    try:
+        if _read_private_text_at(local_fd, ".gitignore") != LOCAL_GITIGNORE_TEXT:
+            _atomic_write_private_text_at(
+                local_fd,
+                ".gitignore",
+                LOCAL_GITIGNORE_TEXT,
+            )
+            _verify_local_state_binding(project_fd, local_fd)
+
+        sources = _load_local_source_map_at(local_fd, allow_missing=True)
+        sources[source_event_id] = str(path.resolve())
+        payload = {
+            "version": LOCAL_SOURCE_MAP_VERSION,
+            "sources": dict(sorted(sources.items())),
+        }
+        _atomic_write_private_text_at(
+            local_fd,
+            LOCAL_SOURCE_MAP_REL.name,
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        )
+        _verify_local_state_binding(project_fd, local_fd)
+    finally:
+        os.close(local_fd)
+        os.close(project_fd)
+    return f"{LOCAL_SOURCE_PREFIX}{source_event_id}"
+
+
+def source_row_material_roots(project: Path, row: dict[str, str]) -> list[Path]:
+    raw_paths = [
+        item.strip()
+        for item in row.get("file_paths", "").split(";")
+        if item.strip()
+    ]
+    local_sources: dict[str, str] | None = None
+    roots: list[Path] = []
+    for raw in raw_paths:
+        if raw.startswith(LOCAL_SOURCE_PREFIX):
+            source_event_id = raw.removeprefix(LOCAL_SOURCE_PREFIX).split("/", 1)[0]
+            local_sources = local_sources or _load_local_source_map(project)
+            mapped = local_sources.get(source_event_id, "")
+            if not mapped:
+                raise ValueError(f"local source path is unavailable for {source_event_id}")
+            root = Path(mapped).expanduser()
+        else:
+            root = Path(raw).expanduser()
+            if not root.is_absolute():
+                root = project / root
+        roots.append(root)
+    return roots
+
+
+def source_path_label(project: Path, row: dict[str, str], path: Path) -> str:
+    source_event_id = row.get("source_event_id", "") or "unregistered"
+    for raw, root in zip(
+        [item.strip() for item in row.get("file_paths", "").split(";") if item.strip()],
+        source_row_material_roots(project, row),
+    ):
+        try:
+            relative = path.resolve().relative_to(root.resolve())
+        except ValueError:
+            continue
+        try:
+            root.resolve().relative_to(project.resolve())
+            external_root = False
+        except ValueError:
+            external_root = True
+        if raw.startswith(LOCAL_SOURCE_PREFIX) or external_root:
+            base = (
+                raw
+                if raw.startswith(LOCAL_SOURCE_PREFIX)
+                else f"external-source://{source_event_id}"
+            )
+            return base if relative == Path() else f"{base}/{relative.as_posix()}"
+        return display_source_path(project, path)
+    return f"external-source://{source_event_id}/{path.name}"
 
 
 def material_files(path: Path) -> list[Path]:
+    if path.is_symlink():
+        raise ValueError(f"material path must not be a symlink: {path}")
     if path.is_file():
         return [path] if path.suffix.lower() in SUPPORTED_SUFFIXES else []
     if not path.is_dir():
         return []
-    return sorted(
-        item
-        for item in path.rglob("*")
-        if item.is_file()
-        and item.suffix.lower() in SUPPORTED_SUFFIXES
-        and "AD-creative" not in item.parts
-    )
+    files: list[Path] = []
+    for item in path.rglob("*"):
+        if item.is_symlink():
+            raise ValueError(f"material tree must not contain symlinks: {item}")
+        if (
+            item.is_file()
+            and item.suffix.lower() in SUPPORTED_SUFFIXES
+            and "AD-creative" not in item.parts
+        ):
+            files.append(item)
+    return sorted(files)
 
 
 def _safe_read_text(path: Path) -> str:
@@ -455,10 +847,15 @@ def parse_subtitle(path: Path, *, chunk_chars: int, overlap_chars: int) -> list[
     ]
 
 
-def parse_image(path: Path, *, chunk_chars: int, overlap_chars: int) -> list[RawEvidence]:
+def parse_image(
+    path: Path,
+    *,
+    chunk_chars: int,
+    overlap_chars: int,
+    file_hash: str,
+) -> list[RawEvidence]:
     from PIL import ExifTags, Image
 
-    file_hash = sha256_bytes(path.read_bytes())
     metadata: dict[str, object] = {"file_sha256": file_hash}
     try:
         with Image.open(path) as image:
@@ -474,14 +871,18 @@ def parse_image(path: Path, *, chunk_chars: int, overlap_chars: int) -> list[Raw
                 exif = image.getexif()
             except (AttributeError, OSError):
                 exif = {}
-            safe_exif = {
-                str(ExifTags.TAGS.get(key, key)): str(value)[:500]
-                for key, value in list(exif.items())[:80]
-            }
+            safe_exif = {}
+            for key, value in exif.items():
+                tag = str(ExifTags.TAGS.get(key, key))
+                if tag in SAFE_EXIF_TAGS:
+                    safe_exif[tag] = str(value)[:100]
             if safe_exif:
                 metadata["exif"] = safe_exif
     except (OSError, ValueError) as exc:
-        metadata["metadata_error"] = str(exc)
+        error = str(exc)
+        for raw_path in {str(path), str(path.resolve())}:
+            error = error.replace(raw_path, path.name)
+        metadata["metadata_error"] = error
     return [
         RawEvidence(
             text=json.dumps(metadata, ensure_ascii=False, sort_keys=True),
@@ -491,8 +892,13 @@ def parse_image(path: Path, *, chunk_chars: int, overlap_chars: int) -> list[Raw
     ]
 
 
-def parse_video(path: Path, *, chunk_chars: int, overlap_chars: int) -> list[RawEvidence]:
-    file_hash = sha256_bytes(path.read_bytes())
+def parse_video(
+    path: Path,
+    *,
+    chunk_chars: int,
+    overlap_chars: int,
+    file_hash: str,
+) -> list[RawEvidence]:
     metadata: dict[str, object] = {"file_sha256": file_hash}
     ffprobe = shutil.which("ffprobe")
     inspection_status = "requires_media_inspection"
@@ -515,11 +921,52 @@ def parse_video(path: Path, *, chunk_chars: int, overlap_chars: int) -> list[Raw
         )
         if completed.returncode == 0:
             try:
-                metadata["ffprobe"] = json.loads(completed.stdout)
-            except json.JSONDecodeError:
+                payload = json.loads(completed.stdout)
+                if not isinstance(payload, dict):
+                    raise ValueError("ffprobe payload must be an object")
+                safe_format: dict[str, object] = {}
+                raw_format = payload.get("format")
+                if isinstance(raw_format, dict):
+                    duration = str(raw_format.get("duration", "")).strip()
+                    if re.fullmatch(r"\d+(?:\.\d+)?", duration):
+                        safe_format["duration"] = duration
+                safe_streams: list[dict[str, object]] = []
+                raw_streams = payload.get("streams")
+                if isinstance(raw_streams, list):
+                    for raw_stream in raw_streams:
+                        if not isinstance(raw_stream, dict):
+                            continue
+                        stream: dict[str, object] = {}
+                        for key in SAFE_FFPROBE_STREAM_FIELDS:
+                            value = raw_stream.get(key)
+                            if key in {"index", "width", "height", "channels"}:
+                                if isinstance(value, int) and value >= 0:
+                                    stream[key] = value
+                            elif key == "sample_rate":
+                                normalized = str(value or "").strip()
+                                if re.fullmatch(r"\d{1,7}", normalized):
+                                    stream[key] = normalized
+                            elif key == "r_frame_rate":
+                                normalized = str(value or "").strip()
+                                if re.fullmatch(r"\d{1,9}/\d{1,9}", normalized):
+                                    stream[key] = normalized
+                            else:
+                                normalized = str(value or "").strip()
+                                if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", normalized):
+                                    stream[key] = normalized
+                        if stream:
+                            safe_streams.append(stream)
+                metadata["ffprobe"] = {
+                    "format": safe_format,
+                    "streams": safe_streams,
+                }
+            except (json.JSONDecodeError, ValueError):
                 metadata["ffprobe_error"] = "invalid_json"
         else:
-            metadata["ffprobe_error"] = completed.stderr.strip()[:1000]
+            error = completed.stderr.strip()
+            for raw_path in {str(path), str(path.resolve())}:
+                error = error.replace(raw_path, path.name)
+            metadata["ffprobe_error"] = error[:1000]
     else:
         metadata["ffprobe"] = "unavailable"
     return [
@@ -554,18 +1001,23 @@ def parse_file(
     *,
     chunk_chars: int = DEFAULT_CHUNK_CHARS,
     overlap_chars: int = DEFAULT_OVERLAP_CHARS,
+    source_path_label: str = "",
 ) -> list[EvidenceChunk]:
     parser = PARSER_REGISTRY.get(path.suffix.lower())
     if parser is None:
         raise ValueError(f"unsupported material type: {path.suffix.lower()}")
+    file_hash = sha256_file(path)
+    parser_kwargs: dict[str, object] = {}
+    if path.suffix.lower() in IMAGE_SUFFIXES | VIDEO_SUFFIXES:
+        parser_kwargs["file_hash"] = file_hash
     raw_chunks = parser(
         path,
         chunk_chars=chunk_chars,
         overlap_chars=overlap_chars,
+        **parser_kwargs,
     )
-    source_path = display_source_path(project, path)
+    source_path = source_path_label or display_source_path(project, path)
     media_type = media_type_for(path)
-    file_hash = sha256_bytes(path.read_bytes())
     chunks: list[EvidenceChunk] = []
     for index, raw in enumerate(raw_chunks, 1):
         chunk_hash = sha256_text(raw.text)
@@ -595,28 +1047,46 @@ def parse_file(
     return chunks
 
 
-def load_evidence_chunks(project: Path) -> list[EvidenceChunk]:
-    path = project / EVIDENCE_REL
-    if not path.is_file():
-        return []
+def parse_evidence_chunks_text(text: str) -> list[EvidenceChunk]:
+    """Parse and authenticate one immutable evidence JSONL snapshot."""
     chunks: list[EvidenceChunk] = []
-    with path.open(encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, 1):
-            if not line.strip():
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"invalid evidence chunk JSONL at line {line_number}: {exc}") from exc
-            if not isinstance(payload, dict):
-                raise ValueError(f"invalid evidence chunk record at line {line_number}")
-            chunks.append(EvidenceChunk.from_dict(payload))
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"invalid evidence chunk JSONL at line {line_number}: {exc}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"invalid evidence chunk record at line {line_number}")
+        chunk = EvidenceChunk.from_dict(payload)
+        if not isinstance(chunk.text, str) or not isinstance(chunk.sha256, str):
+            raise ValueError(f"invalid evidence chunk fields at line {line_number}")
+        if not isinstance(chunk.inspection_status, str):
+            raise ValueError(f"invalid evidence inspection status at line {line_number}")
+        if chunk.inspection_status.startswith("requires_"):
+            file_hash = chunk.metadata.get("file_sha256") if isinstance(chunk.metadata, dict) else None
+            if file_hash != chunk.sha256:
+                raise ValueError(
+                    f"evidence file hash mismatch at line {line_number}: {chunk.chunk_id}"
+                )
+        elif sha256_text(chunk.text) != chunk.sha256:
+            raise ValueError(
+                f"evidence chunk text hash mismatch at line {line_number}: {chunk.chunk_id}"
+            )
+        chunks.append(chunk)
     return chunks
+
+
+def load_evidence_chunks(project: Path) -> list[EvidenceChunk]:
+    text = read_optional_project_text(project, project / EVIDENCE_REL)
+    return [] if text is None else parse_evidence_chunks_text(text)
 
 
 def write_evidence_chunks(project: Path, chunks: Iterable[EvidenceChunk]) -> Path:
     path = project / EVIDENCE_REL
-    path.parent.mkdir(parents=True, exist_ok=True)
     ordered = sorted(
         chunks,
         key=lambda item: (
@@ -632,19 +1102,16 @@ def write_evidence_chunks(project: Path, chunks: Iterable[EvidenceChunk]) -> Pat
         json.dumps(item.as_dict(), ensure_ascii=False, sort_keys=True) + "\n"
         for item in ordered
     )
-    path.write_text(text, encoding="utf-8")
+    atomic_write_text(project, path, text)
     return path
 
 
-def _source_paths(project: Path, row: dict[str, str]) -> list[Path]:
-    raw_paths = [item.strip() for item in row.get("file_paths", "").split(";") if item.strip()]
-    paths: list[Path] = []
-    for raw in raw_paths:
-        path = Path(raw).expanduser()
-        if not path.is_absolute():
-            path = project / path
-        paths.extend(material_files(path))
-    return sorted(set(paths))
+def source_row_files(project: Path, row: dict[str, str]) -> list[tuple[Path, str]]:
+    files: dict[Path, str] = {}
+    for root in source_row_material_roots(project, row):
+        for path in material_files(root):
+            files[path.resolve()] = source_path_label(project, row, path)
+    return sorted(files.items(), key=lambda item: item[0])
 
 
 def ingest_source_rows(
@@ -672,7 +1139,19 @@ def ingest_source_rows(
     seen_files: set[tuple[str, Path]] = set()
     for row in source_rows:
         source_event_id = row.get("source_event_id", "")
-        for path in _source_paths(project, row):
+        try:
+            row_files = source_row_files(project, row)
+        except Exception as exc:
+            parser_errors.append(
+                {
+                    "source_event_id": source_event_id,
+                    "source_path": f"source-event://{source_event_id or 'unknown'}",
+                    "media_type": "application/octet-stream",
+                    "error": f"{type(exc).__name__}: material source is unavailable or unsafe",
+                }
+            )
+            continue
+        for path, path_label in row_files:
             identity = (source_event_id, path.resolve())
             if identity in seen_files:
                 continue
@@ -684,13 +1163,18 @@ def ingest_source_rows(
                     source_event_id,
                     chunk_chars=chunk_chars,
                     overlap_chars=overlap_chars,
+                    source_path_label=path_label,
                 )
             except Exception as exc:  # parser boundary must report, not hide, failures
+                error = str(exc)
+                for raw_path in {str(path), str(path.resolve())}:
+                    error = error.replace(raw_path, path_label)
                 parser_errors.append(
                     {
-                        "source_path": display_source_path(project, path),
+                        "source_event_id": source_event_id,
+                        "source_path": path_label,
                         "media_type": media_type_for(path),
-                        "error": f"{type(exc).__name__}: {exc}",
+                        "error": f"{type(exc).__name__}: {error}",
                     }
                 )
                 continue
@@ -698,7 +1182,8 @@ def ingest_source_rows(
             if characters_read + file_characters > max_total_chars:
                 over_budget.append(
                     {
-                        "source_path": display_source_path(project, path),
+                        "source_event_id": source_event_id,
+                        "source_path": path_label,
                         "media_type": media_type_for(path),
                         "characters": file_characters,
                         "reason": "total_character_budget_exceeded",

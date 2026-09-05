@@ -11,6 +11,13 @@ Ad Creative Orchestrator (ADCO) is a content-first Codex Skill and local CLI for
 
 中文简介：ADCO 默认先读懂真实资料并完成广告内容工作；只有进入客户可见版本、PPT、资产授权或发送准备时，才按需展开完整交付治理。
 
+The Skill coordinates the active model and available production tools to finish
+the requested strategy, concepts, treatment, script, storyboard, visual work,
+proposal, or revision. The CLI preserves evidence and checks exact artifacts;
+it does not generate the advertising reasoning. One-off content requests need no
+project initialization. For ongoing work, register materials once and reprocess
+them when their contents or intake budget change.
+
 > **Alpha:** use version control or backups and keep a human reviewer in the loop for real client work.
 
 <p>
@@ -35,10 +42,13 @@ ADCO gives each project two proportional operating surfaces:
 
 ## Quickstart
 
-ADCO requires Python 3.10 or newer. Install the current release with [`pipx`](https://pipx.pypa.io/):
+ADCO requires Python 3.10 or newer on a POSIX system (currently macOS or Linux).
+Its project-artifact integrity layer deliberately fails closed without POSIX
+`dir_fd`, `O_DIRECTORY`, and `O_NOFOLLOW` support. Install the current release
+with [`pipx`](https://pipx.pypa.io/):
 
 ```bash
-pipx install --force https://github.com/papperrollinggery/ad-creative-orchestrator/releases/download/v0.3.2/ad_creative_orchestrator-0.3.2-py3-none-any.whl
+pipx install --force https://github.com/papperrollinggery/ad-creative-orchestrator/releases/download/v0.3.3/ad_creative_orchestrator-0.3.3-py3-none-any.whl
 adco --version
 adco doctor
 ```
@@ -76,7 +86,14 @@ adco run <project_dir> --material <brief_or_material_folder>
 adco open-dashboard <project_dir>
 ```
 
-`adco run` parses source material into evidence chunks, updates the fact inventory, requirements, true gaps/conflicts, writes a concise content answer, and runs only affected-scope validators. By default it renders no dashboard and runs no Council, Thread, Git workflow, Specialist Exchange, PPT, Client Pack, or full delivery validation. Add `--dashboard` only when that view is useful.
+`adco run` parses source material into evidence chunks, updates the fact inventory, requirements, true gaps/conflicts, writes a concise `INTAKE_SUMMARY` explicitly marked as intake rather than creative output, and runs only affected-scope validators. By default it renders no dashboard and runs no Council, Thread, Git workflow, Specialist Exchange, PPT, Client Pack, or full delivery validation. Add `--dashboard` only when that view is useful.
+
+The same run performs a read-only storage review. Loose root materials or exact
+duplicate input bytes produce one visible organization prompt, but ADCO keeps
+the original paths and makes no copy or move. `organize-plan`, `dedupe-audit`,
+and `cleanup-plan` write nothing by default. Explicit `--save` replaces one
+stable `AD-creative/orchestrator/storage_plan.json`; applying moves or deletions
+still requires separate confirmation.
 
 Supported intake includes Markdown/text, CSV, JSON, YAML, DOCX, PPTX, PDF, SRT/VTT, images, and video. Long text is processed under an explicit aggregate character budget instead of silently truncating each file; media that was only registered by metadata is never presented as understood.
 
@@ -86,13 +103,18 @@ Every new Content Surface starts with only the core project files:
 project/
 └── AD-creative/
     ├── AGENTS.md         # scoped, opt-in project rules
-    ├── handoff/          # content summary and genuine questions
+    ├── handoff/          # intake summary and genuine questions
     └── orchestrator/     # source events, truth, requirements, gaps
 ```
 
 Delivery-risk commands expand this workspace on demand with the six human folders and the version, artifact, Gate, asset, feedback, Thread, and FinalDelivery records required by that action. `adco init --full` explicitly starts with the Delivery Surface.
 
-ADCO writes its policy to `AD-creative/AGENTS.md`; an existing project-root `AGENTS.md` is never overwritten and no manual merge is required. The scoped policy applies only after explicit `$ad-creative-orchestrator` invocation inside that initialized project.
+ADCO writes its policy to `AD-creative/AGENTS.md`; an existing project-root
+`AGENTS.md` is never created or overwritten and no manual merge is required.
+Activation is decided once per task by explicit `$ad-creative-orchestrator`
+invocation. Any root-policy wording about client-visible/PPT/asset/FinalDelivery
+boundaries is interpreted only as post-activation escalation, never as a second
+implicit trigger.
 
 ## How the Delivery Surface Stays Safe
 
@@ -112,7 +134,10 @@ Exact-current client package ── independent review + send authorization
 Send-readiness result (ADCO never sends)
 ```
 
-The project lifecycle keeps truth, outline approval, creative work, presentation export, package binding, independent review, and feedback as separate states. Passing one state never silently approves the next.
+The project lifecycle keeps evidence/source status, claim wording confirmation,
+client/legal approval, asset authorization, outline approval, creative work,
+presentation export, package binding, independent review, and feedback as
+separate states. Passing one state never silently approves the next.
 
 Important boundaries:
 
@@ -121,6 +146,7 @@ Important boundaries:
 - `client-send-readiness-gate` checks that independent review and explicit authorization match the same current package. It never sends files.
 - AI-generated images remain internal until visual QA and hash-bound authorization are recorded.
 - Files manually placed in `05_最终交付_FinalDelivery/` are protected from automatic move, overwrite, and deletion.
+- Invalid private source state blocks support/client-package export; ZIP-based candidates are privacy-scanned with bounded streaming.
 
 Read the [authorization policy](docs/operating/authorization_policy.md) for the complete stop conditions.
 
@@ -130,9 +156,16 @@ Read the [authorization policy](docs/operating/authorization_policy.md) for the 
 |---|---|
 | `adco quickstart [project_dir]` | Create, validate, and open a safe first-run demo. |
 | `adco run <project_dir> --material <path>` | Register real materials and produce the first project state. |
+| `adco organize-plan <project_dir>` | Review destinations for loose materials without changing files. |
+| `adco dedupe-audit <project_dir>` | Stream a full exact-byte duplicate audit without writing reports. |
+| `adco cleanup-plan <project_dir>` | Review canonical-owner cleanup actions without applying them. |
 | `adco creative-brief <project_dir>` | Freeze current evidence into a creative contract; generates no directions. |
-| `adco creative-import <project_dir> --file <candidate.json>` | Import 2-3 evidence-bound, mechanism-distinct post-Critic candidates. |
-| `adco creative-review <project_dir>` | Run deterministic candidate lint; independent creative review is still required. |
+| `adco creative-assertion-record/status/revoke <project_dir> ...` | Capture, audit, or revoke a local-only workflow assertion with no user/client identity assurance. |
+| `adco creative-requirement-confirm <project_dir> ...` | Bind one durable requirement to source evidence and an active local workflow assertion. |
+| `adco creative-constraint-resolve <project_dir> ...` | Resolve one `REVIEW_REQUIRED` check for an exact candidate/direction/constraint. |
+| `adco creative-import <project_dir> --file <candidate.json>` | Preflight and import 1-6 selected, evidence-bound, mechanism-distinct candidates. |
+| `adco creative-review <project_dir>` | Run deterministic candidate lint; add independent creative review when the decision boundary requires it. |
+| `adco profile-analyze <project_dir>` | Analyze meeting/client profiles on the Content Surface; Dashboard is opt-in. |
 | `adco status <project_dir>` | Show blockers, pending confirmations, and current validation. |
 | `adco next <project_dir>` | Print the next safe action. |
 | `adco open-dashboard <project_dir>` | Open the non-developer project dashboard. |
@@ -145,9 +178,9 @@ Run `adco --help` or `adco <command> --help` for the complete CLI reference. The
 
 ## What ADCO Owns—and What It Does Not
 
-ADCO owns project truth, evidence and creative contracts, candidate provenance, artifact versions, review evidence, specialist adoption, presentation/client-package binding, FinalDelivery protection, and send-readiness checks. GPT-5.6 Sol or an explicitly selected professional Specialist supplies creative reasoning. DIRcreative is a film-craft provider used only through a negotiated, bounded Specialist Exchange.
+ADCO owns project truth, evidence and creative contracts, candidate provenance, artifact versions, review evidence, specialist adoption, presentation/client-package binding, FinalDelivery protection, and send-readiness checks. Creative reasoning uses the active host model or the user's explicitly selected Specialist; ADCO never silently selects an older model. DIRcreative is a film-craft provider used only through a negotiated, bounded Specialist Exchange.
 
-ADCO is **not** a SaaS, image generator, video generator, deterministic three-direction creative engine, autonomous creative approver, or delivery bot. `creative-brief` generates a contract, not ideas. Sol/a professional Specialist generates 4-6 candidates, an independent Critic narrows them to 2-3, and `creative-import` rejects stale or unbound evidence and duplicate mechanisms while flagging weak brand ownership. Image and film work can come from specialist tools through a versioned exchange contract; ADCO remains the owner of adoption, provenance, and client-facing readiness.
+ADCO is **not** a SaaS, image generator, video generator, deterministic three-direction creative engine, autonomous creative approver, or delivery bot. `creative-brief` generates a contract, not ideas. The active model or a professional Specialist produces the number of directions the task needs. An explicit internal second judgment may use a read-only Critic on the Content Surface; it does not trigger Delivery or write a persistent governance receipt. A consequential selection or exact client-visible boundary may instead use a durable Critic bound to that candidate/version. `creative-import` accepts 1-6 selected directions and rejects a stale/corrupt brief, unbound evidence, duplicate mechanisms, prohibited claims across any persisted claim-bearing field, and failed or unresolved hard constraints. Requirement/constraint assertions created by this CLI are explicitly local workflow state with `identity_assurance=NONE`; they are not user/client consent, approval, or send authority. A complete immutable generation is prepared first, and only `current_generation.json` is atomically switched, so a failed switch cannot mix an old candidate with new human-readable views or receipts. Review binds exact candidate, receipt, brief manifest, directions, matrix, and generation manifest bytes; evidence refs prove provenance, not semantic claim support. Image and film work can come from specialist tools through a versioned exchange contract; ADCO remains the owner of adoption, provenance, and client-facing readiness.
 
 ## Documentation
 
@@ -188,9 +221,9 @@ The public CI runs the release checks on Python 3.10 and 3.12. See the [release 
 
 ## Current Release
 
-The current public release is [`v0.3.2`](https://github.com/papperrollinggery/ad-creative-orchestrator/releases/tag/v0.3.2). Use the Release tag target to identify the source commit and the published wheel as the installation artifact.
+The current public release is [`v0.3.3`](https://github.com/papperrollinggery/ad-creative-orchestrator/releases/tag/v0.3.3). Use the Release tag target to identify the source commit and the published wheel as the installation artifact.
 
-Compared with earlier releases, `v0.3.2` makes current materials easier to find, protects final-delivery files from silent replacement, strengthens specialist and review evidence, and packages the operator guides available through `adco docs`. See the [changelog](CHANGELOG.md) for technical details.
+`v0.3.3` makes ordinary creative work lighter, reuses unchanged material intake, rejects stale model analysis, and checks existing creative briefs against current evidence. It also strengthens candidate provenance, scoped specialist exchange, and delivery protection. See the [changelog](CHANGELOG.md) for technical details.
 
 ## Contributing and Security
 

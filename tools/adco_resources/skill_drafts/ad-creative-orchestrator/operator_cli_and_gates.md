@@ -9,67 +9,61 @@ outline, PPT, Client Pack, upload, or send readiness, read
 ## Non-developer entrypoints
 
 The default `run` path stops after evidence intake, fact/gap updates, a concise
-content answer, and affected-scope validation. It creates no Dashboard unless
+intake summary explicitly distinct from creative output, and affected-scope validation. It creates no Dashboard unless
 `--dashboard` is explicitly requested. It must not auto-run Council, generate
 creative directions, dispatch a specialist, build a client outline/PPT/Client
 Pack, or run full delivery validation.
 
-Installed and source CLI behavior must match. Core commands:
+Installed and source CLI behavior must match. Select the smallest task route;
+use `adco --help` and `adco <command> --help` for current arguments instead of
+loading a complete command catalogue.
 
-```text
-adco init <project> [--full]
-adco quickstart [project] [--json]
-adco sample <project>
-adco demo [project]
-adco status <project> [--json]
-adco next <project> [--json]
-adco validate <project> [--json] [--strict-legacy]
-adco check
-adco run <project> --material <path> [--material <path> ...] [--max-total-chars <n>] [--dashboard] [--json]
-adco migrate-control-plane <project> [--dry-run] [--json]
-adco agency-audit <project>
-adco creative-brief <project> [--work-id <id>] [--json]
-adco creative-import <project> --file <candidate.json> [--json]
-adco creative-review <project> [--json]
-adco creative-proposal <project> [--work-id <id>] [--json]
-adco creative-quality-gate <project>
-adco confirm-client-outline <project> --confirmed-by <human> --confirmed-at <iso> --evidence-ref <ref>
-adco client-outline-gate <project>
-adco client-language-gate <project>
-adco preflight-asset <project> --work-id <id> --source-scope <scope>
-adco browser-asset-intake <project> --work-id <id> --source <platform> --browser-evidence <ref>
-adco asset-current-manifest <project>
-adco search-quality-gate <project>
-adco reference-pack-gate <project>
-adco visual-quality-gate <project>
-adco visual-layout-gate <project>
-adco export-pptx <project>
-adco check-pptx <project> --file <pptx>
-adco client-pack-gate <project>
-adco client-send-readiness-gate <project>
-adco final-delivery-lock <project>
-adco final-delivery-reconcile <project> --old-path <path> --new-path <path> --kind <rename|supersession> --confirmed-by <human> --confirmed-at <timezone-aware-iso> --evidence-ref <project-relative-structured-confirmation.json> [--version-id <id>]
-adco dedupe-audit <project>
-adco cleanup-plan <project>
-adco handoff-readiness-gate <project>
-adco profile-analyze <project> [--source-id <id>] --brand <brand> --company <company>
-adco hygiene <project>
-adco support-bundle <project> [--json]
-adco open-dashboard <project>
-adco audit-dashboard <project> [--render] [--json]
-adco doctor [--json]
-adco release-status [--json]
-adco docs [--json]
-adco install-skill [--target <dir>]
-```
+| Current task | Entry and relevant reference |
+|---|---|
+| Initialize or register project materials | `adco init`, `adco run`; `intake_and_facts.md` |
+| Inspect state or diagnose installation | `adco status`, `adco next`, `adco doctor`, `adco docs` |
+| Bind/import a selected creative candidate | `adco creative-brief`, `adco creative-import`, `adco creative-review`; `creative_contract.md` |
+| Diagnose or run an explicitly selected creative provider | `adco creative-doctor`, `adco creative-run`, `adco import-creative-production`; `specialist_exchange_and_craft.md` |
+| Receive/adopt a Specialist result | `adco specialist-handoff`, `adco specialist-adopt`; `specialist_exchange_and_craft.md` |
+| Export or prepare a client package | `adco export-pptx`, `adco client-pack-gate`, `adco client-send-readiness-gate`; `ppt_and_client_pack.md` |
+| Coordinate explicitly governed work | `adco goal-plan`, `adco goal-run`, `adco thread-plan`; `thread_operations.md` |
+| Review organization or duplicates | `adco organize-plan`, `adco dedupe-audit`, `adco cleanup-plan`; `intake_and_facts.md` |
+| Protect or reconcile delivery files | `adco final-delivery-lock`, `adco final-delivery-reconcile`; `final_delivery.md` |
+| Migrate legacy state | `adco migrate-control-plane`; `migration_and_lifecycle.md` |
+
+Each entry is an available capability, not a step required for every project.
+A request for a script or ordinary revision goes straight to `creative_work.md`.
+
+`support-bundle` is fail-closed: malformed, unreadable, replaced, or symlinked
+`.adco-local` source state returns `SUPPORT_BUNDLE=BLOCKED` and writes no new
+diagnostic bundle. Client-pack privacy scanning walks every project-relative
+parent through stable `O_NOFOLLOW` directory descriptors, then scans and hashes
+the same file descriptor. One project-root descriptor also binds the source map,
+alias references, and every candidate for the complete manifest build. It uses
+bounded streaming for regular files and ZIP-based formats. PDF extractor output
+is read through a capped pipe and terminated on timeout or limit; the Python
+fallback runs in a memory-limited subprocess and emits metadata/page fragments
+through the same capped pipe. An unreadable,
+unparseable, changed, or oversized candidate blocks the Gate.
 
 Thread and specialist commands are documented in their dedicated references.
+`adco.specialist-exchange` is the protocol id, not an executable command. The
+CLI entrypoints are `adco specialist-handoff` and `adco specialist-adopt`.
 
 `install-skill` owns only the current packaged files it writes. Its schema-v2 install manifest binds current managed paths to SHA-256 digests for parity checks, but a writable target-side manifest is never trusted as deletion authority. Stale, user-modified, and unrelated files are always preserved and reported for explicit cleanup; installation never auto-deletes them. A root symlink is accepted only for the canonical `~/.codex/skills/ad-creative-orchestrator` to `~/.skillshub/ad-creative-orchestrator` compatibility layout, checked before path resolution.
 
+`run` performs a read-only organization review after intake. Loose root material
+or exact duplicate bytes produce one visible organization question. It does not
+copy or move the material. The three storage commands are read-only by default;
+`--save` replaces one `AD-creative/orchestrator/storage_plan.json` snapshot and
+still performs no move, copy, delete, FinalDelivery lock, artifact registration,
+or Gate write. A missing/non-directory/symlinked project root or any unreadable
+file makes the audit `INCOMPLETE`, returns non-zero, and suppresses plan saving.
+
 ## Phase/Gate order
 
-New projects start on the Content Surface. Commands for client-visible versions,
+New projects start on the Content Surface. `profile-analyze` stays content-only
+and renders no Dashboard unless `--dashboard` is requested. Commands for client-visible versions,
 PPT/Client Pack/FinalDelivery, asset authorization, legacy migration, or Thread
 work materialize the Delivery Surface before executing. `adco init --full` is an
 explicit alternative for operators who already know the project begins at a
@@ -111,7 +105,8 @@ subcommands. Use these command mappings when operating through `adco`:
 2. Register materials as initial/supplement/change/feedback/approval/rejection/director note/unknown.
 3. Parse supported formats into source-preserving evidence chunks without the old 12,000-character/16-line truncation path.
 4. Update the fact inventory, requirements, true gaps/conflicts, and two handoff files.
-5. Emit the useful content answer before metrics or file paths.
+5. Emit the useful `INTAKE_SUMMARY` before metrics or file paths, and never
+   present that evidence summary as creative reasoning or a finished artifact.
 6. Render no Dashboard unless `--dashboard` was requested.
 7. Run only validators affected by changed evidence/fact/requirement/gap artifacts and report the scoped plan plus phase timings.
 8. Stop with the next content action. Do not run Council, Specialist Exchange, creative generation/import, PPT, Client Pack, or full `adco validate` automatically.
@@ -175,9 +170,10 @@ Migration manifests are written only when legacy evidence exists. They are immut
 
 ## Gate semantics
 
-- `creative-import`: structural and provenance validation for 2-3 post-Critic candidates; rejects stale/unbound evidence and duplicate mechanisms, and flags weak brand ownership.
-- `creative-review`: deterministic structure/language lint; an independent creative Critic remains required.
-- `creative-quality-gate`: downstream legacy proposal completeness and client-safety checks; it is not Sol generation, independent Critic judgment, or client approval.
+- `creative-assertion-*`: public capture, audit, and revocation for `identity_assurance=NONE` local workflow assertions. They never represent user/client identity, consent, approval, or send authority.
+- `creative-import`: pre-write structural, hard-constraint, and provenance validation for one to six candidates matching the brief's requested count; rejects stale/unbound evidence, unasserted or unsupported hard requirements, semantic violations across every persisted claim-bearing field, and duplicate mechanisms. It prepares one immutable generation and atomically switches only `current_generation.json`; a failed switch leaves all old current human and machine views coherent. Evidence refs prove provenance only, not semantic claim support; weak brand ownership is flagged.
+- `creative-review`: deterministic structure/semantic/language lint; Content returns it read-only without a receipt, while Delivery may persist an exact-bound Critic receipt.
+- `creative-quality-gate`: downstream legacy proposal completeness and client-safety checks; it is not model generation, independent Critic judgment, or client approval.
 - `client-outline-gate`: complete page framework plus explicit hash-bound human/client confirmation.
 - `client-language-gate`: blocks prompts, execution/Thread language, internal notes, fake/unsupported claims.
 - `search-quality-gate` and `reference-pack-gate`: source role, provenance, live evidence, borrow/do-not-copy boundary.

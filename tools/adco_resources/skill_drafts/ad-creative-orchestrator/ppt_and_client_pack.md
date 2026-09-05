@@ -21,10 +21,20 @@ client-readable exact outline
 Do not enter this route from default `adco run`. `creative-brief` and
 `creative-import` also do not create PPT or Client Pack artifacts.
 
-`export-pptx` refuses overwrite and registers exact version/hash/size. Derive
+`export-pptx` first runs a read-only project-wide validation preflight. If the
+project is `CHECK`, it writes no PPTX/current-version mutation and returns
+`TOOL_BLOCKED`; targeted WIP work is a separately scoped derivative and never a
+reason to clean, overwrite, move, or copy legacy FinalDelivery. On a clean
+project, export refuses overwrite and registers exact version/hash/size. Derive
 every PDF, preview, and text extract from the same current PPTX and record the
 derivation. A changed outline, PPTX, derivative, asset, authorization, or package
 input invalidates stale evidence.
+
+The confirmation sequence is strict: a human/client reviews the exact outline,
+then `adco confirm-client-outline` records that identity/time/evidence and exact
+digest, then `adco client-outline-gate` checks freshness. An agent, automation,
+Gate, or filename cannot manufacture the confirmation; any content mutation
+makes the receipt stale.
 
 `client-pack-gate` means ready for independent review only. A generated checklist
 is `NOT_RUN` until completed independently and bound to the current version,
