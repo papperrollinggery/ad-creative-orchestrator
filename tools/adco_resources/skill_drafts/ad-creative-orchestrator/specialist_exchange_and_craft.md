@@ -1,7 +1,8 @@
 # Specialist Exchange Reference
 
 Read this file only for a neutral Specialist Exchange handoff, provider receipt,
-or ADCO adoption. Creative briefing belongs in `creative_contract.md`; PPT and
+or ADCO adoption. Direct creative work belongs in `creative_work.md`, durable
+candidate briefing in `creative_contract.md`; PPT and
 client delivery belong in `ppt_and_client_pack.md`.
 
 ## Ownership

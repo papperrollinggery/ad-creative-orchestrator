@@ -637,8 +637,9 @@ LOCATION_MARKERS = (
 
 DIRECTION_COUNT_PATTERNS = (
     re.compile(
-        r"(?:只要|仅要|需要|要求|提供|给出|生成|保留|选择)\s*"
-        r"(?P<value>\d{1,2}|[一二两三四五六])\s*(?:个|条)?\s*"
+        r"(?:只要|仅要|需要|要求|提供|给出|生成|保留|选择|以及)\s*[:：]?\s*"
+        r"(?P<value>\d{1,2}|[一二两三四五六七八九十])\s*(?:个|条)?\s*"
+        r"(?:(?:机制)?(?:真正)?不同的|差异化的|完整的|独立的)?\s*"
         r"(?:创意)?(?:方向|方案|概念)",
         re.I,
     ),
@@ -1608,11 +1609,20 @@ def _requested_direction_count(requirements: object) -> int | None:
             continue
         statement = str(requirement.get("statement", ""))
         for pattern in DIRECTION_COUNT_PATTERNS:
-            match = pattern.search(statement)
-            if match and (parsed := _number_value(match.group("value"))) is not None:
-                if 1 <= parsed <= 6:
-                    values.append(parsed)
-                break
+            for match in pattern.finditer(statement):
+                # Do not turn a negated request into an option-count mandate.
+                if re.search(r"(?:不|不要|无需|不必|取消|no|not)\s*$", statement[:match.start()], re.I):
+                    continue
+                parsed = _number_value(match.group("value"))
+                if parsed is None:
+                    continue
+                if not 1 <= parsed <= 6:
+                    raise ValueError(
+                        "durable candidate exchange supports 1-6 selected directions; "
+                        f"the request specifies {parsed}. Complete wider exploration "
+                        "directly, then bind an explicitly selected set for import."
+                    )
+                values.append(parsed)
     unique = list(dict.fromkeys(values))
     if len(unique) > 1:
         raise ValueError(
@@ -1735,18 +1745,26 @@ def create_creative_brief(project: Path) -> CreativeBriefResult:
     request = {
         "protocol_id": "adco.creative-generation-request",
         "request_version": "1.1",
-        "model_role": "GPT-5.6 Sol creative reasoning",
+        "model_role": "advertising creative reasoning",
+        "model_selection": "inherit_active_host_or_explicit_user_selection",
         "brief_snapshot_sha256": snapshot_sha,
+        "brief_snapshot_path": BRIEF_SNAPSHOT_REL.as_posix(),
+        "evidence_input": {
+            "path": EVIDENCE_REL.as_posix(),
+            **snapshot["input_files"][EVIDENCE_REL.as_posix()],
+        },
         "contract_path": BRIEF_CONTRACT_REL.as_posix(),
         "candidate_schema_path": CANDIDATE_SCHEMA_REL.as_posix(),
         "hard_constraints": hard_constraints,
         "instructions": [
+            "Read the actual evidence text through evidence_input before reasoning; verify its file binding and use the snapshot's allowed evidence refs. Metadata-only media still requires content inspection. IDs and parser candidates do not supply semantic understanding.",
             (
                 f"Generate exactly {requested_direction_count} genuinely distinct direction(s), as requested."
                 if requested_direction_count is not None
                 else "Generate the smallest sufficient set of genuinely distinct directions; one strong direction is valid."
             ),
             "Differentiate creative mechanism, not only name or wording.",
+            "Connect audience resistance, supported product truth, visible action and payoff; choose a recommendation with concrete tradeoffs when multiple directions are requested. Do not use gaps or management tasks as the creative proposition.",
             "Bind every direction to evidence_refs from the snapshot.",
             "Treat every hard_constraint with enforceable_in_local_workflow=true as mandatory for this local workflow; keep unasserted or manual_review constraints unresolved. This does not represent verified user/client identity, consent, or approval. Evidence refs alone never prove compliance.",
             "Populate runtime_seconds, cast_count, locations, product_exposure, and claims as machine-checkable fields; keep prose consistent with them.",

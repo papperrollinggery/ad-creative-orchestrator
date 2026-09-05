@@ -99,7 +99,7 @@ creative_generation_request.json
 creative_open_evidence_gaps.json
 ```
 
-`creative-brief` 不生成方向。GPT-5.6 Sol 或明确选择的专业 Specialist 按用户要求生成候选；未指定数量时只生成最小充分集合（1-6 个）。独立 Critic 仅在明确要求或高后果决策边界启用。耐久硬要求必须有 registered source event、同源 evidence chunk 和 active local workflow assertion（`identity_assurance=NONE`）；无法机器判定的约束必须绑定 exact candidate/direction/constraint，再由 `creative-import` 产出：
+`creative-brief` 不生成方向。当前主模型或用户明确选择的专业 Specialist 按用户要求生成候选；未指定数量时只生成最小充分集合（1-6 个）。独立 Critic 仅在明确要求或高后果决策边界启用。耐久硬要求必须有 registered source event、同源 evidence chunk 和 active local workflow assertion（`identity_assurance=NONE`）；无法机器判定的约束必须绑定 exact candidate/direction/constraint，再由 `creative-import` 产出：
 
 ```text
 current_generation.json

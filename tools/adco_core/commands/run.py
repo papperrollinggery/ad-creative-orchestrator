@@ -108,7 +108,7 @@ def execute_lightweight_run(
     goal: str,
     max_total_chars: int,
     ensure_project: Callable[[Path], tuple[int, int]],
-    register_materials: Callable[[Path, list[Path], str], list[str]],
+    register_materials: Callable[[Path, list[Path], str, int], list[str]],
     ensure_intake_work: Callable[[Path, list[str], str], str] | None,
     perform_intake: Callable[..., dict[str, int]],
     render_handoff: Callable[[Path, str, list[str]], dict[str, object]],
@@ -119,7 +119,11 @@ def execute_lightweight_run(
     total_started = perf_counter()
     write_started = perf_counter()
     created, skipped = ensure_project(project)
-    source_ids = register_materials(project, materials, goal) if materials else []
+    source_ids = (
+        register_materials(project, materials, goal, max_total_chars)
+        if materials
+        else []
+    )
     if ensure_intake_work is not None and (source_ids or goal):
         ensure_intake_work(project, source_ids, goal)
     setup_write_ms = _elapsed_ms(write_started)

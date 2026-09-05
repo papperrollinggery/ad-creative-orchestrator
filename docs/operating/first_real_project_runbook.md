@@ -159,7 +159,7 @@ creative-brief -> Sol/专业 Specialist -> [按决策边界选择 Critic] -> cre
 
 要求：
 1. creative-brief 只冻结 evidence/fact/requirement/gap，生成 hash-bound manifest/snapshot/contract/schema/request，不生成方向或客户稿。
-2. GPT-5.6 Sol 或明确选择的专业 Specialist 基于 exact brief snapshot 按用户要求生成机制不同的候选；未指定数量时只生成最小充分集合（1-6 个）。
+2. 当前主模型或用户明确选择的专业 Specialist 基于 exact brief snapshot 按用户要求生成机制不同的候选；未指定数量时只生成最小充分集合（1-6 个）。
 3. 只有明确要求或进入高后果决策边界时，独立 Critic 才检查 brief adherence、insight、brand ownership、机制差异、key visual、shootability、production risk 和 brand replacement；不为满足流程仪式而增加候选或审查。
 4. parser 发现的硬要求只有绑定原始 source/evidence 与 active local assertion 后才在本地流程内可强制；该 assertion 始终为 `identity_assurance=NONE`，不是用户/客户身份、批准或发送授权。candidate payload、brief、direction、constraint 任一变化或撤销都会使裁决失效。
 5. creative-import 要求每个候选绑定现有 evidence chunk，并检查完整 brief manifest/self-hash、结构、所有声明字段、硬约束与裁决；无证据、stale/corrupt brief、冲突方向数量、重复机制、未断言/未裁决要求或实际违规直接拒绝。完整 immutable generation 验证后只原子切换 `current_generation.json`。evidence refs 只证明 provenance，不证明语义支持。

@@ -65,6 +65,8 @@ REQUIRED_PATHS = [
     "adco_resources/fixtures/content_first_forward/mori_spark_unbiased_output.md",
     "adco_resources/fixtures/content_first_forward/mori_spark_unbiased_receipt.json",
     "adco_resources/skill_drafts/ad-creative-orchestrator/SKILL.md",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/creative_work.md",
+    "adco_resources/skill_drafts/ad-creative-orchestrator/creative_contract.md",
     "adco_resources/skill_drafts/ad-creative-orchestrator/chat_interaction_and_visualization.md",
     "adco_resources/skill_drafts/ad-creative-orchestrator/scripts/adco_visualization.py",
     "adco_resources/skill_drafts/ad-creative-orchestrator/scripts/adco_visualization_browser_audit.cjs",
@@ -183,7 +185,7 @@ def main() -> int:
                         issues.append("wheel metadata missing package name")
                     if "Version: 0.3.3" not in metadata_text:
                         issues.append("wheel metadata missing version")
-                    if "Current Release" not in metadata_text or "v0.3.2" not in metadata_text:
+                    if "Current Release" not in metadata_text or "v0.3.3" not in metadata_text:
                         issues.append("wheel metadata embeds stale or incomplete README description")
 
                 if entry_points_path:

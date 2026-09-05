@@ -1144,6 +1144,7 @@ def ingest_source_rows(
         except Exception as exc:
             parser_errors.append(
                 {
+                    "source_event_id": source_event_id,
                     "source_path": f"source-event://{source_event_id or 'unknown'}",
                     "media_type": "application/octet-stream",
                     "error": f"{type(exc).__name__}: material source is unavailable or unsafe",
@@ -1170,6 +1171,7 @@ def ingest_source_rows(
                     error = error.replace(raw_path, path_label)
                 parser_errors.append(
                     {
+                        "source_event_id": source_event_id,
                         "source_path": path_label,
                         "media_type": media_type_for(path),
                         "error": f"{type(exc).__name__}: {error}",
@@ -1180,6 +1182,7 @@ def ingest_source_rows(
             if characters_read + file_characters > max_total_chars:
                 over_budget.append(
                     {
+                        "source_event_id": source_event_id,
                         "source_path": path_label,
                         "media_type": media_type_for(path),
                         "characters": file_characters,

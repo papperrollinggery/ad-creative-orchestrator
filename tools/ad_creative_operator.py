@@ -68,7 +68,9 @@ from adco_core.ingestion import (
     ingest_source_rows,
     load_local_source_paths,
     load_local_source_paths_from_project_fd,
+    material_files,
     register_local_source_path,
+    sha256_file,
     source_path_label,
     source_row_files,
     source_row_material_roots,
@@ -2203,16 +2205,95 @@ def append_event(project: Path, payload: dict[str, object]) -> None:
         handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
 
 
-def register_materials(project: Path, material_paths: list[Path], goal: str) -> list[str]:
+def material_fingerprint(material: Path) -> str:
+    """Return a compact content identity for a file or material tree.
+
+    This deliberately hashes the source bytes. It avoids parser work on an
+    unchanged rerun; it is not a claim that the source was not read.
+    """
+    root = material.resolve()
+    records: list[dict[str, str]] = []
+    for path in material_files(root):
+        resolved = path.resolve()
+        relative = (
+            resolved.relative_to(root).as_posix()
+            if root.is_dir()
+            else resolved.name
+        )
+        records.append({"path": relative, "sha256": sha256_file(resolved)})
+    return hashlib.sha256(
+        json.dumps(records, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def _source_rows_for_material(
+    project: Path, rows: list[dict[str, str]], material: Path
+) -> list[dict[str, str]]:
+    material_resolved = material.resolve()
+    matches: list[dict[str, str]] = []
+    for row in rows:
+        try:
+            roots = source_row_material_roots(project, row)
+        except ValueError:
+            continue
+        if any(root.resolve() == material_resolved for root in roots):
+            matches.append(row)
+    return matches
+
+
+def register_materials(
+    project: Path,
+    material_paths: list[Path],
+    goal: str,
+    max_total_chars: int = 2_000_000,
+) -> list[str]:
     source_path = project / "AD-creative/orchestrator/source_events.csv"
-    _, rows = read_csv_rows(source_path)
+    fieldnames, rows = read_csv_rows(source_path)
     source_ids: list[str] = []
     allocate_source_id = id_allocator(rows, "source_event_id", "SRC")
     delivery_surface = project_surface(project) == DELIVERY_SURFACE
-
+    matching_rows_by_material: dict[Path, list[dict[str, str]]] = {}
     for material in material_paths:
         if not material.exists():
             raise FileNotFoundError(f"material not found: {material}")
+        matching_rows = _source_rows_for_material(project, rows, material)
+        source_history = {
+            row.get("source_event_id", "")
+            for row in matching_rows
+            if row.get("source_event_id", "")
+        }
+        if len(source_history) > 1:
+            raise ValueError(
+                "ambiguous material source history for "
+                f"{material.name}: {', '.join(sorted(source_history))}; "
+                "reconcile duplicate source events explicitly before rerunning intake"
+            )
+        matching_rows_by_material[material] = matching_rows
+
+    for material in material_paths:
+        fingerprint = material_fingerprint(material)
+        matching_rows = matching_rows_by_material[material]
+        if matching_rows:
+            current = matching_rows[-1]
+            if (
+                current.get("material_fingerprint", "") == fingerprint
+                and current.get("ingested_material_fingerprint", "") == fingerprint
+                and current.get("ingested_max_total_chars", "")
+                == str(max_total_chars)
+            ):
+                continue
+            source_id = current.get("source_event_id", "")
+            if not source_id:
+                raise ValueError("existing material source is missing source_event_id")
+            current["material_fingerprint"] = fingerprint
+            current["ingested_material_fingerprint"] = ""
+            current["ingested_max_total_chars"] = ""
+            current["raw_summary"] = f"待整理资料：{material.name}"
+            current["notes"] = goal
+            source_ids.append(source_id)
+            continue
         source_id = allocate_source_id()
         try:
             material.resolve().relative_to(project.resolve())
@@ -2236,6 +2317,9 @@ def register_materials(project: Path, material_paths: list[Path], goal: str) -> 
             "affects_artifacts": "",
             "supersedes_event_ids": "",
             "notes": goal,
+            "material_fingerprint": fingerprint,
+            "ingested_material_fingerprint": "",
+            "ingested_max_total_chars": "",
         }
         rows.append(row)
         source_ids.append(source_id)
@@ -2253,7 +2337,13 @@ def register_materials(project: Path, material_paths: list[Path], goal: str) -> 
             )
 
     if source_ids:
-        fieldnames, _ = read_csv_rows(source_path)
+        for field in (
+            "material_fingerprint",
+            "ingested_material_fingerprint",
+            "ingested_max_total_chars",
+        ):
+            if field not in fieldnames:
+                fieldnames.append(field)
         write_csv_rows(source_path, fieldnames, rows)
     return source_ids
 
@@ -7494,6 +7584,52 @@ def perform_intake(
         target_sources,
         max_total_chars=max_total_chars,
     )
+    failed_source_ids = {
+        str(item.get("source_event_id", ""))
+        for item in [
+            *intake_result.ingestion.parser_errors,
+            *intake_result.ingestion.over_budget,
+        ]
+        if item.get("source_event_id", "")
+    }
+    successful_source_ids = {
+        row.get("source_event_id", "")
+        for row in target_sources
+        if row.get("source_event_id", "")
+        and row.get("material_fingerprint", "")
+        and row.get("source_event_id", "") not in failed_source_ids
+    }
+    if successful_source_ids:
+        source_fields, refreshed_source_rows = read_csv_rows(source_path)
+        updated = False
+        for row in refreshed_source_rows:
+            if row.get("source_event_id", "") not in successful_source_ids:
+                continue
+            fingerprint = row.get("material_fingerprint", "")
+            try:
+                roots = source_row_material_roots(project, row)
+                current_fingerprint = (
+                    material_fingerprint(roots[0]) if len(roots) == 1 else ""
+                )
+            except (OSError, ValueError):
+                current_fingerprint = ""
+            if current_fingerprint != fingerprint:
+                continue
+            if (
+                row.get("ingested_material_fingerprint", "") != fingerprint
+                or row.get("ingested_max_total_chars", "") != str(max_total_chars)
+            ):
+                row["ingested_material_fingerprint"] = fingerprint
+                row["ingested_max_total_chars"] = str(max_total_chars)
+                updated = True
+        if updated:
+            for field in (
+                "ingested_material_fingerprint",
+                "ingested_max_total_chars",
+            ):
+                if field not in source_fields:
+                    source_fields.append(field)
+            write_csv_rows(source_path, source_fields, refreshed_source_rows)
     requirement_path = project / "AD-creative/orchestrator/requirements.csv"
     _, requirement_rows = read_csv_rows(requirement_path)
     gap_path = project / "AD-creative/orchestrator/gaps.csv"
@@ -7513,8 +7649,14 @@ def perform_intake(
         )
         or "- 暂无已抽取需求"
     )
+    current_gap_rows = [
+        row
+        for row in gap_rows
+        if row.get("status", "").strip().lower() not in {"closed", "resolved", "done"}
+    ]
     open_questions = "\n".join(
-        f"- {row.get('question_for_client') or row.get('description')}" for row in gap_rows[:8]
+        f"- {row.get('question_for_client') or row.get('description')}"
+        for row in current_gap_rows[:8]
     ) or "- 暂无"
     existing_truth = (
         current_truth_path.read_text(encoding="utf-8")
@@ -7718,18 +7860,22 @@ def render_handoff(project: Path, goal: str, source_ids: list[str]) -> dict[str,
         for row in ordered_requirement_rows
     }
     proceed: list[str] = []
-    if requirement_lines:
-        proceed.append("可以基于已锁定要求继续内部分析和方案构思，不需要先建立交付账本。")
+    if goal.strip():
+        proceed.append(f"结合已读资料完成本轮目标：{goal.strip()}")
+    elif requirement_lines:
+        proceed.append("可以基于当前资料和需求候选完成请求的内部内容，不需要先建立交付账本。")
     if requirement_types & {"creative", "visual", "research"}:
-        proceed.append("下一步应把证据转成内容判断或创意 brief，并优先检查真实素材语义。")
+        proceed.append("将真实素材与产品证据转成可用的内容判断、脚本或视觉方案。")
     if "delivery" in requirement_types:
         proceed.append("交付格式已被识别，但只有真正进入客户可见版本时才升级到 Delivery Surface。")
     if not proceed:
         proceed.append("材料已完成证据化读取；需要补充一个明确产出目标，才能继续内容工作。")
     if blocking_gap_lines:
         next_action = "先确认最小阻塞项；不受其影响的内部内容工作可以继续。"
+    elif goal.strip():
+        next_action = f"基于已读资料完成本轮目标：{goal.strip()}"
     elif requirement_lines:
-        next_action = "基于当前证据生成或更新 creative brief，再进入专业内容推理。"
+        next_action = "按当前资料中的明确要求直接完成内容；只有需要候选交换时才建立 creative brief。"
     else:
         next_action = "补充本轮希望得到的具体广告产出。"
 
@@ -21762,7 +21908,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     analysis_export_parser = subparsers.add_parser(
         "export-intake-analysis-request",
-        help="Export the evidence snapshot and schema for GPT-5.6 Sol fact analysis.",
+        help="Export the evidence snapshot and schema for analysis by the active model.",
     )
     analysis_export_parser.add_argument("project", help="Project directory.")
     analysis_export_parser.add_argument("--json", action="store_true")

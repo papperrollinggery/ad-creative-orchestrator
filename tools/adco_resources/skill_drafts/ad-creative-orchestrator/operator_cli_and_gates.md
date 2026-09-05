@@ -14,60 +14,25 @@ intake summary explicitly distinct from creative output, and affected-scope vali
 creative directions, dispatch a specialist, build a client outline/PPT/Client
 Pack, or run full delivery validation.
 
-Installed and source CLI behavior must match. Core commands:
+Installed and source CLI behavior must match. Select the smallest task route;
+use `adco --help` and `adco <command> --help` for current arguments instead of
+loading a complete command catalogue.
 
-```text
-adco init <project> [--full]
-adco quickstart [project] [--json]
-adco sample <project>
-adco demo [project]
-adco status <project> [--json]
-adco next <project> [--json]
-adco validate <project> [--json] [--strict-legacy]
-adco check
-adco run <project> --material <path> [--material <path> ...] [--max-total-chars <n>] [--dashboard] [--json]
-adco migrate-control-plane <project> [--dry-run] [--json]
-adco agency-audit <project>
-adco creative-brief <project> [--work-id <id>] [--json]
-adco creative-assertion-record <project> --semantics <creative_requirement_confirmation|creative_constraint_approval|creative_constraint_rejection> --requirement-id <exactly-one-id> [--artifact-binding <binding> ...] --note <reason> [--json]
-adco creative-assertion-status <project> [--assertion-ref <local_operator_assertion:id>] [--json]
-adco creative-assertion-revoke <project> --assertion-ref <local_operator_assertion:id> --reason <reason> [--json]
-adco creative-requirement-confirm <project> --requirement-id <id> --confirmation-ref <local_operator_assertion:id> [--evidence-ref <chunk>] [--json]
-adco creative-constraint-resolve <project> --file <candidate.json> --direction-id <id> --constraint-id <id> --confirmation-ref <local_operator_assertion:id> --decision <approved|rejected> --note <reason> [--json]
-adco creative-import <project> --file <candidate.json> [--json]
-adco creative-review <project> [--json]
-adco creative-proposal <project> [--work-id <id>] [--json]
-adco creative-quality-gate <project>
-adco confirm-client-outline <project> --confirmed-by <human> --confirmed-at <iso> --evidence-ref <ref>
-adco client-outline-gate <project>
-adco client-language-gate <project>
-adco preflight-asset <project> --work-id <id> --source-scope <scope>
-adco browser-asset-intake <project> --work-id <id> --source <platform> --browser-evidence <ref>
-adco asset-current-manifest <project>
-adco search-quality-gate <project>
-adco reference-pack-gate <project>
-adco visual-quality-gate <project>
-adco visual-layout-gate <project>
-adco export-pptx <project>
-adco check-pptx <project> --file <pptx>
-adco client-pack-gate <project>
-adco client-send-readiness-gate <project>
-adco final-delivery-lock <project>
-adco final-delivery-reconcile <project> --old-path <path> --new-path <path> --kind <rename|supersession> --confirmed-by <human> --confirmed-at <timezone-aware-iso> --evidence-ref <project-relative-structured-confirmation.json> [--version-id <id>]
-adco organize-plan <project> [--deep] [--save] [--json]
-adco dedupe-audit <project> [--quick] [--save] [--json]
-adco cleanup-plan <project> [--quick] [--save] [--json]
-adco handoff-readiness-gate <project>
-adco profile-analyze <project> [--source-id <id>] --brand <brand> --company <company> [--dashboard]
-adco hygiene <project>
-adco support-bundle <project> [--json]
-adco open-dashboard <project>
-adco audit-dashboard <project> [--render] [--json]
-adco doctor [--json]
-adco release-status [--json]
-adco docs [--json]
-adco install-skill [--target <dir>]
-```
+| Current task | Entry and relevant reference |
+|---|---|
+| Initialize or register project materials | `adco init`, `adco run`; `intake_and_facts.md` |
+| Inspect state or diagnose installation | `adco status`, `adco next`, `adco doctor`, `adco docs` |
+| Bind/import a selected creative candidate | `adco creative-brief`, `adco creative-import`, `adco creative-review`; `creative_contract.md` |
+| Diagnose or run an explicitly selected creative provider | `adco creative-doctor`, `adco creative-run`, `adco import-creative-production`; `specialist_exchange_and_craft.md` |
+| Receive/adopt a Specialist result | `adco specialist-handoff`, `adco specialist-adopt`; `specialist_exchange_and_craft.md` |
+| Export or prepare a client package | `adco export-pptx`, `adco client-pack-gate`, `adco client-send-readiness-gate`; `ppt_and_client_pack.md` |
+| Coordinate explicitly governed work | `adco goal-plan`, `adco goal-run`, `adco thread-plan`; `thread_operations.md` |
+| Review organization or duplicates | `adco organize-plan`, `adco dedupe-audit`, `adco cleanup-plan`; `intake_and_facts.md` |
+| Protect or reconcile delivery files | `adco final-delivery-lock`, `adco final-delivery-reconcile`; `final_delivery.md` |
+| Migrate legacy state | `adco migrate-control-plane`; `migration_and_lifecycle.md` |
+
+Each entry is an available capability, not a step required for every project.
+A request for a script or ordinary revision goes straight to `creative_work.md`.
 
 `support-bundle` is fail-closed: malformed, unreadable, replaced, or symlinked
 `.adco-local` source state returns `SUPPORT_BUNDLE=BLOCKED` and writes no new
@@ -208,7 +173,7 @@ Migration manifests are written only when legacy evidence exists. They are immut
 - `creative-assertion-*`: public capture, audit, and revocation for `identity_assurance=NONE` local workflow assertions. They never represent user/client identity, consent, approval, or send authority.
 - `creative-import`: pre-write structural, hard-constraint, and provenance validation for one to six candidates matching the brief's requested count; rejects stale/unbound evidence, unasserted or unsupported hard requirements, semantic violations across every persisted claim-bearing field, and duplicate mechanisms. It prepares one immutable generation and atomically switches only `current_generation.json`; a failed switch leaves all old current human and machine views coherent. Evidence refs prove provenance only, not semantic claim support; weak brand ownership is flagged.
 - `creative-review`: deterministic structure/semantic/language lint; Content returns it read-only without a receipt, while Delivery may persist an exact-bound Critic receipt.
-- `creative-quality-gate`: downstream legacy proposal completeness and client-safety checks; it is not Sol generation, independent Critic judgment, or client approval.
+- `creative-quality-gate`: downstream legacy proposal completeness and client-safety checks; it is not model generation, independent Critic judgment, or client approval.
 - `client-outline-gate`: complete page framework plus explicit hash-bound human/client confirmation.
 - `client-language-gate`: blocks prompts, execution/Thread language, internal notes, fake/unsupported claims.
 - `search-quality-gate` and `reference-pack-gate`: source role, provenance, live evidence, borrow/do-not-copy boundary.

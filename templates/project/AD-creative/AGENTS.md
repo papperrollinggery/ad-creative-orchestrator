@@ -8,12 +8,21 @@ second implicit trigger. ADCO never creates or overwrites the root `AGENTS.md`.
 
 - Put advertising reasoning and the requested artifact before process reporting.
 - Default to the content surface: inspect materials, record evidence-backed
-  facts and real gaps, produce the useful internal answer, then stop.
+  facts and real gaps as needed, then produce the useful internal answer. Complete
+  an authorized multi-stage artifact; an unknown pauses only the part it blocks.
+- A one-off concept, script, treatment, storyboard, or revision is answered in
+  chat. Initialize or update durable project records only when the user asks for
+  project management, continuing work, or traceable state.
+- For direct creative work, connect audience resistance to evidence-backed product
+  causality and a visible mechanism. Preserve the adopted direction, voice, and
+  latest explicit change during revision; do one focused repair, not score-chasing.
 - Do not create Gate, Council, Thread, Git, version, PPT, Client Pack, or
   FinalDelivery work unless the requested risk boundary needs it.
 - Escalate to delivery governance for client-visible versions, asset
   authorization, PPT/derivatives, FinalDelivery, external send, legacy
-  migration, or explicit parallel/independent work.
+  migration, explicit parallel work with a controlled write scope, or independent
+  review bound to an exact client-visible version. An internal read-only second
+  judgment remains Content Surface work.
 - Never present structural validation as creative quality or client approval.
 - Treat FinalDelivery as protected user data. Only inventory/hash-lock it. Never
   overwrite, edit, move, copy, delete, symlink, or alias it. Reconcile an

@@ -1,6 +1,6 @@
 ---
 name: ad-creative-orchestrator
-description: "Use only when the user explicitly invokes $ad-creative-orchestrator for an initialized or about-to-be-initialized advertising project. Put material understanding and advertising reasoning first; add version, asset, PPT, approval, and delivery governance only when the requested risk boundary needs it. Do not use for ADCO or DIRcreative source repository maintenance, testing, ordinary advertising questions, ordinary code tasks, or work without ADCO project context."
+description: "Use only when the user explicitly invokes $ad-creative-orchestrator for an initialized or about-to-be-initialized advertising project. Use the current model and needed execution tools to make advertising work from project material; add version, asset, PPT, approval, and delivery governance only when the requested risk boundary needs it. Do not use for ADCO or DIRcreative source repository maintenance, testing, ordinary advertising questions, ordinary code tasks, or work without ADCO project context."
 ---
 
 # Ad Creative Orchestrator
@@ -26,20 +26,19 @@ briefs, concepts, scripts, storyboards, visual analysis, and ordinary revision.
    contradictions that matter to the requested artifact.
 3. Separate confirmed facts, supported inference, and unknowns. Ask only about a
    genuine blocker; continue all work that the blocker does not prevent.
-4. Do the advertising reasoning or artifact work. The CLI may preserve evidence,
-   but its records are never a substitute for judgment.
-5. Return a decision-readable answer: conclusion/artifact first, evidence and
-   real blockers second, next content action last.
+4. Complete the requested advertising reasoning or artifact. The CLI may preserve
+   evidence, but its records are never a substitute for judgment.
+5. Return the requested artifact or decision, then supporting evidence and real
+   blockers. Add a next action only when it helps the user continue.
 
-Before returning creative work, silently map every hard constraint to the draft
-and repair violations. Do not invent facts, data, places, product claims, or
-testimonials; production timecodes and supplied numbers remain allowed. Treat
-locations and bans literally, including close synonyms. Alternatives must differ
-in causal mechanism, and channel adaptations must change behavior rather than
-only crop or caption. Do not claim a route is easiest or safest without a visible
-comparison. Keep this check backstage and create no record unless needed.
+For direct creative work, read [creative_work.md](creative_work.md). Complete an
+authorized multi-stage outcome from brief through the requested treatment, script,
+storyboard, or proposal; pause only the part that needs a genuinely user-owned
+fact. Do not replace the requested work with a plan, intake summary, or record.
 
-For a new project, use:
+Use `adco run` only when the user asks to initialize, keep managing, or preserve
+traceable project state. A one-off concept or revision is answered directly in
+chat. For a new durable project, use:
 
 ```text
 adco run <project> --material <path> --goal "<requested outcome>"
@@ -85,15 +84,16 @@ creative quality, client approval, or permission to send.
 Never send, publish, upload, purchase, delete, overwrite the only client-visible
 copy, or install globally without the required explicit authority.
 
-## Read One Relevant Reference
+## Read the Minimal Relevant References
 
-Do not preload the reference set. Read only the file needed for the current
-boundary:
+Do not preload the reference set. Start with the file needed for the current
+boundary, then add the next one only when the same action crosses its boundary:
 
 - Material parsing, facts, and real gaps: [intake_and_facts.md](intake_and_facts.md)
 - Explicit CLI invocation, command syntax, status, or phase diagnosis only:
   [operator_cli_and_gates.md](operator_cli_and_gates.md)
-- Creative brief/candidate/Critic contract: [creative_contract.md](creative_contract.md)
+- Direct creative reasoning and ordinary revision: [creative_work.md](creative_work.md)
+- Durable brief/candidate/Critic contract: [creative_contract.md](creative_contract.md)
 - Specialist handoff and adoption: [specialist_exchange_and_craft.md](specialist_exchange_and_craft.md)
 - Client outline, PPT, exact-current derivatives, Client Pack, external upload,
   or send evidence: [ppt_and_client_pack.md](ppt_and_client_pack.md)
@@ -113,7 +113,7 @@ On the Content Surface, completion means the requested internal answer or
 artifact is usable, evidence-aware, and honest about material unknowns. It does
 not require a Gate ledger.
 
-On the Delivery Surface, read the relevant delivery reference and verify the
-exact target, version/hash bindings, authorization, unresolved feedback, and
-fresh validation required by that boundary. A passed Gate is evidence for one
+On the Delivery Surface, read every reference required by the action's actual
+boundaries and verify the exact target, version/hash bindings, authorization,
+unresolved feedback, and fresh validation. A passed Gate is evidence for one
 decision, not a reason to stop thinking about the work itself.

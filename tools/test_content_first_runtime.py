@@ -842,17 +842,33 @@ def test_open_project_dir_closes_fd_when_visible_binding_disappears() -> None:
         project = Path(raw) / "project"
         project.mkdir()
         original_close = ingestion_module.os.close
+        original_stat = ingestion_module.os.stat
+        original_open = ingestion_module.os.open
         closed_fds: list[int] = []
+        opened_fds: list[int] = []
+
+        def tracking_open(path: object, flags: int, *args: object, **kwargs: object):
+            fd = original_open(path, flags, *args, **kwargs)
+            opened_fds.append(fd)
+            return fd
+
+        def missing_visible_binding(path: object, **kwargs: object):
+            # Path.is_symlink() uses os.stat on Python 3.13 and os.lstat on
+            # Python 3.14. Fail only the post-open binding check under test.
+            if opened_fds and str(path) == str(project):
+                raise FileNotFoundError("simulated binding loss")
+            return original_stat(path, **kwargs)
 
         def tracking_close(fd: int) -> None:
             closed_fds.append(fd)
             original_close(fd)
 
         with (
+            patch.object(ingestion_module.os, "open", side_effect=tracking_open),
             patch.object(
                 ingestion_module.os,
                 "stat",
-                side_effect=FileNotFoundError("simulated binding loss"),
+                side_effect=missing_visible_binding,
             ),
             patch.object(
                 ingestion_module.os,
@@ -866,7 +882,8 @@ def test_open_project_dir_closes_fd_when_visible_binding_disappears() -> None:
                 pass
             else:
                 raise AssertionError("binding loss must fail project dir open")
-        assert len(closed_fds) == 1
+        assert len(opened_fds) == 1
+        assert closed_fds == opened_fds
 
 
 def test_private_source_map_failures_block_support_and_client_pack() -> None:
@@ -1665,6 +1682,21 @@ def test_content_answer_prioritizes_current_requirements_and_real_blockers() -> 
         assert "代言人" in markdown.split("## 非阻塞未知", 1)[1]
 
 
+def test_explicit_goal_is_actionable_without_keyword_extracted_requirements() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-explicit-content-goal-") as raw:
+        project = Path(raw) / "project"
+        run_operator("init", str(project))
+        goal = "写完推荐方向的20秒脚本，并给出图文适配"
+        answer = render_handoff(project, goal, [])
+        assert answer["requirements"] == []
+        assert answer["objective"] == goal
+        assert goal in answer["next_action"]
+        assert any(goal in item for item in answer["can_proceed"])
+        assert "补充" not in answer["next_action"]
+        assert "creative brief" not in answer["next_action"]
+        assert answer["blocking_gaps"] == []
+
+
 def test_non_blocking_unknown_does_not_block_content_status() -> None:
     with tempfile.TemporaryDirectory(prefix="adco-content-nonblocking-") as raw:
         project = Path(raw) / "project"
@@ -1964,6 +1996,7 @@ def main() -> int:
     test_init_dirfd_resists_concurrent_managed_symlink_swap()
     test_profile_analysis_stays_on_content_surface_without_governance_noise()
     test_content_answer_prioritizes_current_requirements_and_real_blockers()
+    test_explicit_goal_is_actionable_without_keyword_extracted_requirements()
     test_non_blocking_unknown_does_not_block_content_status()
     test_legacy_surface_detection_does_not_depend_on_a_delivery_ledger()
     test_content_declaration_with_delivery_ledgers_fails_closed()

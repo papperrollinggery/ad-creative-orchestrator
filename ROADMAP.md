@@ -6,7 +6,7 @@ Make Ad Creative Orchestrator a usable, credible, open-source project for Codex-
 
 ## Now
 
-- Public `v0.3.2` release with packaged-document and source/package parity gates
+- Public `v0.3.3` release with packaged-document and source/package parity gates
 - P0-P8 control plane from intake/current truth through feedback and next version
 - Human Workspace v2 current-first indexes and schema-v2 lifecycle migration
 - Fail-closed FinalDelivery inventory, rename, and supersession reconciliation

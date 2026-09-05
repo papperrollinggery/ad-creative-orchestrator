@@ -11,6 +11,13 @@ Ad Creative Orchestrator (ADCO) is a content-first Codex Skill and local CLI for
 
 中文简介：ADCO 默认先读懂真实资料并完成广告内容工作；只有进入客户可见版本、PPT、资产授权或发送准备时，才按需展开完整交付治理。
 
+The Skill coordinates the active model and available production tools to finish
+the requested strategy, concepts, treatment, script, storyboard, visual work,
+proposal, or revision. The CLI preserves evidence and checks exact artifacts;
+it does not generate the advertising reasoning. One-off content requests need no
+project initialization. For ongoing work, register materials once and reprocess
+them when their contents or intake budget change.
+
 > **Alpha:** use version control or backups and keep a human reviewer in the loop for real client work.
 
 <p>
@@ -41,7 +48,7 @@ Its project-artifact integrity layer deliberately fails closed without POSIX
 with [`pipx`](https://pipx.pypa.io/):
 
 ```bash
-pipx install --force https://github.com/papperrollinggery/ad-creative-orchestrator/releases/download/v0.3.2/ad_creative_orchestrator-0.3.2-py3-none-any.whl
+pipx install --force https://github.com/papperrollinggery/ad-creative-orchestrator/releases/download/v0.3.3/ad_creative_orchestrator-0.3.3-py3-none-any.whl
 adco --version
 adco doctor
 ```
@@ -171,7 +178,7 @@ Run `adco --help` or `adco <command> --help` for the complete CLI reference. The
 
 ## What ADCO Owns—and What It Does Not
 
-ADCO owns project truth, evidence and creative contracts, candidate provenance, artifact versions, review evidence, specialist adoption, presentation/client-package binding, FinalDelivery protection, and send-readiness checks. GPT-5.6 Sol or an explicitly selected professional Specialist supplies creative reasoning. DIRcreative is a film-craft provider used only through a negotiated, bounded Specialist Exchange.
+ADCO owns project truth, evidence and creative contracts, candidate provenance, artifact versions, review evidence, specialist adoption, presentation/client-package binding, FinalDelivery protection, and send-readiness checks. Creative reasoning uses the active host model or the user's explicitly selected Specialist; ADCO never silently selects an older model. DIRcreative is a film-craft provider used only through a negotiated, bounded Specialist Exchange.
 
 ADCO is **not** a SaaS, image generator, video generator, deterministic three-direction creative engine, autonomous creative approver, or delivery bot. `creative-brief` generates a contract, not ideas. The active model or a professional Specialist produces the number of directions the task needs. An explicit internal second judgment may use a read-only Critic on the Content Surface; it does not trigger Delivery or write a persistent governance receipt. A consequential selection or exact client-visible boundary may instead use a durable Critic bound to that candidate/version. `creative-import` accepts 1-6 selected directions and rejects a stale/corrupt brief, unbound evidence, duplicate mechanisms, prohibited claims across any persisted claim-bearing field, and failed or unresolved hard constraints. Requirement/constraint assertions created by this CLI are explicitly local workflow state with `identity_assurance=NONE`; they are not user/client consent, approval, or send authority. A complete immutable generation is prepared first, and only `current_generation.json` is atomically switched, so a failed switch cannot mix an old candidate with new human-readable views or receipts. Review binds exact candidate, receipt, brief manifest, directions, matrix, and generation manifest bytes; evidence refs prove provenance, not semantic claim support. Image and film work can come from specialist tools through a versioned exchange contract; ADCO remains the owner of adoption, provenance, and client-facing readiness.
 
@@ -214,9 +221,9 @@ The public CI runs the release checks on Python 3.10 and 3.12. See the [release 
 
 ## Current Release
 
-The current public release is [`v0.3.2`](https://github.com/papperrollinggery/ad-creative-orchestrator/releases/tag/v0.3.2). Use the Release tag target to identify the source commit and the published wheel as the installation artifact.
+The current public release is [`v0.3.3`](https://github.com/papperrollinggery/ad-creative-orchestrator/releases/tag/v0.3.3). Use the Release tag target to identify the source commit and the published wheel as the installation artifact.
 
-Compared with earlier releases, `v0.3.2` makes current materials easier to find, protects final-delivery files from silent replacement, strengthens specialist and review evidence, and packages the operator guides available through `adco docs`. See the [changelog](CHANGELOG.md) for technical details.
+`v0.3.3` makes ordinary creative work lighter, reuses unchanged material intake, rejects stale model analysis, and checks existing creative briefs against current evidence. It also strengthens candidate provenance, scoped specialist exchange, and delivery protection. See the [changelog](CHANGELOG.md) for technical details.
 
 ## Contributing and Security
 

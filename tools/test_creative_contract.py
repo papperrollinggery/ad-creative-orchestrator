@@ -43,6 +43,7 @@ from adco_core.creative_contract import (
     CREATIVE_DIRECTION_FIELDS,
     CREATIVE_ROOT,
     CURRENT_GENERATION_REL,
+    GENERATION_REQUEST_REL,
     DETERMINISTIC_LINT_RECEIPT_REL,
     _current_snapshot,
     _prohibited_claims,
@@ -299,6 +300,63 @@ def test_brief_generates_contracts_not_directions() -> None:
         assert "ART-AUTO-CREATIVE-DIRECTIONS" not in payload["artifact_ids"]
         snapshot = json.loads((project / BRIEF_SNAPSHOT_REL).read_text(encoding="utf-8"))
         assert snapshot["brief_snapshot_sha256"] == snapshot_sha
+
+
+def test_generation_request_exposes_exact_evidence_without_selecting_a_model() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-creative-request-") as raw:
+        project = Path(raw)
+        _prepare(project)
+        request = json.loads((project / GENERATION_REQUEST_REL).read_text())
+        snapshot = json.loads((project / request["brief_snapshot_path"]).read_text())
+        evidence = request["evidence_input"]
+        path = project / evidence["path"]
+        assert evidence["sha256"] == file_sha256(path)
+        assert evidence["byte_length"] == path.stat().st_size
+        assert evidence["sha256"] == snapshot["input_files"][evidence["path"]]["sha256"]
+        chunks = [json.loads(line) for line in path.read_text().splitlines() if line]
+        refs = {item["chunk_id"] for item in snapshot["evidence"]}
+        assert all(item["text"] for item in chunks if item["chunk_id"] in refs)
+        assert "evidence_chunks" not in request  # Preserve one evidence owner.
+        assert request["model_selection"] == "inherit_active_host_or_explicit_user_selection"
+        assert "GPT-5.6" not in request["model_role"]
+
+
+def test_natural_direction_counts_constrain_the_actual_candidate_schema() -> None:
+    cases = [
+        ("本轮需要：2条创意方向。", 2),
+        ("给出三个机制不同的创意方向。", 3),
+        ("本轮需要内部策略判断，以及3条机制真正不同的创意方向。", 3),
+        ("不要3个方向，只要1个方向。", 1),
+    ]
+    for statement, expected in cases:
+        with tempfile.TemporaryDirectory(prefix="adco-requested-count-") as raw:
+            project = Path(raw)
+            ensure_project(project)
+            source = project / "brief.md"
+            source.write_text(statement, encoding="utf-8")
+            run_evidence_intake(project, [{
+                "source_event_id": "SRC-COUNT", "file_paths": source.name,
+                "declared_semantics": "requested deliverable fixture",
+            }])
+            create_creative_brief(project)
+            schema = json.loads((project / CANDIDATE_SCHEMA_REL).read_text())
+            bounds = schema["properties"]["directions"]
+            assert (bounds["minItems"], bounds["maxItems"]) == (expected, expected), statement
+
+    assert creative_contract_module._requested_direction_count(
+        [{"statement": "We need 2 creative concepts."}]
+    ) == 2
+
+    for statement, message in [
+        ("需要8个创意方向。", "supports 1-6"),
+        ("需要1个方向，同时要求2个方向。", "conflicting explicit"),
+    ]:
+        try:
+            creative_contract_module._requested_direction_count([{"statement": statement}])
+        except ValueError as exc:
+            assert message in str(exc), str(exc)
+        else:
+            raise AssertionError(f"silently changed the requested scope: {statement}")
 
 
 def test_candidate_requires_evidence_and_distinct_mechanisms() -> None:
@@ -1979,6 +2037,8 @@ def test_project_artifact_writer_rejects_nested_symlink() -> None:
 
 def main() -> int:
     test_brief_generates_contracts_not_directions()
+    test_generation_request_exposes_exact_evidence_without_selecting_a_model()
+    test_natural_direction_counts_constrain_the_actual_candidate_schema()
     test_candidate_requires_evidence_and_distinct_mechanisms()
     test_hard_constraints_are_semantically_checked_and_fail_closed()
     test_prohibited_claim_scan_covers_every_persisted_claim_surface()

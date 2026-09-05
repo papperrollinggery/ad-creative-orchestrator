@@ -68,6 +68,19 @@ is 2,000,000 characters. A budget overflow or parser failure is explicit; no
 file is silently truncated to its first 12,000 characters and no 16-line fact
 limit is used as the source of truth.
 
+Repeated `run` reuses a source only after successful intake when the material's
+file/tree fingerprint and character budget still match. It reads the bytes to
+check their hash but skips parsing and duplicate evidence creation. File edits,
+folder additions/removals, budget changes and failed parsing require intake
+again. Replaced evidence invalidates its old inferred facts and unconfirmed
+requirements; retained confirmations need rechecking against the new evidence.
+
+An exported model-analysis request binds the complete current evidence snapshot.
+Return `evidence_snapshot_sha256` unchanged with the response. Import rejects a
+missing or stale binding before writing facts or gaps; export a new request after
+source changes. The parser's extracted fields are candidates, so inspect the
+actual source before creative reasoning even when intake checks pass.
+
 External absolute material paths are not written to public project records.
 `source_events.csv` and evidence use `local-source://<source_event_id>` aliases;
 the absolute lookup stays only in owner-readable `.adco-local/source_paths.json`.

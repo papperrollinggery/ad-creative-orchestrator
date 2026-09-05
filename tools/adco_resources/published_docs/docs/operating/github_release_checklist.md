@@ -1,15 +1,15 @@
 # GitHub Release Checklist
 
-Status: reusable release checklist; current public release is `v0.3.2`
+Status: reusable release checklist; current public release is `v0.3.3`
 
 ## Current Remote State
 
 ```text
 repo: https://github.com/papperrollinggery/ad-creative-orchestrator
 git remote -v: origin https://github.com/papperrollinggery/ad-creative-orchestrator.git
-current release: v0.3.2
+current release: v0.3.3
 current release commit: use the immutable tag target recorded by the GitHub Release
-current release URL: https://github.com/papperrollinggery/ad-creative-orchestrator/releases/tag/v0.3.2
+current release URL: https://github.com/papperrollinggery/ad-creative-orchestrator/releases/tag/v0.3.3
 GitHub Actions: check PASS on Python 3.10 and 3.12 for the release commit
 public clone trial: git clone + pip install . + adco quickstart/open-dashboard/validate PASS
 ```
@@ -43,8 +43,6 @@ adco next /tmp/adco-release-sample
 adco next /tmp/adco-release-sample --json
 adco validate /tmp/adco-release-sample
 adco validate /tmp/adco-release-sample --json
-adco audit-dashboard examples/moncler_protocol_dry_run --render
-adco audit-dashboard examples/simulated_qingling_outdoor_launch --render
 ```
 
 Pass threshold:
@@ -64,7 +62,7 @@ published docs all exist and match their source files
 DEMO=PASS
 QUICKSTART=PASS
 quickstart_json=PASS
-NEXT_STATUS=WAITING_FOR_CONFIRMATION
+NEXT_STATUS=READY_FOR_CONTENT_WORK for the fresh Content Surface demo
 SUPPORT_BUNDLE=PASS
 support_bundle_json=PASS
 DASHBOARD_OPEN=SKIPPED
@@ -109,9 +107,9 @@ Before public release, verify:
 ## Release Decision
 
 ```text
-current_public_release=v0.3.2
+current_public_release=v0.3.3
 next_candidate_release_status=READY_FOR_REMOTE_CHECKS only after the exact candidate passes locally
 doctor=PASS
 remote_status=PASS
-next_action=obtain explicit approval before the next push/tag/release/global reinstall
+next_action=use existing explicit authorization for the candidate; otherwise obtain it before push/tag/release/global reinstall
 ```

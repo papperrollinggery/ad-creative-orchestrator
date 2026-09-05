@@ -7,9 +7,11 @@ release process. The runtime therefore uses two surfaces.
 
 ### Content surface (default)
 
-Use for intake, evidence, facts, real gaps, internal creative briefs, candidate
-review, and ordinary revisions. Keep the working set small and produce a useful
-working answer before discussing governance.
+Use for intake, evidence, facts, real gaps, internal creative briefs, concepts,
+scripts, treatments, candidate review, and ordinary revisions. Keep the working
+set small and complete the requested usable answer before discussing governance.
+An authorized multi-stage content outcome continues through its requested stages;
+an unknown pauses only the affected part.
 
 Default operations must not create or run:
 
@@ -19,10 +21,11 @@ Default operations must not create or run:
 
 ### Delivery surface (risk-triggered)
 
-Escalate only when the requested action involves a client-visible version,
-asset authorization, immutable PPT/derivatives, FinalDelivery, external send,
-legacy migration, or explicit parallel/independent work. Existing delivery
-projects remain compatible.
+Escalate only when the requested action involves a client-visible version, asset
+authorization, immutable PPT/derivatives, FinalDelivery, external send, legacy
+migration, explicit parallel work with a controlled write scope, or independent
+review bound to an exact client-visible version. An internal read-only second
+judgment remains on Content Surface. Existing delivery projects remain compatible.
 
 ## Runtime budgets
 
@@ -51,8 +54,17 @@ Every intake/run result must return a concise intake summary containing:
 5. one next content action.
 
 This summary is evidence context, not creative reasoning or a finished creative
-artifact. The active agent uses it to answer the user's actual content request.
-Metrics and file paths are supporting evidence; they are not that answer.
+artifact. The active agent uses it to answer the user's actual content request;
+it does not substitute a plan or management record for that answer. Metrics and
+file paths are supporting evidence.
+
+Unchanged materials with a successful parse at the same character budget reuse
+their source identity and evidence. Byte hashing still runs; a parser cache hit
+does not mean the source was never read. Changed files, folder membership, budgets,
+and failed parses require processing again. Model-analysis imports must return the
+exported `evidence_snapshot_sha256`; missing or stale bindings are rejected before
+facts/gaps change. Existing creative briefs are rechecked after upstream changes,
+so `CHECK` exposes stale work without creating Delivery artifacts.
 
 ## Design references
 

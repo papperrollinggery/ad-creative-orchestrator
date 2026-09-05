@@ -1,0 +1,38 @@
+{
+  "date": "2026-09-05",
+  "baseline_commit": "1f5a77381e684794cd720592593c7c3845698cfb",
+  "candidate_scope": "local uncommitted source and isolated wheel, no global installation",
+  "source_python": "3.13.13",
+  "source_check": "PASS",
+  "source_optional_skips": "8 reportlab PDF fixtures; covered in isolated installed suite",
+  "installed_python": "3.14.5",
+  "installed_package_check": "PASS",
+  "installed_optional_skips": [],
+  "distribution_check": "PASS",
+  "skill_static_validation": "PASS",
+  "packaged_assets_parity": "PASS",
+  "docs_commands_check": "PASS",
+  "independent_code_review": {
+    "legacy_duplicate_source": "CLOSED",
+    "partial_batch_reuse": "CLOSED"
+  },
+  "independent_creative_review": {
+    "mechanism_difference": "CLOSED_AFTER_REVISION",
+    "two_moments_in_still": "CLOSED_AFTER_REVISION"
+  },
+  "wheel_file": "ad_creative_orchestrator-0.3.3-py3-none-any.whl",
+  "wheel_sha256": "d8bb43cc19504e8bafd5794a068d6b59106ef883cc8c01b3ec6161ac8a2b1a63",
+  "isolated_skill_tree_sha256": "179e362576d813f70455afccfdac33886e41c04b7219e79a980de80a0cc7ad8d",
+  "verified_source_files": {
+    "tools/ad_creative_operator.py": "bd8739cf71ee0b57ac3652b5ad5e3ef7554493b52608c4b0f6514dc1a88159b7",
+    "tools/adco_core/facts.py": "4a8cd0741ad82f645d7d945595a342683dfb2952c026a2586f7a861535e2f034",
+    "tools/adco_core/ingestion.py": "6d167ee28ab2ad5b6c8e56c5049d21eb1304dec1e79faaa43a8b4f1c2c70c4c5",
+    "tools/adco_core/creative_contract.py": "329b8db97c56305a331a00143879002ed416fac6e269c87cd3ef2eaf0f3bbe11",
+    "tools/adco_core/incremental_validation.py": "ee0462967004e287494d7737ee91e5f09752ff207518c57d66a5f58d8b7b894d",
+    "tools/adco_core/commands/run.py": "a1bbfce73c3e6ec7cee64df4eee1f59546213a746e0b57cb26741909c82ac00f",
+    "skill_drafts/ad-creative-orchestrator/SKILL.md": "1adfe52bcece5265213aeba34fb9f4606a05899ecd4470d41cf2c6086046f1a9",
+    "skill_drafts/ad-creative-orchestrator/creative_work.md": "52445f3fa69e04cdfab428df358c8dd5fd305481d0b7fc47b5ca0692378cee65"
+  },
+  "source_log_sha256": "ddc025d4dc3d8d77a99cf3854ee6ac194afdda9b6536bc10f2d4f39399b18cfd",
+  "installed_log_sha256": "1a5cd844da93b92018aedb0016f290423ad7e0641efc9733780071b3cb487c10"
+}

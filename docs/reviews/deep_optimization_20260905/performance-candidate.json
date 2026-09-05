@@ -1,0 +1,76 @@
+{
+  "python": "<source-checkout>/.venv/bin/python",
+  "material_characters": 145028,
+  "material_sha256": "1a29f51563bc5d1416b35d5b8e2ff7ae8c7772df9f4458558cf078eb6ef8f75f",
+  "operator_sha256": "bd8739cf71ee0b57ac3652b5ad5e3ef7554493b52608c4b0f6514dc1a88159b7",
+  "repetitions": 5,
+  "measure": "local repeat command, includes process launch; byte hashing is still performed",
+  "medians": {
+    "first_process_ms": 332.87,
+    "repeat_process_ms": 264.93,
+    "repeat_run_ms": 8,
+    "repeat_parser_characters": 0,
+    "repeat_materials_processed": 0,
+    "source_events_after_two_runs": 1,
+    "evidence_after_two_runs": 53,
+    "default_dashboard_runs": 0,
+    "default_full_validation_runs": 0
+  },
+  "runs": [
+    {
+      "first_process_ms": 334.85,
+      "repeat_process_ms": 264.93,
+      "repeat_run_ms": 8,
+      "repeat_parser_characters": 0,
+      "repeat_materials_processed": 0,
+      "source_events_after_two_runs": 1,
+      "evidence_after_two_runs": 53,
+      "default_dashboard_runs": 0,
+      "default_full_validation_runs": 0
+    },
+    {
+      "first_process_ms": 332.87,
+      "repeat_process_ms": 306.03,
+      "repeat_run_ms": 9,
+      "repeat_parser_characters": 0,
+      "repeat_materials_processed": 0,
+      "source_events_after_two_runs": 1,
+      "evidence_after_two_runs": 53,
+      "default_dashboard_runs": 0,
+      "default_full_validation_runs": 0
+    },
+    {
+      "first_process_ms": 382.21,
+      "repeat_process_ms": 278.79,
+      "repeat_run_ms": 8,
+      "repeat_parser_characters": 0,
+      "repeat_materials_processed": 0,
+      "source_events_after_two_runs": 1,
+      "evidence_after_two_runs": 53,
+      "default_dashboard_runs": 0,
+      "default_full_validation_runs": 0
+    },
+    {
+      "first_process_ms": 305.37,
+      "repeat_process_ms": 233.32,
+      "repeat_run_ms": 9,
+      "repeat_parser_characters": 0,
+      "repeat_materials_processed": 0,
+      "source_events_after_two_runs": 1,
+      "evidence_after_two_runs": 53,
+      "default_dashboard_runs": 0,
+      "default_full_validation_runs": 0
+    },
+    {
+      "first_process_ms": 315.66,
+      "repeat_process_ms": 241.25,
+      "repeat_run_ms": 8,
+      "repeat_parser_characters": 0,
+      "repeat_materials_processed": 0,
+      "source_events_after_two_runs": 1,
+      "evidence_after_two_runs": 53,
+      "default_dashboard_runs": 0,
+      "default_full_validation_runs": 0
+    }
+  ]
+}

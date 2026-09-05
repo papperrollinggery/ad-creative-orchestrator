@@ -1,0 +1,30 @@
+{
+  "creative-trial-brief.md": {
+    "sha256": "33a0e3d4d6a950a111f0fa5bb06777c705e57996b0264395e1c806a6df1ef6de",
+    "bytes": 1505
+  },
+  "public-normalization.json": {
+    "sha256": "a9994d7edb083c0517e3ce7998172db5d06dcacbcea2e4cae56ca2fafd2600af",
+    "bytes": 947
+  },
+  "creative-trial-final.md": {
+    "sha256": "423952243df6a4ba7381976309e1c06493961f724d469cad1d2c8c3a0d0fd855",
+    "bytes": 9624
+  },
+  "creative-trial-before-review.md": {
+    "sha256": "372b46f2ad7d4e3f6ba54b208418b9a2c3d5e77ebc332f135e197ba3d0c092f5",
+    "bytes": 7818
+  },
+  "performance-baseline.json": {
+    "sha256": "aca54e9a4fa90beeac9dd1d3c97e2ebde90bea4585212b3a9835f2b72941a04f",
+    "bytes": 2448
+  },
+  "verification-receipt.json": {
+    "sha256": "15df3d2471146bec2b06e5c40653c8ab156b02149a05c43a9fe6ee9a7044f119",
+    "bytes": 2199
+  },
+  "performance-candidate.json": {
+    "sha256": "a4782f120017bc8a714acb23a5ab0cb8667c628666544bee09e2bfdfcbfb0693",
+    "bytes": 2406
+  }
+}

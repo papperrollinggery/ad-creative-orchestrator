@@ -1,54 +1,10 @@
-# Creative Contract Reference
+# Durable Creative Contract
 
-Read this file only for creative direction work or a durable candidate exchange.
-
-## Use direct reasoning by default
-
-For an internal brief, concept, script, storyboard, or ordinary revision, reason
-directly from the inspected material and return the useful creative work. Do not
-create a candidate contract, version, Gate, or Specialist handoff merely because
-the task is creative. Match the number of directions to the request; do not force
-a preset option count after the useful distinctions are already covered.
-
-An explicit internal second judgment may use a read-only Critic on the Content
-Surface. Return that judgment directly; do not create a Delivery Surface, Thread,
-Gate, candidate contract, version ledger, or persistent Critic receipt for that
-reason alone. Use a durable independent Critic only when a consequential review
-must bind an exact candidate/client-visible version, or when the user explicitly
-requests isolated/parallel execution. Critic review is not mandatory for every
-brainstorm.
-
-ADCO's deterministic strings are evidence and structural checks, not a complete
-creative engine. The active model or an explicitly chosen creative Specialist
-owns creative reasoning; ADCO owns any durable evidence, provenance, and version
-contract that the task actually needs.
-
-Before returning direct creative work, silently verify the draft itself against
-every explicit hard constraint: runtime, cast, allowed locations (including
-sub-locations), required product exposure, and prohibited claims. Location names
-are exact and physically literal: a living room does not authorize kitchen/fridge
-retrieval; an exterior entrance does not authorize interior fridges, shelves, or
-checkout. Relabeling the scene does not cure the mismatch. Evidence refs
-prove provenance, not compliance. Repair violations before answering. When the
-user names multiple channels, specify the execution difference that matters on
-each channel. When showing alternatives, vary the causal creative mechanism and
-run a brand-replacement test against adjacent substitutes, not only unrelated
-categories. The named brand/product truth must cause the mechanism to work rather
-than appear as a label. If supplied facts support only category ownership, say so
-and identify the replacement risk rather than inventing exclusivity. Use no
-comparative production claim such as lowest, easiest, or safest unless a
-visible comparison cites a differentiating location, shot, permission, prop,
-performance, or post-production burden against every alternative; otherwise omit
-the ranking.
-
-Treat a ban on fabricated facts or data literally in the creative itself. Do not
-invent exact meeting times, calendar entries, clock displays, prices, cities,
-metrics, testimonials, or product attributes merely as story texture. Production
-timecodes, total runtime, and cast count may use numbers because they describe the
-proposed artifact, not the advertised world. Also remove close euphemisms for a
-prohibited outcome: a ban on sobering or health claims includes unsupported
-`clear-headed`, `sober`, `low-burden`, or equivalent benefit language even when
-the exact banned noun is absent.
+Read this file only for cross-model/provider exchange, imported candidates, or a
+versioned review that must bind an exact brief snapshot. Direct creative work is
+in [creative_work.md](creative_work.md). ADCO's deterministic checks protect
+evidence and structure; the current model or an explicitly chosen Specialist does
+the creative reasoning.
 
 ## Durable candidate exchange
 
@@ -123,6 +79,14 @@ It binds current facts, requirements, evidence chunk ids, and open evidence gaps
 It does not write `creative_directions.md`, an option matrix, slogans, a client
 outline, or a PPT.
 
+The generation request inherits the active host model or the user's explicit
+selection. Read the source text at `evidence_input.path`, verified against its
+exact byte hash and the allowed refs in `brief_snapshot_path`; the snapshot's
+ids and metadata alone do not contain the source meaning. This keeps one evidence
+owner rather than duplicating the material into each request. A changed upstream
+input makes an existing brief stale and scoped validation reports `CHECK` until
+the brief is rebuilt when needed. It never rewrites the old creative output.
+
 The manifest binds the exact bytes of every brief member. Snapshot inputs are
 read once through POSIX anchored, no-follow descriptors; the snapshot binds the
 actual evidence record and text hashes plus the captured facts, requirements,
@@ -149,7 +113,10 @@ rejects it.
 
 The imported JSON binds the exact `brief_snapshot_sha256` and contains the
 explicitly requested number of directions, or the smallest sufficient set when
-no count was requested (one to six). Add an independent Critic before import
+no count was requested (one to six). The six-direction limit is a durable import
+limit, not a cap on direct exploration. A larger explicit request must be fulfilled
+directly before a selected set is bound for import; never silently reduce its count.
+Add an independent Critic before import
 only when the decision boundary requires it. Every direction has non-empty:
 
 ```text
@@ -192,4 +159,4 @@ shootability, and production risk. On the Content Surface it returns the lint
 result without a persistent receipt; Delivery writes a bound receipt. It does
 not replace the independent creative Critic, client judgment, or effectiveness
 evidence. `creative-quality-gate` remains a downstream legacy proposal safety
-Gate and must not be presented as Sol or Critic judgment.
+Gate and must not be presented as model reasoning or independent Critic judgment.

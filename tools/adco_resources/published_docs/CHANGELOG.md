@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.3.3 - 2026-09-05
+
+- Split ordinary creative work from durable exchange instructions, clarified one-off versus ongoing-project use, added outcome/causality/revision checks, and made compound delivery actions load only their necessary references. Historical examples are explicitly compatibility fixtures.
+- Kept creative reasoning on the active host model or the user's chosen Specialist. Generation requests now point to exact-byte-bound source evidence, ordinary intake follows the requested outcome, and natural Chinese direction counts no longer silently fall back to a generic 1-6 set.
+- Made repeated material intake reuse successful parsing only for matching content and budget; changed or failed inputs are retried, stale derived facts/requirements are invalidated, and closed gaps stay out of current questions. Model-analysis responses now require `evidence_snapshot_sha256`; older unbound responses must be regenerated.
+- Unified scoped creative-brief validation with the full manifest/current-input verifier, so upstream changes expose stale briefs without running delivery workflows or rewriting creative outputs. Extended command checks to all Skill references and fixed a Python-version-sensitive descriptor-cleanup regression test.
+
 - Added a read-only storage lifecycle: `run` now surfaces one organization question for loose materials or exact duplicates; `organize-plan`, `dedupe-audit`, and `cleanup-plan` make no project writes by default, stream-hash large files, account for hardlinks, protect FinalDelivery, and use one replace-in-place plan only with explicit `--save`.
 - Replaced empty film placeholders with causal treatment, shot, world-rule, capture-boundary, and Plan B contracts; Film Quality Gate now blocks technically formatted but substantively empty director/production packets.
 - Corrected the OpenAI Visualizations boundary: local HTML and `.codex/visualizations` are offline preview/cache only, the renderer no longer emits a private mount directive, native availability must be feature-detected, and every unverified path returns a complete Markdown/table/Mermaid fallback.

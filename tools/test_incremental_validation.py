@@ -10,7 +10,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from adco_core.incremental_validation import plan_incremental_validation
+from adco_core.incremental_validation import plan_incremental_validation, run_incremental_validation
+from adco_core.creative_contract import BRIEF_MANIFEST_REL, create_creative_brief
+from ad_creative_operator import ensure_project, perform_intake, register_materials
 from runtime_paths import source_root
 
 
@@ -120,9 +122,63 @@ def test_default_run_is_content_first_zero_dashboard_and_timed() -> None:
         assert timings["total_ms"] < 20_000
 
 
+def test_updated_material_invalidates_an_existing_creative_brief() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-upstream-freshness-") as raw:
+        project = Path(raw) / "project"
+        ensure_project(project)
+        material = project / "brief.md"
+        material.write_text("客户要求面向城市通勤者制作内部广告方案。", encoding="utf-8")
+        sources = register_materials(project, [material], "整理本轮创意资料")
+        perform_intake(project, sources, "整理本轮创意资料")
+        create_creative_brief(project)
+        manifest = project / BRIEF_MANIFEST_REL
+        original_manifest = manifest.read_bytes()
+        fresh = run_incremental_validation(
+            project, changed_file_paths=["AD-creative/orchestrator/requirements.csv"]
+        )
+        assert not fresh.errors, fresh.errors
+
+        change = project / "feedback.md"
+        change.write_text("客户要求新增家庭场景，保留真实产品出镜。", encoding="utf-8")
+        sources = register_materials(project, [change], "吸收新增反馈")
+        perform_intake(project, sources, "吸收新增反馈")
+        stale = run_incremental_validation(
+            project, changed_file_paths=["AD-creative/orchestrator/evidence_chunks.jsonl"]
+        )
+        assert stale.as_dict()["status"] == "CHECK", stale.as_dict()
+        assert any("stale" in error for error in stale.errors), stale.errors
+        assert "validate_creative_brief" in stale.validators_run
+        assert not stale.full_validation_required
+        assert "validate_ppt" in stale.validators_skipped
+        assert manifest.read_bytes() == original_manifest
+        assert not (project / "AD-creative/orchestrator/artifact_index.csv").exists()
+
+        create_creative_brief(project)
+        refreshed = run_incremental_validation(
+            project, changed_file_paths=["AD-creative/orchestrator/requirements.csv"]
+        )
+        assert not refreshed.errors, refreshed.errors
+
+
+def test_scoped_brief_check_verifies_every_manifest_member() -> None:
+    with tempfile.TemporaryDirectory(prefix="adco-brief-member-check-") as raw:
+        project = Path(raw)
+        ensure_project(project)
+        create_creative_brief(project)
+        request = project / "AD-creative/creative/creative_generation_request.json"
+        request.write_text('{"replaced": true}\n', encoding="utf-8")
+        report = run_incremental_validation(
+            project, changed_file_paths=[str(project / BRIEF_MANIFEST_REL)]
+        )
+        assert report.errors, report.as_dict()
+        assert any("hash mismatch" in error for error in report.errors), report.errors
+
+
 def main() -> int:
     test_dependency_plans_do_not_run_unaffected_delivery_validators()
     test_default_run_is_content_first_zero_dashboard_and_timed()
+    test_updated_material_invalidates_an_existing_creative_brief()
+    test_scoped_brief_check_verifies_every_manifest_member()
     print("TEST_INCREMENTAL_VALIDATION=PASS")
     return 0
 

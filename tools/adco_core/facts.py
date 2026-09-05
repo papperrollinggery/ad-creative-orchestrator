@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import re
@@ -46,9 +47,13 @@ INTAKE_ANALYSIS_SCHEMA: dict[str, object] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "ADCO evidence-bound intake analysis",
     "type": "object",
-    "required": ["analysis_version", "facts"],
+    "required": ["analysis_version", "evidence_snapshot_sha256", "facts"],
     "properties": {
         "analysis_version": {"const": "1.0"},
+        "evidence_snapshot_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+        },
         "facts": {
             "type": "array",
             "items": {
@@ -121,6 +126,19 @@ class IntakeResult:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def evidence_snapshot_sha256(chunks: Iterable[EvidenceChunk]) -> str:
+    """Bind intake analysis to every current evidence record, not just its cited IDs."""
+    records = [chunk.as_dict() for chunk in chunks]
+    records.sort(key=lambda item: str(item.get("chunk_id", "")))
+    canonical = json.dumps(
+        records,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -437,7 +455,11 @@ def fact_gap_templates(
 
 
 def _sync_requirements(
-    project: Path, candidates: Iterable[RequirementCandidate]
+    project: Path,
+    candidates: Iterable[RequirementCandidate],
+    *,
+    replace_source_ids: set[str] | None = None,
+    current_evidence_ids: set[str] | None = None,
 ) -> list[dict[str, str]]:
     path = project / "AD-creative/orchestrator/requirements.csv"
     fields, rows = _read_csv(path)
@@ -449,13 +471,41 @@ def _sync_requirements(
     ):
         if field not in fields:
             fields.append(field)
-    existing = {row.get("statement", "").casefold() for row in rows}
+    replace_source_ids = replace_source_ids or set()
+    retained_rows = [
+        row
+        for row in rows
+        if not (
+            row.get("source_event_id", "") in replace_source_ids
+            and row.get("status", "").strip().casefold() == "candidate"
+            and not row.get("confirmation_ref", "").strip()
+            and not row.get("confirmed_by", "").strip()
+            and not row.get("confirmed_at", "").strip()
+        )
+    ]
+    changed = len(retained_rows) != len(rows)
+    if current_evidence_ids is not None:
+        for row in retained_rows:
+            if (
+                row.get("source_event_id", "") in replace_source_ids
+                and row.get("status", "").strip().casefold() != "candidate"
+                and row.get("evidence_ref", "").strip()
+                not in current_evidence_ids
+            ):
+                row["status"] = "needs_reconfirmation"
+                row["open_questions"] = (
+                    "source evidence was replaced; reconfirm this requirement before use"
+                )
+                changed = True
+    existing = {row.get("statement", "").casefold() for row in retained_rows}
     new_rows: list[dict[str, str]] = []
     for candidate in candidates:
         if candidate.statement.casefold() in existing:
             continue
         row = {
-            "requirement_id": _next_id([*rows, *new_rows], "requirement_id", "REQ"),
+            "requirement_id": _next_id(
+                [*retained_rows, *new_rows], "requirement_id", "REQ"
+            ),
             "source_event_id": candidate.source_event_id,
             "owner": candidate.owner,
             "statement": candidate.statement,
@@ -475,8 +525,8 @@ def _sync_requirements(
         }
         new_rows.append(row)
         existing.add(candidate.statement.casefold())
-    if new_rows:
-        _write_csv(project, path, fields, [*rows, *new_rows])
+    if new_rows or changed:
+        _write_csv(project, path, fields, [*retained_rows, *new_rows])
     return new_rows
 
 
@@ -554,17 +604,29 @@ def run_evidence_intake(
         for chunk in all_loaded_chunks
         if chunk.source_event_id not in local_assertion_source_ids
     ]
+    current_evidence_ids = {chunk.chunk_id for chunk in all_chunks}
     explicit_facts = explicit_facts_from_evidence(all_chunks)
     existing_facts = [
         fact
         for fact in load_fact_inventory(project)
         if not set(fact.evidence_refs).intersection(local_assertion_chunk_ids)
+        and bool(fact.evidence_refs)
+        and set(fact.evidence_refs).issubset(current_evidence_ids)
     ]
     facts = merge_facts(existing_facts, explicit_facts)
     fact_analysis_ms = round((perf_counter() - analysis_started) * 1000)
     write_started = perf_counter()
     write_fact_inventory(project, facts)
-    new_requirements = _sync_requirements(project, requirement_candidates(ingestion.chunks))
+    new_requirements = _sync_requirements(
+        project,
+        requirement_candidates(ingestion.chunks),
+        replace_source_ids={
+            row.get("source_event_id", "")
+            for row in content_source_rows
+            if row.get("source_event_id", "")
+        },
+        current_evidence_ids=current_evidence_ids,
+    )
     new_gaps = sync_fact_gaps(project, facts)
     write_ms = round((perf_counter() - write_started) * 1000)
     return IntakeResult(
@@ -586,15 +648,17 @@ def export_intake_analysis_request(project: Path) -> tuple[dict[str, object], Pa
         raise ValueError("no evidence chunks; run intake-evidence first")
     payload: dict[str, object] = {
         "protocol_id": "adco.intake-analysis-request",
-        "request_version": "1.0",
+        "request_version": "1.1",
         "instructions": [
             "Return only facts supported by evidence_refs from this request.",
+            "Copy evidence_snapshot_sha256 from this request into the analysis response exactly.",
             "Use missing only when evidence explicitly says an item is absent.",
             "Use unknown when evidence is insufficient; mark blocking only when it stops downstream work.",
             "Use conflicting when bound evidence disagrees.",
         ],
         "analysis_schema": INTAKE_ANALYSIS_SCHEMA,
         "evidence_path": EVIDENCE_REL.as_posix(),
+        "evidence_snapshot_sha256": evidence_snapshot_sha256(chunks),
         "evidence_chunks": [chunk.as_dict() for chunk in chunks],
     }
     path = project / ANALYSIS_REQUEST_REL
@@ -607,12 +671,17 @@ def export_intake_analysis_request(project: Path) -> tuple[dict[str, object], Pa
 
 
 def validate_analysis_payload(
-    payload: object, evidence_ids: set[str]
+    payload: object, evidence_ids: set[str], evidence_snapshot_digest: str
 ) -> list[FactInventoryItem]:
     if not isinstance(payload, dict):
         raise ValueError("intake analysis must be a JSON object")
     if payload.get("analysis_version") != "1.0":
         raise ValueError("intake analysis_version must be 1.0")
+    if payload.get("evidence_snapshot_sha256") != evidence_snapshot_digest:
+        raise ValueError(
+            "intake analysis evidence snapshot does not match current evidence; "
+            "export a new intake analysis request"
+        )
     raw_facts = payload.get("facts")
     if not isinstance(raw_facts, list):
         raise ValueError("intake analysis facts must be an array")
@@ -686,8 +755,13 @@ def import_intake_analysis(
         payload = json.loads(analysis_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read intake analysis: {exc}") from exc
-    evidence_ids = {chunk.chunk_id for chunk in load_evidence_chunks(project)}
-    imported = validate_analysis_payload(payload, evidence_ids)
+    chunks = load_evidence_chunks(project)
+    evidence_ids = {chunk.chunk_id for chunk in chunks}
+    imported = validate_analysis_payload(
+        payload,
+        evidence_ids,
+        evidence_snapshot_sha256(chunks),
+    )
     existing = [fact for fact in load_fact_inventory(project) if fact.fact_key not in {item.fact_key for item in imported}]
     facts = merge_facts(existing, imported)
     path = write_fact_inventory(project, facts)

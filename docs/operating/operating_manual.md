@@ -1,6 +1,6 @@
 # 操作手册
 
-状态：当前 v0.3.2 操作语义
+状态：当前 v0.3.3 操作语义
 
 ## 使用边界
 
@@ -92,7 +92,7 @@ adco creative-import <项目目录> --file <candidate.json> [--json]
 adco creative-review <项目目录> [--json]
 ```
 
-`creative-brief` 只生成 hash-bound manifest/snapshot/contract/schema/request/open gaps，不生成方向。GPT-5.6 Sol 或专业 Specialist 按用户要求生成候选；未指定数量时只生成最小充分集合（1-6 个）。独立 Critic 仅在明确要求或高后果决策边界启用。耐久硬要求先绑定真实 source/evidence 与 active local assertion；它明确为 `identity_assurance=NONE`，不是用户/客户身份、批准或发送授权。无法机器判断的 exact candidate 约束必须精确绑定 candidate payload、brief、direction、constraint。`creative-import` 校验完整 brief、结构、所有声明字段、硬约束与 exact-byte 来源链，写完整 immutable generation 后只原子切换 `current_generation.json`；`creative-review` 必须重新核对 pointer/generation/import receipt/brief/派生视图。双击 launcher 的默认 `run` 不进入这条创意链路，也不生成客户 outline 或 PPT。
+`creative-brief` 只生成 hash-bound manifest/snapshot/contract/schema/request/open gaps，不生成方向。当前主模型或用户明确选择的专业 Specialist 按用户要求生成候选；未指定数量时只生成最小充分集合（1-6 个）。独立 Critic 仅在明确要求或高后果决策边界启用。耐久硬要求先绑定真实 source/evidence 与 active local assertion；它明确为 `identity_assurance=NONE`，不是用户/客户身份、批准或发送授权。无法机器判断的 exact candidate 约束必须精确绑定 candidate payload、brief、direction、constraint。`creative-import` 校验完整 brief、结构、所有声明字段、硬约束与 exact-byte 来源链，写完整 immutable generation 后只原子切换 `current_generation.json`；`creative-review` 必须重新核对 pointer/generation/import receipt/brief/派生视图。双击 launcher 的默认 `run` 不进入这条创意链路，也不生成客户 outline 或 PPT。
 
 `thread-plan` 会写入：
 
@@ -164,7 +164,7 @@ creative-proposal 只是 creative-brief 的弃用 alias，不再生成固定方�
 
 ```text
 项目事实、brief contract、候选 provenance、版本和 Gate：留在 ADCO control plane。
-创意推理：交给 GPT-5.6 Sol 或明确选择的专业 Specialist；ADCO 不用确定性模板冒充完整创意引擎。
+创意推理：交给 当前主模型或用户明确选择的专业 Specialist；ADCO 不用确定性模板冒充完整创意引擎。
 视频脚本、分镜、导演阐述、video prompt：通过协议 ID `adco.specialist-exchange` 与 `dircreative.film-preproduction` 协作；协议 ID 不是命令，实际 CLI 是 `adco specialist-handoff` / `adco specialist-adopt`。DIR 是 film craft provider，不能更新 ADCO 外层 readiness。
 image / KV / 背景图 / moodboard / visual asset：交给 imagegen 或 Creative Production，回到 adco 登记和 visual-quality-gate。
 固定 PPT / DOCX / XLSX 模板和版式系统：交给 Template Creator 或专门文档模板流程，adco 只维护内容结构、字段、追溯和 Gate。
