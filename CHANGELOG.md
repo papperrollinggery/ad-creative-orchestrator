@@ -4,6 +4,8 @@
 
 ## 0.3.3 - 2026-09-05
 
+- Made PDF privacy tests portable across dependency-equipped and `--no-deps` installations: available backends must detect compressed private markers, while unavailable backends must explicitly refuse export and exclude the PDF from the manifest.
+
 - Split ordinary creative work from durable exchange instructions, clarified one-off versus ongoing-project use, added outcome/causality/revision checks, and made compound delivery actions load only their necessary references. Historical examples are explicitly compatibility fixtures.
 - Kept creative reasoning on the active host model or the user's chosen Specialist. Generation requests now point to exact-byte-bound source evidence, ordinary intake follows the requested outcome, and natural Chinese direction counts no longer silently fall back to a generic 1-6 set.
 - Made repeated material intake reuse successful parsing only for matching content and budget; changed or failed inputs are retried, stale derived facts/requirements are invalidated, and closed gaps stay out of current questions. Model-analysis responses now require `evidence_snapshot_sha256`; older unbound responses must be regenerated.

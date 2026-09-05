@@ -1269,6 +1269,10 @@ def test_client_pack_manifest_binds_one_project_root_inode() -> None:
 
 
 def test_client_pack_scans_compressed_pdf_visible_text() -> None:
+    has_pdf_reader = bool(
+        operator_module.shutil.which("pdftotext")
+        or operator_module.importlib.util.find_spec("pypdf")
+    )
     with (
         tempfile.TemporaryDirectory(prefix="adco-private-pdf-scan-") as raw,
         tempfile.TemporaryDirectory(
@@ -1288,24 +1292,47 @@ def test_client_pack_scans_compressed_pdf_visible_text() -> None:
         write_compressed_text_pdf(pdf_path, marker)
         assert marker.encode("utf-8") not in pdf_path.read_bytes()
 
-        manifest, _, errors = build_client_pack_input_manifest(
-            project,
-            [
-                {
-                    "artifact_id": "ART-COMPRESSED-PDF",
-                    "visibility": "client_visible",
-                    "path": pdf_path.relative_to(project).as_posix(),
-                }
-            ],
+        candidates = [{
+            "artifact_id": "ART-COMPRESSED-PDF",
+            "visibility": "client_visible",
+            "path": pdf_path.relative_to(project).as_posix(),
+        }]
+        manifest, _, errors = build_client_pack_input_manifest(project, candidates)
+        # The --no-deps installation smoke deliberately has no Python PDF
+        # reader; Linux runners may also lack the system extractor. It must
+        # refuse export, while dependency-equipped runs must detect the marker.
+        expected_issue = (
+            "private local source path marker"
+            if has_pdf_reader
+            else "privacy scan PDF parser unavailable"
         )
         assert any(
             "compressed-marker.pdf" in item
-            and "private local source path marker" in item
+            and expected_issue in item
             for item in errors
         ), errors
         assert not any(
             item["path"] == pdf_path.relative_to(project).as_posix()
             for item in manifest["files"]
+        )
+
+        # Exercise the missing-backend fail-closed path even on development
+        # machines where a system PDF extractor happens to be installed.
+        with (
+            patch.object(operator_module.shutil, "which", return_value=None),
+            patch.object(operator_module.importlib.util, "find_spec", return_value=None),
+        ):
+            unavailable, _, unavailable_errors = build_client_pack_input_manifest(
+                project, candidates
+            )
+        assert any(
+            "compressed-marker.pdf" in item
+            and "privacy scan PDF parser unavailable" in item
+            for item in unavailable_errors
+        ), unavailable_errors
+        assert not any(
+            item["path"] == pdf_path.relative_to(project).as_posix()
+            for item in unavailable["files"]
         )
 
 
