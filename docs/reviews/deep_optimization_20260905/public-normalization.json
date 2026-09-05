@@ -1,6 +1,6 @@
 {
   "scope": "public copies of synthetic evaluation artifacts",
-  "changes": "Local username, checkout and temporary run prefixes are replaced with placeholders. Creative content, metrics and original source/code/receipt hashes are unchanged. Published-file hashes refer to these normalized copies.",
+  "changes": "Local username, checkout and temporary run prefixes are replaced with placeholders. Creative content, metrics and original source/code/receipt hashes are unchanged. Published-file hashes refer to these normalized copies. Markdown trailing spaces are normalized in public copies.",
   "original_artifact_sha256": {
     "creative-trial-brief.md": "33a0e3d4d6a950a111f0fa5bb06777c705e57996b0264395e1c806a6df1ef6de",
     "creative-trial-final.md": "6fb5d058c8a19635efd4510920cab88c906d38bcc0fca8549f203bf82b0a325e",
